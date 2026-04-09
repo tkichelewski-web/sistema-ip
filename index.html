@@ -974,19 +974,11 @@ async function criarUsuario(){
   // Cria no Auth com link mágico
   const{data:authData,error:authErr}=await sb.auth.admin.createUser({email,email_confirm:true});
   if(authErr){
-    // Tenta insert direto se auth falhar (usuário já pode existir)
-    const{error}=await sb.from('usuarios').insert({nome,email,perfil,gerencia_id:gerId});
-    if(error){alert('Erro: '+error.message+'
-
-Se o usuário já existe no Auth, adicione manualmente na tabela usuarios no Supabase.');return;}
-    alert(`✅ Perfil criado! O usuário deve existir no Supabase Auth. Peça para ele usar "Enviar link de acesso" no login.`);
-    renderUsuarios();return;
+    alert('Erro ao criar usuario: ' + authErr.message);return;
   }
   const{error}=await sb.from('usuarios').insert({auth_id:authData.user.id,nome,email,perfil,gerencia_id:gerId});
   if(error){alert('Erro ao salvar perfil: '+error.message);return;}
-  // Envia link mágico
-  await sb.auth.signInWithOtp({email,options:{emailRedirectTo:window.location.href}});
-  alert(`✅ Usuário ${nome} criado! Um link de acesso foi enviado para ${email}.`);
+  alert('Usuario ' + nome + ' criado! Senha temporaria: ' + senhaTemp + ' - Repasse ao usuario.');
   ['usr-nome','usr-email'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   renderUsuarios();
 }
@@ -1009,10 +1001,9 @@ async function reenviarLink(email){
   const novaSenha='Vidas@'+Math.floor(1000+Math.random()*9000);
   const{error}=await sb.auth.admin.updateUserById(email,{password:novaSenha});
   if(error){
-    // fallback: mostra instrução manual
-    alert(`Para redefinir a senha de ${email}, execute no SQL Editor do Supabase:\n\nUPDATE auth.users SET encrypted_password = crypt('Vidas@2025', gen_salt('bf')) WHERE email = '${email}';`);
+    alert('Para redefinir, execute no SQL do Supabase: UPDATE auth.users SET encrypted_password = crypt(nova_senha, gen_salt(bf)) WHERE email = ' + email);
   } else {
-    alert(`✅ Nova senha gerada para ${email}:\n\n${novaSenha}\n\nRepasse para o usuário.`);
+    alert('Nova senha para ' + email + ': ' + novaSenha + ' — Repasse ao usuário.');
   }
 }
 

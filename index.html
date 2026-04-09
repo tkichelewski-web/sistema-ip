@@ -154,11 +154,14 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="login-info" id="login-info"></div>
     <div class="form-group">
       <label>E-mail corporativo</label>
-      <input type="email" id="login-email" placeholder="seu@usinasantaadelia.com.br" onkeydown="if(event.key==='Enter')enviarLink()">
+      <input type="email" id="login-email" placeholder="seu@usinasantaadelia.com.br" onkeydown="if(event.key==='Enter')fazerLogin()">
     </div>
-    <button class="btn btn-primary btn-full" id="btn-login" onclick="enviarLink()">Enviar link de acesso</button>
+    <div class="form-group">
+      <label>Senha</label>
+      <input type="password" id="login-senha" placeholder="••••••••" onkeydown="if(event.key==='Enter')fazerLogin()">
+    </div>
+    <button class="btn btn-primary btn-full" id="btn-login" onclick="fazerLogin()">Entrar</button>
     <div class="err-box" id="login-err"></div>
-    <p style="font-size:11px;color:var(--muted);text-align:center;margin-top:14px;">Você receberá um link no e-mail para entrar sem senha.</p>
   </div>
 </div>
 
@@ -495,21 +498,17 @@ function preencherGerencia() {
 }
 
 // ── AUTH ──────────────────────────────────────────────────────
-async function enviarLink() {
+async function fazerLogin() {
   const email=document.getElementById('login-email').value.trim();
+  const senha=document.getElementById('login-senha').value;
   const btn=document.getElementById('btn-login');
   const err=document.getElementById('login-err');
-  const info=document.getElementById('login-info');
-  err.style.display='none'; info.classList.remove('show');
-  if(!email){err.textContent='Digite seu e-mail.';err.style.display='block';return;}
-  btn.disabled=true;btn.textContent='Enviando...';
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options:{ emailRedirectTo: window.location.href }
-  });
-  btn.disabled=false;btn.textContent='Enviar link de acesso';
-  if(error){err.textContent='Erro: '+error.message;err.style.display='block';}
-  else{info.textContent='✅ Link enviado! Verifique seu e-mail e clique no link para entrar.';info.classList.add('show');}
+  err.style.display='none';
+  if(!email||!senha){err.textContent='Preencha e-mail e senha.';err.style.display='block';return;}
+  btn.disabled=true;btn.textContent='Entrando...';
+  const{error}=await sb.auth.signInWithPassword({email,password:senha});
+  btn.disabled=false;btn.textContent='Entrar';
+  if(error){err.textContent='E-mail ou senha incorretos.';err.style.display='block';}
 }
 
 async function sair(){await sb.auth.signOut();location.reload();}
@@ -1007,9 +1006,14 @@ async function renderUsuarios(){
 }
 
 async function reenviarLink(email){
-  const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:window.location.href}});
-  if(error)alert('Erro: '+error.message);
-  else alert(`✅ Link reenviado para ${email}!`);
+  const novaSenha='Vidas@'+Math.floor(1000+Math.random()*9000);
+  const{error}=await sb.auth.admin.updateUserById(email,{password:novaSenha});
+  if(error){
+    // fallback: mostra instrução manual
+    alert(`Para redefinir a senha de ${email}, execute no SQL Editor do Supabase:\n\nUPDATE auth.users SET encrypted_password = crypt('Vidas@2025', gen_salt('bf')) WHERE email = '${email}';`);
+  } else {
+    alert(`✅ Nova senha gerada para ${email}:\n\n${novaSenha}\n\nRepasse para o usuário.`);
+  }
 }
 
 // ── MODAIS ────────────────────────────────────────────────────

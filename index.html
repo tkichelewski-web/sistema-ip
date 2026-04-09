@@ -728,8 +728,7 @@ function exportarAcumCSV() {
   const safra = safrasData.find(s => s.id == safraId);
   const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
   const gers = [...new Map(acumAllData.map(l => [l.gerencia_id, { id: l.gerencia_id, nome: l.gerencias?.nome, dir: l.gerencias?.diretorias?.nome }])).values()];
-  let csv = 'Gerência,Diretoria,' + meses.map(m => m.nome + ',Acum.' + m.nome).join(',') + '
-';
+  let csv = 'Gerência,Diretoria,' + meses.map(m => m.nome + ',Acum.' + m.nome).join(',') + '\n';
   for(const g of gers) {
     let soma = 0, count = 0;
     let row = `"${g.nome}","${g.dir||''}"`;
@@ -739,8 +738,7 @@ function exportarAcumCSV() {
       const acum = count > 0 ? soma/count : null;
       row += `,${l?(l.indice_prevencao||0).toFixed(2):''},${acum!=null?acum.toFixed(2):''}`;
     }
-    csv += row + '
-';
+    csv += row + '\n';
   }
   const blob = new Blob([csv], {type:'text/csv'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);

@@ -524,7 +524,7 @@ async function mostrarApp() {
   const badgeEl=document.getElementById('user-perfil-badge');
   if(badgeEl) {
     const cores={admin:'badge-purple',gestor:'badge-blue',gerencia:'badge-green'};
-    badgeEl.innerHTML=`<span class="badge ${cores[usuario.perfil]||'badge-green'}" style="font-size:10px">${usuario.perfil}</span>`;
+    badgeEl.innerHTML='<span class="badge '+(cores[usuario.perfil]||'badge-green')+'" style="font-size:10px">'+usuario.perfil+'</span>';
   }
   // Abas por perfil
   const perfil=(usuario.perfil||'').toLowerCase();
@@ -565,7 +565,7 @@ function preencherGerencia() {
 }
 
 // ── AUTH ──────────────────────────────────────────────────────
-async function fazerLogin() {
+window.fazerLogin = async function fazerLogin() {
   const email=document.getElementById('login-email').value.trim();
   const senha=document.getElementById('login-senha').value;
   const btn=document.getElementById('btn-login');
@@ -578,7 +578,7 @@ async function fazerLogin() {
   if(error){err.textContent='E-mail ou senha incorretos.';err.style.display='block';}
 }
 
-async function sair(){await sb.auth.signOut();location.reload();}
+window.sair = async function sair(){await sb.auth.signOut();location.reload();}
 
 // ── TABS ──────────────────────────────────────────────────────
 // SAFRAS STATE

@@ -138,6 +138,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
 .alert-warn{background:var(--yellow-dim);border:1px solid var(--yellow);color:var(--yellow);}
 .flex-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mono{font-family:'DM Mono',monospace;}
+.acum-cell{background:#f0f9f0 !important;font-weight:700;}
 @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -177,12 +178,14 @@ input[type=number]{font-family:'DM Mono',monospace;}
 
   <div class="tabs" id="tabs-bar">
     <div class="tab active" onclick="showTab('dashboard')" id="tab-dashboard">Dashboard</div>
+    <div class="tab" onclick="showTab('acum')" id="tab-acum">Acumulado Safra</div>
     <div class="tab" onclick="showTab('ranking')" id="tab-ranking">Ranking</div>
     <div class="tab" onclick="showTab('lancar')" id="tab-lancar">Lançar Dados</div>
     <div class="tab" onclick="showTab('historico')" id="tab-historico">Histórico</div>
     <div class="tab hidden" onclick="showTab('indicadores')" id="tab-indicadores">Indicadores</div>
     <div class="tab hidden" onclick="showTab('gerencias')" id="tab-gerencias">Gerências</div>
     <div class="tab hidden" onclick="showTab('usuarios')" id="tab-usuarios">Usuários</div>
+    <div class="tab hidden" onclick="showTab('config')" id="tab-config">Configurações</div>
   </div>
 
   <main>
@@ -203,6 +206,31 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="table-wrap">
         <div class="table-header"><span class="table-title">Gerências — Índice de Prevenção</span></div>
         <div id="dash-table-wrap"><div class="loading">Selecione um período para carregar os dados.</div></div>
+      </div>
+    </div>
+
+    <!-- ACUMULADO SAFRA -->
+    <div class="section" id="sec-acum">
+      <div class="fr2" style="margin-bottom:17px;justify-content:space-between;">
+        <div class="fr2">
+          <label style="margin:0;font-size:12px">Safra:</label>
+          <select id="acum-safra" onchange="carregarAcumulado()" style="width:auto;padding:6px 10px;font-size:13px"></select>
+          <select id="acum-dir" onchange="renderAcumTable()" style="width:auto;padding:6px 10px;font-size:12px"></select>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="exportarAcumCSV()">⬇ CSV</button>
+      </div>
+      <!-- Acumulado por Gerência -->
+      <div class="table-wrap" style="margin-bottom:20px">
+        <div class="table-header">
+          <span class="table-title">📊 Acumulado por Gerência — Média Progressiva</span>
+          <span style="font-size:12px;color:var(--muted)">Coluna verde = acumulado até o mês</span>
+        </div>
+        <div id="acum-ger-tbl"><div class="loading">Selecione uma safra.</div></div>
+      </div>
+      <!-- Acumulado por Diretoria -->
+      <div class="table-wrap">
+        <div class="table-header"><span class="table-title">🏢 Acumulado por Diretoria</span></div>
+        <div id="acum-dir-tbl"><div class="loading">Selecione uma safra.</div></div>
       </div>
     </div>
 
@@ -363,6 +391,44 @@ input[type=number]{font-family:'DM Mono',monospace;}
         <div id="usr-lista"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
       </div>
     </div>
+    <!-- CONFIGURAÇÕES -->
+    <div class="section hidden" id="sec-config">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div class="form-section">
+            <div class="form-section-title">⚖️ Pesos da Fórmula do IP</div>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:12px">IP = Pont.Gerência × PG + Méd.Diretoria × PD + Auditoria × PA. A soma deve ser 1.</p>
+            <div class="form-row">
+              <div><label>Peso Gerência (PG)</label><input type="number" id="cfg-pg" min="0" max="1" step="0.01" oninput="calcSomaPesos()"></div>
+              <div><label>Peso Diretoria (PD)</label><input type="number" id="cfg-pd" min="0" max="1" step="0.01" oninput="calcSomaPesos()"></div>
+              <div><label>Peso Auditoria (PA)</label><input type="number" id="cfg-pa" min="0" max="1" step="0.01" oninput="calcSomaPesos()"></div>
+            </div>
+            <div id="cfg-soma" style="font-size:13px;margin-bottom:12px;font-family:DM Mono,monospace"></div>
+            <button class="btn btn-primary" onclick="salvarPesos()">Salvar Pesos</button>
+          </div>
+          <div class="form-section">
+            <div class="form-section-title">🎯 Faixas de Classificação</div>
+            <div class="form-row">
+              <div><label>Crítico abaixo de</label><input type="number" id="cfg-crit" min="0" max="100"></div>
+              <div><label>Meta a partir de</label><input type="number" id="cfg-meta" min="0" max="100"></div>
+            </div>
+            <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Crítico &lt; X · Mínimo X–Y · Meta Y–99 · Máximo = 100</p>
+            <button class="btn btn-primary" onclick="salvarFaixas()">Salvar Faixas</button>
+          </div>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">📅 Safras</div>
+          <div class="form-row">
+            <div><label>Nome</label><input type="text" id="sf-nome" placeholder="Ex: Safra 2025/2026"></div>
+            <div><label>Ano Início</label><input type="number" id="sf-ini" placeholder="2025"></div>
+            <div><label>Ano Fim</label><input type="number" id="sf-fim" placeholder="2026"></div>
+            <div style="display:flex;align-items:flex-end"><button class="btn btn-primary" onclick="salvarSafra()" style="width:100%">+ Adicionar</button></div>
+          </div>
+          <div id="safra-lista" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -470,6 +536,7 @@ function mostrarApp() {
     const el=document.getElementById('tab-usuarios');
     if(el) el.classList.remove('hidden');
   }
+  await carregarSafras();
   preencherForms();
   const now=new Date();
   const periodo=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
@@ -514,6 +581,245 @@ async function fazerLogin() {
 async function sair(){await sb.auth.signOut();location.reload();}
 
 // ── TABS ──────────────────────────────────────────────────────
+// SAFRAS STATE
+let safrasData = [];
+let acumAllData = [];
+
+const MESES_SAFRA = [
+  {num:'04',nome:'Abril'},{num:'05',nome:'Maio'},{num:'06',nome:'Junho'},
+  {num:'07',nome:'Julho'},{num:'08',nome:'Agosto'},{num:'09',nome:'Setembro'},
+  {num:'10',nome:'Outubro'},{num:'11',nome:'Novembro'},{num:'12',nome:'Dezembro'},
+  {num:'01',nome:'Janeiro'},{num:'02',nome:'Fevereiro'},{num:'03',nome:'Março'}
+];
+
+function getMesesSafra(safra) {
+  if(!safra) return [];
+  return MESES_SAFRA.map(m => {
+    const ano = parseInt(m.num) >= 4 ? safra.ano_ini : safra.ano_fim;
+    return { val: `${ano}-${m.num}`, nome: `${m.nome}/${ano}` };
+  });
+}
+
+async function carregarSafras() {
+  const { data } = await sb.from('safras').select('*').eq('ativa', true).order('ano_ini', { ascending: false });
+  safrasData = data || [];
+  preencherSelectsSafra();
+}
+
+function preencherSelectsSafra() {
+  const opts = safrasData.map(s => `<option value="${s.id}">${s.nome}</option>`).join('');
+  ['dash-safra','acum-safra','l-safra','hist-safra'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) { el.innerHTML = '<option value="">— Selecione —</option>' + opts; }
+  });
+  if(safrasData.length) {
+    const first = safrasData[0].id;
+    ['dash-safra','acum-safra'].forEach(id => { const el = document.getElementById(id); if(el) el.value = first; });
+    preencherMesesDash(first);
+  }
+}
+
+function preencherMesesDash(safraId) {
+  const safra = safrasData.find(s => s.id == safraId);
+  const ml = document.getElementById('dash-mes');
+  if(!ml) return;
+  if(!safra) { ml.innerHTML = '<option value="">—</option>'; return; }
+  ml.innerHTML = '<option value="">— Selecione mês —</option>' + getMesesSafra(safra).map(m =>
+    `<option value="${m.val}">${m.nome}</option>`
+  ).join('');
+  // Auto-seleciona mês atual
+  const now = new Date();
+  const cur = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  if(ml.querySelector(`option[value="${cur}"]`)) ml.value = cur;
+}
+
+function preencherMesesLancar(safraId) {
+  const safra = safrasData.find(s => s.id == safraId);
+  const ml = document.getElementById('l-mes');
+  if(!ml) return;
+  if(!safra) { ml.innerHTML = '<option value="">— Selecione a safra primeiro —</option>'; return; }
+  ml.innerHTML = '<option value="">— Selecione —</option>' + getMesesSafra(safra).map(m =>
+    `<option value="${m.val}">${m.nome}</option>`
+  ).join('');
+}
+
+function onSafraDashChange() {
+  const safraId = document.getElementById('dash-safra')?.value;
+  preencherMesesDash(safraId);
+  carregarDashboard();
+}
+
+// ── ACUMULADO ──
+async function carregarAcumulado() {
+  const safraId = document.getElementById('acum-safra')?.value;
+  if(!safraId) return;
+  const gtEl = document.getElementById('acum-ger-tbl');
+  const dtEl = document.getElementById('acum-dir-tbl');
+  if(gtEl) gtEl.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
+  if(dtEl) dtEl.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
+
+  const { data } = await sb.from('lancamentos')
+    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))')
+    .eq('safra_id', safraId).order('mes');
+  acumAllData = data || [];
+
+  // Preenche filtro diretoria acumulado
+  const adEl = document.getElementById('acum-dir');
+  if(adEl) {
+    const dirs = [...new Map(acumAllData.map(l => [l.gerencias?.diretoria_id, l.gerencias?.diretorias?.nome])).entries()];
+    adEl.innerHTML = '<option value="">Todas as Diretorias</option>' + dirs.map(([id,n]) => `<option value="${id}">${n}</option>`).join('');
+  }
+  renderAcumTable();
+}
+
+function renderAcumTable() {
+  const safraId = document.getElementById('acum-safra')?.value;
+  const safra = safrasData.find(s => s.id == safraId);
+  const filtDir = parseInt(document.getElementById('acum-dir')?.value) || 0;
+  const gtEl = document.getElementById('acum-ger-tbl');
+  const dtEl = document.getElementById('acum-dir-tbl');
+  if(!acumAllData.length) { if(gtEl) gtEl.innerHTML = '<div class="loading">Nenhum dado.</div>'; return; }
+
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const gers = [...new Map(acumAllData
+    .filter(l => !filtDir || l.gerencias?.diretoria_id === filtDir)
+    .map(l => [l.gerencia_id, { id: l.gerencia_id, nome: l.gerencias?.nome, dir: l.gerencias?.diretorias?.nome }]))
+    .values()];
+
+  // Tabela gerências
+  if(gtEl) gtEl.innerHTML = `<div style="overflow-x:auto"><table><thead><tr>
+    <th>Gerência</th><th>Diretoria</th>
+    ${meses.map(m => `<th>${m.nome}</th><th style="background:#d4edda;color:#07583C">Acum.</th>`).join('')}
+  </tr></thead><tbody>${gers.map(g => {
+    let soma = 0, count = 0;
+    return `<tr><td><b>${g.nome}</b></td><td style="font-size:11px;color:var(--muted)">${g.dir||'—'}</td>
+    ${meses.map(m => {
+      const l = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
+      if(l) { soma += l.indice_prevencao||0; count++; }
+      const acum = count > 0 ? soma/count : null;
+      const ip = l ? l.indice_prevencao : null;
+      return `<td class="mono" style="color:${ip!=null?getColor(ip):'var(--muted)'}">${ip!=null?ip.toFixed(1):'—'}</td>
+              <td class="acum-cell mono" style="color:${acum!=null?getColor(acum):'var(--muted)'}">${acum!=null?acum.toFixed(1):'—'}</td>`;
+    }).join('')}</tr>`;
+  }).join('')}</tbody></table></div>`;
+
+  // Tabela diretorias
+  const dirs2 = [...new Map(acumAllData.map(l => [l.gerencias?.diretoria_id, l.gerencias?.diretorias?.nome])).entries()].map(([id,n]) => ({id,n}));
+  if(dtEl) dtEl.innerHTML = `<div style="overflow-x:auto"><table><thead><tr>
+    <th>Diretoria</th>
+    ${meses.map(m => `<th>${m.nome}</th><th style="background:#d4edda;color:#07583C">Acum.</th>`).join('')}
+  </tr></thead><tbody>${dirs2.map(d => {
+    let soma = 0, count = 0;
+    return `<tr><td><b>${d.n||'—'}</b></td>
+    ${meses.map(m => {
+      const lancs = acumAllData.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
+      const media = lancs.length ? lancs.reduce((s,l)=>s+(l.indice_prevencao||0),0)/lancs.length : null;
+      if(media != null) { soma += media; count++; }
+      const acum = count > 0 ? soma/count : null;
+      return `<td class="mono" style="color:${media!=null?getColor(media):'var(--muted)'}">${media!=null?media.toFixed(1):'—'}</td>
+              <td class="acum-cell mono" style="color:${acum!=null?getColor(acum):'var(--muted)'}">${acum!=null?acum.toFixed(1):'—'}</td>`;
+    }).join('')}</tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+function exportarAcumCSV() {
+  if(!acumAllData.length) { alert('Sem dados.'); return; }
+  const safraId = document.getElementById('acum-safra')?.value;
+  const safra = safrasData.find(s => s.id == safraId);
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const gers = [...new Map(acumAllData.map(l => [l.gerencia_id, { id: l.gerencia_id, nome: l.gerencias?.nome, dir: l.gerencias?.diretorias?.nome }])).values()];
+  let csv = 'Gerência,Diretoria,' + meses.map(m => m.nome + ',Acum.' + m.nome).join(',') + '
+';
+  for(const g of gers) {
+    let soma = 0, count = 0;
+    let row = `"${g.nome}","${g.dir||''}"`;
+    for(const m of meses) {
+      const l = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
+      if(l) { soma += l.indice_prevencao||0; count++; }
+      const acum = count > 0 ? soma/count : null;
+      row += `,${l?(l.indice_prevencao||0).toFixed(2):''},${acum!=null?acum.toFixed(2):''}`;
+    }
+    csv += row + '
+';
+  }
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `Acumulado_${safra?.nome||''}.csv`; a.click();
+}
+
+// ── CONFIGURAÇÕES ──
+async function carregarConfigForm() {
+  await carregarConfig();
+  const el = id => document.getElementById(id);
+  if(el('cfg-pg')) el('cfg-pg').value = config.peso_gerencia||0.5;
+  if(el('cfg-pd')) el('cfg-pd').value = config.peso_diretoria||0.3;
+  if(el('cfg-pa')) el('cfg-pa').value = config.peso_auditoria||0.2;
+  if(el('cfg-crit')) el('cfg-crit').value = config.faixa_critico||80;
+  if(el('cfg-meta')) el('cfg-meta').value = config.faixa_meta||90;
+  calcSomaPesos();
+  // Safras
+  const slEl = el('safra-lista');
+  if(slEl) slEl.innerHTML = safrasData.map(s => `
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--bd)">
+      <span style="flex:1;font-size:13px"><b>${s.nome}</b> <span style="font-size:11px;color:var(--muted)">${s.ano_ini}–${s.ano_fim}</span></span>
+      <button class="btn btn-danger" style="padding:3px 10px;font-size:11px" onclick="desativarSafra(${s.id})">✕</button>
+    </div>`).join('');
+}
+
+function calcSomaPesos() {
+  const pg = parseFloat(document.getElementById('cfg-pg')?.value)||0;
+  const pd = parseFloat(document.getElementById('cfg-pd')?.value)||0;
+  const pa = parseFloat(document.getElementById('cfg-pa')?.value)||0;
+  const soma = pg+pd+pa;
+  const el = document.getElementById('cfg-soma');
+  if(el) { const ok = Math.abs(soma-1)<0.01; el.innerHTML = `Soma: <b style="color:${ok?'var(--green)':'var(--red)'}">${soma.toFixed(2)}</b>${ok?' ✅':' ⚠️ Deve ser 1.00'}`; }
+}
+
+async function salvarPesos() {
+  const pg = parseFloat(document.getElementById('cfg-pg')?.value)||0;
+  const pd = parseFloat(document.getElementById('cfg-pd')?.value)||0;
+  const pa = parseFloat(document.getElementById('cfg-pa')?.value)||0;
+  if(Math.abs(pg+pd+pa-1)>0.01) { alert('A soma dos pesos deve ser 1.00'); return; }
+  await Promise.all([
+    sb.from('config').update({valor:String(pg)}).eq('chave','peso_gerencia'),
+    sb.from('config').update({valor:String(pd)}).eq('chave','peso_diretoria'),
+    sb.from('config').update({valor:String(pa)}).eq('chave','peso_auditoria'),
+  ]);
+  await carregarConfig();
+  alert('✅ Pesos salvos! IP = Ger×'+pg+' + Dir×'+pd+' + Aud×'+pa);
+}
+
+async function salvarFaixas() {
+  const crit = parseFloat(document.getElementById('cfg-crit')?.value)||80;
+  const meta = parseFloat(document.getElementById('cfg-meta')?.value)||90;
+  await Promise.all([
+    sb.from('config').update({valor:String(crit)}).eq('chave','faixa_critico'),
+    sb.from('config').update({valor:String(meta)}).eq('chave','faixa_meta'),
+  ]);
+  await carregarConfig();
+  alert('✅ Faixas salvas!');
+}
+
+async function salvarSafra() {
+  const nome = document.getElementById('sf-nome')?.value.trim();
+  const ini = parseInt(document.getElementById('sf-ini')?.value)||0;
+  const fim = parseInt(document.getElementById('sf-fim')?.value)||0;
+  if(!nome||!ini||!fim) { alert('Preencha todos os campos.'); return; }
+  const { error } = await sb.from('safras').insert({nome, ano_ini:ini, ano_fim:fim});
+  if(error) { alert('Erro: '+error.message); return; }
+  ['sf-nome','sf-ini','sf-fim'].forEach(id => { const e = document.getElementById(id); if(e) e.value=''; });
+  await carregarSafras();
+  carregarConfigForm();
+  alert('✅ Safra '+nome+' criada!');
+}
+
+async function desativarSafra(id) {
+  if(!confirm('Desativar esta safra?')) return;
+  await sb.from('safras').update({ativa:false}).eq('id',id);
+  await carregarSafras();
+  carregarConfigForm();
+}
+
 function showTab(id) {
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));

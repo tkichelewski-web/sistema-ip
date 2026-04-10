@@ -536,6 +536,10 @@ async function mostrarApp() {
     const el=document.getElementById('tab-usuarios');
     if(el) el.classList.remove('hidden');
   }
+  if(perfil==='admin'||perfil==='gestor') {
+    const ec=document.getElementById('tab-config');
+    if(ec) ec.classList.remove('hidden');
+  }
   await carregarSafras();
   preencherForms();
   const now=new Date();
@@ -758,7 +762,7 @@ async function carregarConfigForm() {
   // Safras
   const slEl = el('safra-lista');
   if(slEl) slEl.innerHTML = safrasData.map(s => `
-    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--bd)">
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
       <span style="flex:1;font-size:13px"><b>${s.nome}</b> <span style="font-size:11px;color:var(--muted)">${s.ano_ini}–${s.ano_fim}</span></span>
       <button class="btn btn-danger" style="padding:3px 10px;font-size:11px" onclick="desativarSafra(${s.id})">✕</button>
     </div>`).join('');
@@ -770,7 +774,7 @@ function calcSomaPesos() {
   const pa = parseFloat(document.getElementById('cfg-pa')?.value)||0;
   const soma = pg+pd+pa;
   const el = document.getElementById('cfg-soma');
-  if(el) { const ok = Math.abs(soma-1)<0.01; el.innerHTML = `Soma: <b style="color:${ok?'var(--green)':'var(--red)'}">${soma.toFixed(2)}</b>${ok?' ✅':' ⚠️ Deve ser 1.00'}`; }
+  if(el) { const ok = Math.abs(soma-1)<0.01; el.innerHTML = `Soma: <b style="color:${ok?'#07583C':'var(--red)'}">${soma.toFixed(2)}</b>${ok?' ✅':' ⚠️ Deve ser 1.00'}`; }
 }
 
 async function salvarPesos() {
@@ -830,6 +834,7 @@ function showTab(id) {
   if(id==='gerencias') renderGerencias();
   if(id==='usuarios') renderUsuarios();
   if(id==='historico') carregarHistorico();
+  if(id==='config') carregarConfigForm();
 }
 
 // ── CONFIG & DADOS ────────────────────────────────────────────
@@ -896,7 +901,7 @@ function calcPontGer(itens,inds){
     const ind=inds.find(i=>i.id===item.indicador_id);
     if(!ind)continue;
     let pont=0;
-    if(ind.tipo==='previsto_realizado'){const prev=parseFloat(item.previsto)||0,real=parseFloat(item.realizado)||0;pont=prev>0?Math.min((real/prev)*100,100):0;}
+    if(ind.tipo==='previsto_realizado'){const prev=parseFloat(item.previsto)||0,real=parseFloat(item.realizado)||0;pont=prev===0&&real===0?100:(prev>0?Math.min((real/prev)*100,100):0);}
     else if(ind.tipo==='nota'){pont=Math.min(parseFloat(item.nota)||0,100);}
     else if(ind.tipo==='binario'){pont=item.sim_nao?100:0;}
     tp+=ind.peso;tpo+=pont*ind.peso;item.pontuacao=pont;
@@ -1208,7 +1213,7 @@ async function renderGerencias(){
     <td><b>${g.nome}</b></td>
     <td style="font-size:12px;color:var(--muted)">${g.diretorias?.nome||'—'}</td>
     <td style="font-size:12px;color:var(--blue)">${g.unidades?.nome||'—'}</td>
-    <td><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirEditGer(${g.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarGerencia(${g.id})">✕</button></div></td>
+    <td><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirModalIG(${g.id},this.dataset.nome)" data-nome="${g.nome}">⚙️ Indicadores</button><button class="btn btn-secondary btn-sm" onclick="abrirEditGer(${g.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarGerencia(${g.id})">✕</button></div></td>
   </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -1370,8 +1375,120 @@ function exportarPDF(){
   doc.save(`IP_${periodo}.pdf`);
 }
 
+
+// ── MODAL INDICADORES POR GERÊNCIA ───────────────────────────
+let modalIGGerId = null;
+
+async function abrirModalIG(gerId, gerNome) {
+  modalIGGerId = gerId;
+  const el = document.getElementById('modal-ig-nome');
+  if(el) el.textContent = gerNome;
+  document.getElementById('modal-ig').classList.add('show');
+  await carregarModalIG();
+}
+
+async function carregarModalIG() {
+  if(!modalIGGerId) return;
+  const lista = document.getElementById('modal-ig-lista');
+  if(lista) lista.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
+
+  // Busca configuração atual desta gerência na tabela ind_gerencia_safra
+  const { data: cfg } = await sb.from('ind_gerencia_safra')
+    .select('indicador_id, peso, ativo')
+    .eq('gerencia_id', modalIGGerId);
+  const cfgMap = {};
+  (cfg||[]).forEach(r => { cfgMap[r.indicador_id] = {peso: r.peso, ativo: r.ativo}; });
+
+  await carregarIndicadores();
+
+  const rows = indicadores.map(ind => {
+    const c = cfgMap[ind.id] || {peso: ind.peso||0, ativo: ind.base||false};
+    const tipoLabel = ind.tipo==='previsto_realizado'?'Prev×Real':ind.tipo==='nota'?'Nota':'Sim/Não';
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;text-align:center">
+        <input type="checkbox" id="ig-ck-${ind.id}" ${c.ativo?'checked':''} style="width:auto;accent-color:#07583C" onchange="calcSomaIG()">
+      </td>
+      <td style="padding:8px 12px;font-size:13px"><b>${ind.nome}</b>${ind.base?' <span class="badge badge-green" style="font-size:10px">Base</span>':''}</td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--muted)">${tipoLabel}</td>
+      <td style="padding:8px 12px">
+        <input type="number" id="ig-peso-${ind.id}" value="${c.peso||0}" min="0" max="100" step="1" oninput="calcSomaIG()" style="width:70px;padding:4px 7px;font-size:12px">
+        <span style="font-size:11px;color:var(--muted)">%</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  if(lista) lista.innerHTML = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;width:50px">Ativo</th>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">Indicador</th>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">Tipo</th>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">Peso (%)</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  calcSomaIG();
+}
+
+function calcSomaIG() {
+  let soma = 0;
+  indicadores.forEach(ind => {
+    const ck = document.getElementById('ig-ck-'+ind.id);
+    const pp = document.getElementById('ig-peso-'+ind.id);
+    if(ck?.checked && pp) soma += parseFloat(pp.value)||0;
+  });
+  const el = document.getElementById('modal-ig-soma');
+  if(el) {
+    const ok = Math.abs(soma-100)<0.1;
+    el.innerHTML = 'Soma dos pesos ativos: <b style="color:'+( ok?'#07583C':'var(--red)')+'">'+soma.toFixed(1)+'%</b>'+(ok?' ✅':' ⚠️ Deve somar 100%');
+  }
+}
+
+async function salvarIndGer() {
+  if(!modalIGGerId) return;
+  const rows = [];
+  indicadores.forEach(ind => {
+    const ck = document.getElementById('ig-ck-'+ind.id);
+    const pp = document.getElementById('ig-peso-'+ind.id);
+    if(!ck||!pp) return;
+    rows.push({
+      gerencia_id: modalIGGerId,
+      indicador_id: ind.id,
+      peso: parseFloat(pp.value)||0,
+      ativo: ck.checked
+    });
+  });
+  // Delete existing and reinsert
+  await sb.from('ind_gerencia_safra').delete().eq('gerencia_id', modalIGGerId);
+  const ativos = rows.filter(r => r.ativo);
+  if(ativos.length) {
+    const { error } = await sb.from('ind_gerencia_safra').insert(ativos);
+    if(error) { alert('Erro ao salvar: '+error.message); return; }
+  }
+  alert('✅ Indicadores configurados com sucesso!');
+  fecharModal('modal-ig');
+}
+
+
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
 </script>
+
+<!-- MODAL: Configurar Indicadores por Gerência -->
+<div class="modal-overlay" id="modal-ig" style="z-index:300">
+  <div class="modal" style="width:620px;max-width:96vw">
+    <div class="modal-title">⚙️ Indicadores — <span id="modal-ig-nome"></span></div>
+    <div class="alert alert-info" style="margin-bottom:12px">
+      Configure os indicadores desta gerência e seus pesos. A soma deve ser <b>100%</b>.
+      Indicadores marcados como <b>Base</b> aparecem em todas as gerências.
+    </div>
+    <div id="modal-ig-lista" style="max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
+    <div id="modal-ig-soma" style="font-size:13px;font-family:'DM Mono',monospace;margin-top:10px;padding:8px 12px;background:var(--surface2);border-radius:6px;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-ig')">Fechar</button>
+      <button class="btn btn-primary" onclick="salvarIndGer()">✓ Salvar Configuração</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

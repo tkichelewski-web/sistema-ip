@@ -259,8 +259,12 @@ input[type=number]{font-family:'DM Mono',monospace;}
       </div>
       <div class="form-section">
         <div class="form-section-title">🔍 Auditoria</div>
+        <div id="aud-info-lancar" class="alert alert-info" style="margin-bottom:10px">ℹ️ Selecione a unidade para carregar a nota de auditoria cadastrada em Configurações.</div>
         <div class="form-row">
-          <div><label>Nota de Auditoria (0–100)</label><input type="number" id="nota-auditoria" min="0" max="100" placeholder="Ex: 85" oninput="calcPreview()"></div>
+          <div><label>Nota de Auditoria (0–100)</label>
+            <input type="number" id="nota-auditoria" min="0" max="100" placeholder="Automática da unidade" oninput="calcPreview()" style="background:#f0f9f0">
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">Preenchida automaticamente pela nota da unidade (Configurações)</div>
+          </div>
           <div><label>Observação</label><input type="text" id="obs-auditoria" placeholder="Opcional"></div>
         </div>
       </div>
@@ -415,6 +419,15 @@ input[type=number]{font-family:'DM Mono',monospace;}
             <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Crítico &lt; X · Mínimo X–Y · Meta Y–99 · Máximo = 100</p>
             <button class="btn btn-primary" onclick="salvarFaixas()">Salvar Faixas</button>
           </div>
+        </div>
+        <div class="form-section">
+          <div class="form-section-title">🔍 Nota de Auditoria por Unidade</div>
+          <p style="font-size:12px;color:var(--muted);margin-bottom:12px">A auditoria é realizada 1x por ano. A nota entra no cálculo do IP em todos os meses da safra selecionada.</p>
+          <div class="form-row">
+            <div><label>Safra</label><select id="aud-safra" style="font-size:13px" onchange="carregarAuditorias()"></select></div>
+          </div>
+          <div id="aud-unidades-wrap" style="margin-top:4px"></div>
+          <button class="btn btn-primary" style="margin-top:12px" onclick="salvarAuditorias()">✓ Salvar Notas de Auditoria</button>
         </div>
         <div class="form-section">
           <div class="form-section-title">📅 Safras</div>
@@ -759,6 +772,14 @@ async function carregarConfigForm() {
   if(el('cfg-crit')) el('cfg-crit').value = config.faixa_critico||80;
   if(el('cfg-meta')) el('cfg-meta').value = config.faixa_meta||90;
   calcSomaPesos();
+  // Auditoria por unidade
+  const audSafra = el('aud-safra');
+  if(audSafra) {
+    audSafra.innerHTML = safrasData.map(s => `<option value="${s.id}">${s.nome}</option>`).join('');
+    if(safrasData.length) audSafra.value = safrasData[0].id;
+  }
+  carregarAuditorias();
+
   // Safras
   const slEl = el('safra-lista');
   if(slEl) slEl.innerHTML = safrasData.map(s => `
@@ -888,7 +909,25 @@ function filtrarGerencias(){
   calcPreview();
 }
 
-async function onGerenciaChange(){await renderIndTable();calcPreview();}
+async function onGerenciaChange(){
+  await renderIndTable();
+  calcPreview();
+  // Show audit note for this unidade
+  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
+  const infoEl=document.getElementById('aud-info-lancar');
+  const audEl=document.getElementById('nota-auditoria');
+  if(uniId&&safraId){
+    const nota=await getNotaAuditoria(uniId,safraId);
+    if(nota!=null){
+      if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
+      if(infoEl)infoEl.innerHTML='✅ Nota de auditoria da unidade: <b>'+nota+'</b> (cadastrada em Configurações)';
+    } else {
+      if(audEl){audEl.value='';audEl.style.background='';}
+      if(infoEl)infoEl.innerHTML='⚠️ Nenhuma nota de auditoria cadastrada para esta unidade. Vá em <b>Configurações</b> para cadastrar.';
+    }
+  }
+}
 
 // ── CÁLCULOS ──────────────────────────────────────────────────
 function calcAjuste(tipo,regras){
@@ -1037,7 +1076,15 @@ async function calcPreview(){
   });
   const pg=calcPontGer(itens,indsGer);
   itens.forEach(item=>{const el=document.getElementById('pont_'+item.indicador_id);if(el){el.textContent=(item.pontuacao||0).toFixed(1);el.style.color=(item.pontuacao||0)>=80?'#07583C':(item.pontuacao||0)>=60?'var(--yellow)':'var(--red)';}});
-  const aud=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
+  // Busca nota de auditoria da unidade (definida em Configurações)
+  // Se não houver, usa o campo manual como fallback
+  const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
+  const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
+  let aud=audManual;
+  if(uniId&&safraIdLanc) {
+    const notaUni=await getNotaAuditoria(uniId,safraIdLanc);
+    if(notaUni!=null) aud=notaUni;
+  }
   const tipo=document.getElementById('sel-acidente')?.value||'nenhum';
   const regras=parseInt(document.getElementById('regras-salvas')?.value)||0;
   const aj=calcAjuste(tipo,regras);
@@ -1073,7 +1120,15 @@ async function salvarLancamento(){
     return item;
   });
   const pg=calcPontGer(itens,indsGer);
-  const aud=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
+  // Busca nota de auditoria da unidade (definida em Configurações)
+  // Se não houver, usa o campo manual como fallback
+  const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
+  const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
+  let aud=audManual;
+  if(uniId&&safraIdLanc) {
+    const notaUni=await getNotaAuditoria(uniId,safraIdLanc);
+    if(notaUni!=null) aud=notaUni;
+  }
   const tipo=document.getElementById('sel-acidente')?.value||'nenhum';
   const regras=parseInt(document.getElementById('regras-salvas')?.value)||0;
   const obs=document.getElementById('obs-auditoria')?.value||'';
@@ -1468,6 +1523,59 @@ async function salvarIndGer() {
   fecharModal('modal-ig');
 }
 
+
+
+// ── AUDITORIA POR UNIDADE ─────────────────────────────────────
+async function carregarAuditorias() {
+  const safraId = document.getElementById('aud-safra')?.value;
+  const wrap = document.getElementById('aud-unidades-wrap');
+  if(!wrap) return;
+  if(!safraId) { wrap.innerHTML = '<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>'; return; }
+
+  // Busca notas existentes
+  const { data: notas } = await sb.from('auditoria_unidade')
+    .select('*').eq('safra_id', safraId);
+  const notaMap = {};
+  (notas||[]).forEach(n => { notaMap[n.unidade_id] = n.nota; });
+
+  wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">
+    ${estrutura.unidades.map(u => `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px">
+        <label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1"
+            value="${notaMap[u.id]??''}" placeholder="0–100"
+            style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace">
+          <span style="font-size:12px;color:var(--muted)">/ 100</span>
+        </div>
+        ${notaMap[u.id]!=null ? `<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>${notaMap[u.id]}</b></div>` : '<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+async function salvarAuditorias() {
+  const safraId = parseInt(document.getElementById('aud-safra')?.value)||0;
+  if(!safraId) { alert('Selecione uma safra.'); return; }
+
+  for(const u of estrutura.unidades) {
+    const nota = parseFloat(document.getElementById('aud-nota-'+u.id)?.value);
+    if(isNaN(nota)) continue;
+    await sb.from('auditoria_unidade').upsert(
+      { unidade_id: u.id, safra_id: safraId, nota },
+      { onConflict: 'unidade_id,safra_id' }
+    );
+  }
+  alert('✅ Notas de auditoria salvas!');
+  carregarAuditorias();
+}
+
+async function getNotaAuditoria(unidadeId, safraId) {
+  if(!unidadeId || !safraId) return null;
+  const { data } = await sb.from('auditoria_unidade')
+    .select('nota').eq('unidade_id', unidadeId).eq('safra_id', safraId).single();
+  return data?.nota ?? null;
+}
 
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);

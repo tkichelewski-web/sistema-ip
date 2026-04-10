@@ -901,6 +901,11 @@ function preencherForms(){
   if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
 }
 
+function onSafraLancarChange(){
+  const safraId=document.getElementById('sel-safra')?.value;
+  preencherMesesLancar(safraId);
+}
+
 function filtrarGerencias(){
   const dirId=parseInt(document.getElementById('sel-diretoria')?.value)||0;
   const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):[];
@@ -1046,11 +1051,14 @@ function renderRanking(){
 // ── LANÇAR ────────────────────────────────────────────────────
 async function renderIndTable(){
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
+  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const tw=document.getElementById('ind-table-wrap');
   if(!gerId){if(tw)tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p>';return;}
-  const{data:vincs}=await sb.from('vinculos').select('indicador_id').eq('gerencia_id',gerId);
-  const idsExtra=(vincs||[]).map(v=>v.indicador_id);
-  const indsGer=indicadores.filter(i=>i.base||idsExtra.includes(i.id));
+  const indsGer=await getIndsGerencia(gerId, safraId);
+  if(!indsGer.length){
+    if(tw)tw.innerHTML='<div class="alert alert-warn">⚠️ Nenhum indicador configurado para esta gerência nesta safra. Vá em <b>Gerências → ⚙️ Indicadores</b> para configurar.</div>';
+    return;
+  }
   const totalPeso=indsGer.reduce((s,i)=>s+(i.peso||0),0);
   const aviso=totalPeso!==100?`<div class="alert alert-warn">⚠️ Soma dos pesos: <b>${totalPeso}%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>`:'';
   if(tw)tw.innerHTML=aviso+`<div style="overflow-x:auto"><table class="ind-table"><thead><tr><th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th></tr></thead><tbody>
@@ -1064,9 +1072,9 @@ async function renderIndTable(){
 async function calcPreview(){
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
   if(!gerId)return;
-  const{data:vincs}=await sb.from('vinculos').select('indicador_id').eq('gerencia_id',gerId);
-  const idsExtra=(vincs||[]).map(v=>v.indicador_id);
-  const indsGer=indicadores.filter(i=>i.base||idsExtra.includes(i.id));
+  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
+  const indsGer=await getIndsGerencia(gerId, safraId);
+  if(!indsGer.length)return;
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id};
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
@@ -1109,9 +1117,9 @@ async function salvarLancamento(){
   if(!gerId||!periodo||!uniId){alert('Preencha Gerência, Unidade e Período.');return;}
   const btn=document.getElementById('btn-salvar');
   if(btn){btn.disabled=true;btn.textContent='Salvando...';}
-  const{data:vincs}=await sb.from('vinculos').select('indicador_id').eq('gerencia_id',gerId);
-  const idsExtra=(vincs||[]).map(v=>v.indicador_id);
-  const indsGer=indicadores.filter(i=>i.base||idsExtra.includes(i.id));
+  const safraIdLanc2=parseInt(document.getElementById('sel-safra')?.value)||0;
+  const indsGer=await getIndsGerencia(gerId, safraIdLanc2);
+  if(!indsGer.length){alert('Configure os indicadores desta gerência em Gerências → ⚙️ Indicadores antes de lançar.');if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}return;}
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id};
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
@@ -1595,6 +1603,24 @@ async function getNotaAuditoria(unidadeId, safraId) {
   const { data } = await sb.from('auditoria_unidade')
     .select('nota').eq('unidade_id', unidadeId).eq('safra_id', safraId).single();
   return data?.nota ?? null;
+}
+
+
+// ── BUSCA INDICADORES POR GERÊNCIA/SAFRA ─────────────────────
+async function getIndsGerencia(gerId, safraId) {
+  if(!gerId) return [];
+  // Busca da tabela ind_gerencia_safra (pesos por gerência)
+  const { data: cfg } = await sb.from('ind_gerencia_safra')
+    .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+    .eq('gerencia_id', gerId)
+    .eq('safra_id', safraId||0)
+    .eq('ativo', true);
+  if(cfg && cfg.length > 0) {
+    // Usa pesos configurados por gerência
+    return cfg.map(r => ({...r.indicadores, peso: r.peso}));
+  }
+  // Fallback: usa indicadores base com peso padrão
+  return indicadores.filter(i => i.base);
 }
 
 // ── START ─────────────────────────────────────────────────────

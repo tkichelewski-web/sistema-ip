@@ -313,7 +313,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="flex-row" style="margin-bottom:16px;">
         <select id="hist-gerencia" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"><option value="">Todas as Gerências</option></select>
         <select id="hist-ano" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"></select>
-        <button class="btn btn-secondary btn-sm" onclick="exportarHistoricoExcel()">⬇ Excel</button>
+        <button class="btn btn-secondary btn-sm" onclick="exportarHistoricoExcel()">⬇ Excel Filtrado</button>
+        <button class="btn btn-primary btn-sm" onclick="exportarBackupCompleto()" style="background:#07583C">💾 Backup Completo</button>
       </div>
       <div class="table-wrap">
         <div class="table-header"><span class="table-title">Histórico de Lançamentos</span></div>
@@ -1634,8 +1635,90 @@ async function getIndsGerencia(gerId, safraId) {
   return indicadores.filter(i => i.base);
 }
 
+
+// ── BACKUP COMPLETO ───────────────────────────────────────────
+async function exportarBackupCompleto() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Exportando...';
+
+  try {
+    // Busca TODOS os lançamentos históricos
+    const { data: lancs } = await sb.from('lancamentos')
+      .select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)')
+      .order('safra_id').order('mes').order('gerencia_id');
+
+    if(!lancs?.length) { alert('Nenhum lançamento encontrado.'); return; }
+
+    const acid = {nenhum:'Nenhum',iap:'IAP',asa:'ASA',aca:'ACA',fatalidade:'Fatalidade'};
+
+    // Aba 1: Lançamentos
+    let csv = 'BACKUP COMPLETO - SISTEMA IP VIDAS - ' + new Date().toLocaleDateString('pt-BR') + '\n\n';
+    csv += 'LANCAMENTOS\n';
+    csv += 'Safra,Mes,Gerencia,Diretoria,Unidade,Pont.Gerencia,Med.Diretoria,Auditoria,Acidente,Regras,Ajuste,IP Mensal,IP Acumulado,Status\n';
+
+    for(const l of lancs) {
+      const idx = l.indice_prevencao||0;
+      const st = getStatus(idx);
+      csv += [
+        '"'+(l.safras?.nome||'—')+'"',
+        '"'+(l.mes||l.periodo||'—')+'"',
+        '"'+(l.gerencias?.nome||'—')+'"',
+        '"'+(l.gerencias?.diretorias?.nome||'—')+'"',
+        '"'+(l.gerencias?.unidades?.nome||'—')+'"',
+        (l.pontuacao_gerencia||0).toFixed(2),
+        l.media_diretoria!=null?l.media_diretoria.toFixed(2):'',
+        (l.nota_auditoria||0).toFixed(2),
+        '"'+(acid[l.tipo_acidente]||'—')+'"',
+        l.regras_salvas||0,
+        l.ajuste_pontos||0,
+        idx.toFixed(2),
+        l.acumulado_gerencia!=null?l.acumulado_gerencia.toFixed(2):'',
+        '"'+st.label+'"'
+      ].join(',') + '\n';
+    }
+
+    // Aba 2: Gerências
+    csv += '\nGERENCIAS\n';
+    csv += 'Gerencia,Diretoria,Unidade\n';
+    for(const g of estrutura.gerencias) {
+      csv += `"${g.nome}","${g.diretorias?.nome||'—'}","${g.unidades?.nome||'—'}"
+`;
+    }
+
+    // Aba 3: Indicadores
+    csv += '\nINDICADORES\n';
+    csv += 'Indicador,Tipo,Fonte\n';
+    for(const i of indicadores) {
+      csv += `"${i.nome}","${i.tipo}","${i.fonte||'—'}"
+`;
+    }
+
+    // Download
+    const agora = new Date();
+    const dataStr = `${agora.getFullYear()}${String(agora.getMonth()+1).padStart(2,'0')}${String(agora.getDate()).padStart(2,'0')}`;
+    const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Backup_IP_VIDAS_${dataStr}.csv`;
+    a.click();
+
+    alert('✅ Backup exportado! Salve o arquivo no OneDrive ou SharePoint para manter o histórico.');
+  } catch(e) {
+    alert('Erro ao exportar: '+e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Backup Completo';
+  }
+}
+
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
+
+// Ping automático para evitar pausa do Supabase (a cada 5 minutos)
+setInterval(async () => {
+  try { await sb.from('config').select('chave').limit(1); } catch(e) {}
+}, 5 * 60 * 1000);
 </script>
 
 <!-- MODAL: Configurar Indicadores por Gerência -->

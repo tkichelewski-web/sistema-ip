@@ -1438,6 +1438,12 @@ async function abrirModalIG(gerId, gerNome) {
   modalIGGerId = gerId;
   const el = document.getElementById('modal-ig-nome');
   if(el) el.textContent = gerNome;
+  // Preenche safras no select do modal
+  const ms = document.getElementById('modal-ig-safra');
+  if(ms) {
+    ms.innerHTML = safrasData.map(s => `<option value="${s.id}">${s.nome}</option>`).join('');
+    if(safrasData.length) ms.value = safrasData[0].id;
+  }
   document.getElementById('modal-ig').classList.add('show');
   await carregarModalIG();
 }
@@ -1447,10 +1453,14 @@ async function carregarModalIG() {
   const lista = document.getElementById('modal-ig-lista');
   if(lista) lista.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
 
+  // Busca safra selecionada no modal
+  const safraIdModal = parseInt(document.getElementById('modal-ig-safra')?.value)||0;
+  if(!safraIdModal) { if(lista) lista.innerHTML = '<div class="loading">Selecione uma safra.</div>'; return; }
   // Busca configuração atual desta gerência na tabela ind_gerencia_safra
   const { data: cfg } = await sb.from('ind_gerencia_safra')
     .select('indicador_id, peso, ativo')
-    .eq('gerencia_id', modalIGGerId);
+    .eq('gerencia_id', modalIGGerId)
+    .eq('safra_id', safraIdModal);
   const cfgMap = {};
   (cfg||[]).forEach(r => { cfgMap[r.indicador_id] = {peso: r.peso, ativo: r.ativo}; });
 
@@ -1512,8 +1522,13 @@ async function salvarIndGer() {
       ativo: ck.checked
     });
   });
-  // Delete existing and reinsert
-  await sb.from('ind_gerencia_safra').delete().eq('gerencia_id', modalIGGerId);
+  const safraIdSalvar = parseInt(document.getElementById('modal-ig-safra')?.value)||0;
+  if(!safraIdSalvar) { alert('Selecione uma safra.'); return; }
+  // Adiciona safra_id em cada row
+  rows.forEach(r => r.safra_id = safraIdSalvar);
+  // Delete existing for this gerencia+safra and reinsert
+  await sb.from('ind_gerencia_safra').delete()
+    .eq('gerencia_id', modalIGGerId).eq('safra_id', safraIdSalvar);
   const ativos = rows.filter(r => r.ativo);
   if(ativos.length) {
     const { error } = await sb.from('ind_gerencia_safra').insert(ativos);
@@ -1585,6 +1600,10 @@ document.addEventListener('DOMContentLoaded',init);
 <div class="modal-overlay" id="modal-ig" style="z-index:300">
   <div class="modal" style="width:620px;max-width:96vw">
     <div class="modal-title">⚙️ Indicadores — <span id="modal-ig-nome"></span></div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label>Safra</label>
+      <select id="modal-ig-safra" onchange="carregarModalIG()" style="max-width:250px;padding:7px 11px;font-size:13px"></select>
+    </div>
     <div class="alert alert-info" style="margin-bottom:12px">
       Configure os indicadores desta gerência e seus pesos. A soma deve ser <b>100%</b>.
       Indicadores marcados como <b>Base</b> aparecem em todas as gerências.

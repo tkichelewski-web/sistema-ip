@@ -1268,7 +1268,7 @@ async function renderGerencias(){
     <td><b>${g.nome}</b></td>
     <td style="font-size:12px;color:var(--muted)">${g.diretorias?.nome||'—'}</td>
     <td style="font-size:12px;color:var(--blue)">${g.unidades?.nome||'—'}</td>
-    <td><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirModalIG(${g.id},this.dataset.nome)" data-nome="${g.nome}">⚙️ Indicadores</button><button class="btn btn-secondary btn-sm" onclick="abrirEditGer(${g.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarGerencia(${g.id})">✕</button></div></td>
+    <td><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirModalIGById(${g.id})">⚙️ Indicadores</button><button class="btn btn-secondary btn-sm" onclick="abrirEditGer(${g.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarGerencia(${g.id})">✕</button></div></td>
   </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -1433,6 +1433,11 @@ function exportarPDF(){
 
 // ── MODAL INDICADORES POR GERÊNCIA ───────────────────────────
 let modalIGGerId = null;
+
+function abrirModalIGById(gerId) {
+  const g = estrutura.gerencias.find(x => x.id === gerId);
+  abrirModalIG(gerId, g ? g.nome : '');
+}
 
 async function abrirModalIG(gerId, gerNome) {
   modalIGGerId = gerId;

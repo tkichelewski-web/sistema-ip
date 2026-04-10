@@ -247,9 +247,10 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="form-section">
         <div class="form-section-title">📋 Identificação</div>
         <div class="form-row">
+          <div><label>Safra</label><select id="sel-safra" onchange="onSafraLancarChange()"><option value="">— Selecione —</option></select></div>
           <div><label>Diretoria</label><select id="sel-diretoria" onchange="filtrarGerencias()"><option value="">— Selecione —</option></select></div>
           <div><label>Gerência</label><select id="sel-gerencia" onchange="onGerenciaChange()"><option value="">— Selecione —</option></select></div>
-          <div><label>Unidade</label><select id="sel-unidade"><option value="">— Selecione —</option></select></div>
+          <div><label>Unidade</label><select id="sel-unidade" onchange="onUnidadeChange()"><option value="">— Selecione —</option></select></div>
           <div><label>Período</label><input type="month" id="sel-periodo"></div>
         </div>
       </div>
@@ -901,6 +902,25 @@ function preencherForms(){
   if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
 }
 
+async function onUnidadeChange(){
+  // Carrega nota de auditoria quando unidade muda
+  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
+  const infoEl=document.getElementById('aud-info-lancar');
+  const audEl=document.getElementById('nota-auditoria');
+  if(uniId&&safraId){
+    const nota=await getNotaAuditoria(uniId,safraId);
+    if(nota!=null){
+      if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
+      if(infoEl)infoEl.innerHTML='✅ Nota de auditoria da unidade: <b>'+nota+'</b> (cadastrada em Configurações)';
+    } else {
+      if(audEl){audEl.value='';audEl.style.background='';}
+      if(infoEl)infoEl.innerHTML='⚠️ Nenhuma nota de auditoria cadastrada para esta unidade. Vá em <b>Configurações</b> para cadastrar.';
+    }
+  }
+  calcPreview();
+}
+
 function onSafraLancarChange(){
   const safraId=document.getElementById('sel-safra')?.value;
   preencherMesesLancar(safraId);
@@ -916,22 +936,13 @@ function filtrarGerencias(){
 
 async function onGerenciaChange(){
   await renderIndTable();
-  calcPreview();
-  // Show audit note for this unidade
+  // Also trigger unidade audit load
   const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const infoEl=document.getElementById('aud-info-lancar');
   const audEl=document.getElementById('nota-auditoria');
-  if(uniId&&safraId){
-    const nota=await getNotaAuditoria(uniId,safraId);
-    if(nota!=null){
-      if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
-      if(infoEl)infoEl.innerHTML='✅ Nota de auditoria da unidade: <b>'+nota+'</b> (cadastrada em Configurações)';
-    } else {
-      if(audEl){audEl.value='';audEl.style.background='';}
-      if(infoEl)infoEl.innerHTML='⚠️ Nenhuma nota de auditoria cadastrada para esta unidade. Vá em <b>Configurações</b> para cadastrar.';
-    }
-  }
+  if(uniId) onUnidadeChange();
+  else calcPreview();
 }
 
 // ── CÁLCULOS ──────────────────────────────────────────────────
@@ -1609,14 +1620,14 @@ async function getNotaAuditoria(unidadeId, safraId) {
 // ── BUSCA INDICADORES POR GERÊNCIA/SAFRA ─────────────────────
 async function getIndsGerencia(gerId, safraId) {
   if(!gerId) return [];
-  // Busca da tabela ind_gerencia_safra (pesos por gerência)
-  const { data: cfg } = await sb.from('ind_gerencia_safra')
+  // Busca da tabela ind_gerencia_safra (pesos por gerência/safra)
+  let q = sb.from('ind_gerencia_safra')
     .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
     .eq('gerencia_id', gerId)
-    .eq('safra_id', safraId||0)
     .eq('ativo', true);
+  if(safraId) q = q.eq('safra_id', safraId);
+  const { data: cfg } = await q;
   if(cfg && cfg.length > 0) {
-    // Usa pesos configurados por gerência
     return cfg.map(r => ({...r.indicadores, peso: r.peso}));
   }
   // Fallback: usa indicadores base com peso padrão

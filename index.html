@@ -1113,11 +1113,11 @@ async function renderIndTable(){
   }
   const totalPeso=indsGer.reduce((s,i)=>s+(i.peso||0),0);
   const aviso=totalPeso!==100?`<div class="alert alert-warn">⚠️ Soma dos pesos: <b>${totalPeso}%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>`:'';
-  if(tw)tw.innerHTML=aviso+`<div style="overflow-x:auto"><table class="ind-table"><thead><tr><th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th></tr></thead><tbody>
+  if(tw)tw.innerHTML=aviso+`<div style="overflow-x:auto"><table class="ind-table"><thead><tr><th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th><th>Comentário</th></tr></thead><tbody>
   ${indsGer.map(ind=>{
-    if(ind.tipo==='previsto_realizado')return`<tr><td><b>${ind.nome}</b></td><td><span class="badge badge-blue" style="font-size:10px">Prev×Real</span></td><td class="mono">${ind.peso}%</td><td><input type="number" id="prev_${ind.id}" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td><input type="number" id="real_${ind.id}" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td></tr>`;
-    if(ind.tipo==='nota')return`<tr><td><b>${ind.nome}</b></td><td><span class="badge badge-green" style="font-size:10px">Nota</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><input type="number" id="nota_${ind.id}" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td></tr>`;
-    return`<tr><td><b>${ind.nome}</b></td><td><span class="badge badge-yellow" style="font-size:10px">Sim/Não</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><select id="bin_${ind.id}" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td></tr>`;
+    if(ind.tipo==='previsto_realizado')return`<tr><td><b>${ind.nome}</b></td><td><span class="badge badge-blue" style="font-size:10px">Prev×Real</span></td><td class="mono">${ind.peso}%</td><td><input type="number" id="prev_${ind.id}" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td><input type="number" id="real_${ind.id}" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
+    if(ind.tipo==='nota')return`<tr><td><b>${ind.nome}</b></td><td><span class="badge badge-green" style="font-size:10px">Nota</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><input type="number" id="nota_${ind.id}" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
+    return`<tr><td><b>${ind.nome}</b></td><td><span class="badge badge-yellow" style="font-size:10px">Sim/Não</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><select id="bin_${ind.id}" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
@@ -1721,15 +1721,40 @@ function fecharImpressao(){document.getElementById('print-overlay').style.displa
 function fecharModal(id){document.getElementById(id)?.classList.remove('show');}
 
 
+// ── BUSCA INDICADORES POR GERÊNCIA/SAFRA ─────────────────────
+async function getIndsGerencia(gerId, safraId) {
+  if(!gerId) return [];
+  let q = sb.from('ind_gerencia_safra')
+    .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+    .eq('gerencia_id', gerId)
+    .eq('ativo', true);
+  if(safraId) q = q.eq('safra_id', safraId);
+  const { data: cfg } = await q;
+  if(cfg && cfg.length > 0) {
+    return cfg.map(r => ({...r.indicadores, peso: r.peso}));
+  }
+  // Fallback sem filtro de safra
+  if(safraId) {
+    const { data: cfgAll } = await sb.from('ind_gerencia_safra')
+      .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+      .eq('gerencia_id', gerId).eq('ativo', true);
+    if(cfgAll && cfgAll.length > 0) {
+      return cfgAll.map(r => ({...r.indicadores, peso: r.peso}));
+    }
+  }
+  // Último fallback: indicadores base
+  return indicadores.filter(i => i.base);
+}
+
+
 function filtrarNaoAtingidos(){
   const filtrar=document.getElementById('filtro-nao-atingidos')?.checked;
   const rows=document.querySelectorAll('#ind-table-wrap tbody tr');
   rows.forEach(row=>{
     if(!filtrar){row.style.display='';return;}
-    // Verifica se a pontuação está abaixo de 100%
-    const percEl=row.querySelector('[id^="perc_"]');
-    if(!percEl){row.style.display='';return;}
-    const txt=percEl.textContent||'';
+    const pontEl=row.querySelector('[id^="pont_"]');
+    if(!pontEl){row.style.display='';return;}
+    const txt=pontEl.textContent||'';
     const val=parseFloat(txt)||0;
     row.style.display=(val<100||txt==='—')?'':'none';
   });

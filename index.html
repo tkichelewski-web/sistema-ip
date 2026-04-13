@@ -200,6 +200,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <select id="dash-filtro-dir" onchange="renderDashTable()" style="width:auto;padding:6px 10px;font-size:12px;"></select>
           <button class="btn btn-secondary btn-sm" onclick="exportarExcel()">⬇ Excel</button>
           <button class="btn btn-secondary btn-sm" onclick="exportarPDF()">⬇ PDF</button>
+          <button class="btn btn-secondary btn-sm" onclick="abrirImpressao()">🖨️ Imprimir</button>
         </div>
       </div>
       <div class="stats-row" id="dash-stats"><div class="stat-card"><div class="stat-label">Período</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">—</div></div><div class="stat-card"><div class="stat-label">Meta+Máximo</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Crítico</div><div class="stat-value c-red">—</div></div></div>
@@ -986,14 +987,14 @@ function getStatus(v){
   if(v>=100)return{label:'Máximo',cls:'badge-purple'};
   if(v>=(config.faixa_meta||90))return{label:'Meta',cls:'badge-green'};
   if(v>=(config.faixa_critico||80))return{label:'Mínimo',cls:'badge-yellow'};
-  return{label:'Crítico',cls:'badge-red'};
+  return{label:'Ponto de Atenção',cls:'badge-yellow'};
 }
 function getColor(v){
   if(v>=100)return'var(--purple)';
   if(v>=(config.faixa_meta||90))return'#07583C';
-  if(v>=(config.faixa_critico||80))return'var(--yellow)';
-  return'var(--red)';
+  return'var(--yellow)';
 }
+
 
 // ── DASHBOARD ─────────────────────────────────────────────────
 async function carregarDashboard(){
@@ -1037,7 +1038,7 @@ function renderDashTable(){
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
     const aj=l.ajuste_pontos||0;
     return`<tr>
-      <td><b>${l.gerencias?.nome||'—'}</b></td>
+      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id})">${l.gerencias?.nome||'—'}</b></td>
       <td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td>
       <td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
@@ -1141,7 +1142,19 @@ async function salvarLancamento(){
   const periodo=document.getElementById('sel-periodo')?.value;
   if(!gerId||!periodo||!uniId){alert('Preencha Gerência, Unidade e Período.');return;}
   const btn=document.getElementById('btn-salvar');
-  if(btn){btn.disabled=true;btn.textContent='Salvando...';}
+  if(btn){btn.disabled=true;btn.textContent='Verificando...';}
+  // Trava: verifica se já existe lançamento para esta gerência/mês
+  const mesLancar = document.getElementById('sel-periodo')?.value || document.getElementById('l-mes')?.value || periodo;
+  const {data: existing} = await sb.from('lancamentos')
+    .select('id').eq('gerencia_id', gerId)
+    .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
+    .maybeSingle();
+  if(existing && !window._editandoLancamento) {
+    alert('⚠️ Já existe um lançamento para esta gerência em ' + mesLancar + '.\n\nPara editar, use o botão "✏️ Editar" no Histórico.');
+    if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
+    return;
+  }
+  if(btn){btn.textContent='Salvando...';}
   const safraIdLanc2=parseInt(document.getElementById('sel-safra')?.value)||0;
   const indsGer=await getIndsGerencia(gerId, safraIdLanc2);
   if(!indsGer.length){alert('Configure os indicadores desta gerência em Gerências → ⚙️ Indicadores antes de lançar.');if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}return;}
@@ -1169,8 +1182,16 @@ async function salvarLancamento(){
   const ger=estrutura.gerencias.find(g=>g.id===gerId);
   let mediaDir=null;
   if(ger){
-    const gersDir=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id&&g.id!==gerId).map(g=>g.id);
-    if(gersDir.length){const{data:ld}=await sb.from('lancamentos').select('pontuacao_gerencia').eq('periodo',periodo).in('gerencia_id',gersDir);if(ld?.length)mediaDir=ld.reduce((s,l)=>s+l.pontuacao_gerencia,0)/ld.length;}
+    // Busca TODAS as gerências da diretoria (incluindo a atual)
+    const gersDir=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id).map(g=>g.id);
+    if(gersDir.length){
+      const{data:ld}=await sb.from('lancamentos').select('pontuacao_gerencia,gerencia_id')
+        .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
+        .in('gerencia_id',gersDir);
+      // Inclui a pontuação atual da gerência sendo salva
+      const todasPonts=[...(ld||[]).filter(l=>l.gerencia_id!==gerId).map(l=>l.pontuacao_gerencia), pg];
+      if(todasPonts.length) mediaDir=todasPonts.reduce((s,v)=>s+v,0)/todasPonts.length;
+    }
   }
   const indBase=calcIndice(pg,mediaDir,aud,0);
   const indFinal=calcIndice(pg,mediaDir,aud,aj);
@@ -1184,13 +1205,27 @@ async function salvarLancamento(){
   await sb.from('lancamento_itens').delete().eq('lancamento_id',lanc.id);
   await sb.from('lancamento_itens').insert(itens.map(item=>({lancamento_id:lanc.id,indicador_id:item.indicador_id,previsto:item.previsto||null,realizado:item.realizado||null,nota:item.nota||null,sim_nao:item.sim_nao||null,pontuacao:item.pontuacao||0})));
   const st=getStatus(indFinal);
-  alert(`✅ Salvo!
-${ger?.nome||''}: ${indFinal.toFixed(1)} — ${st.label}`);
+  // Recalcular IP de todas as gerências da diretoria com a nova média
+  if(ger && mediaDir!=null) {
+    const gersDir2=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id&&g.id!==gerId).map(g=>g.id);
+    if(gersDir2.length){
+      const{data:outrasLancs}=await sb.from('lancamentos').select('*')
+        .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
+        .in('gerencia_id',gersDir2);
+      for(const ol of (outrasLancs||[])){
+        const novoIP=calcIndice(ol.pontuacao_gerencia,mediaDir,ol.nota_auditoria,ol.ajuste_pontos||0);
+        await sb.from('lancamentos').update({media_diretoria:mediaDir,indice_prevencao:novoIP}).eq('id',ol.id);
+      }
+    }
+  }
+  alert('✅ Salvo!\n'+( ger?.nome||'')+': '+indFinal.toFixed(1)+' — '+st.label);
   if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
+  window._editandoLancamento=false;
   dashData=null;carregarDashboard();
 }
 
 function limparForm(){
+  window._editandoLancamento = false;
   if(usuario.perfil!=='gerencia'){const sd=document.getElementById('sel-diretoria');if(sd)sd.value='';const sg=document.getElementById('sel-gerencia');if(sg)sg.innerHTML='<option value="">— Selecione —</option>';}
   ['nota-auditoria','obs-auditoria'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const sa=document.getElementById('sel-acidente');if(sa)sa.value='nenhum';
@@ -1822,6 +1857,7 @@ async function editarLancamento(lancId) {
   await calcPreview();
   // Scroll to result box
   document.getElementById('rb')?.scrollIntoView({behavior:'smooth', block:'center'});
+  window._editandoLancamento = true;
   alert('✅ Lançamento carregado para revisão! Verifique os dados e a prévia do cálculo abaixo. Clique em "Salvar Lançamento" para atualizar.');
 }
 
@@ -1837,6 +1873,181 @@ async function apagarLancamento(lancId, gerNome, periodo) {
   alert('✅ Lançamento apagado!');
   carregarHistorico();
   dashData = null;
+}
+
+
+// ── IMPRESSÃO E DETALHE ───────────────────────────────────────
+async function verDetalheGerencia(lancId) {
+  document.getElementById('modal-detalhe').classList.add('show');
+  const content = document.getElementById('modal-detalhe-content');
+  content.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
+
+  const { data: lanc } = await sb.from('lancamentos')
+    .select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)')
+    .eq('id', lancId).single();
+  const { data: itens } = await sb.from('lancamento_itens')
+    .select('*,indicadores(id,nome,tipo)')
+    .eq('lancamento_id', lancId);
+
+  if(!lanc) { content.innerHTML = '<p>Não encontrado.</p>'; return; }
+
+  const title = document.getElementById('modal-detalhe-title');
+  if(title) title.textContent = '📋 ' + (lanc.gerencias?.nome||'') + ' — ' + (lanc.mes||lanc.periodo||'');
+
+  window._detalheHTML = gerarDetalheHTML(lanc, itens);
+  content.innerHTML = window._detalheHTML;
+}
+
+function gerarDetalheHTML(lanc, itens) {
+  const st = getStatus(lanc.indice_prevencao||0);
+  const cor = getColor(lanc.indice_prevencao||0);
+  const acid = {nenhum:'✅ Sem acidente',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
+
+  const indRows = (itens||[]).map(item => {
+    const tipo = item.indicadores?.tipo;
+    let valorStr = '—';
+    if(tipo==='previsto_realizado') valorStr = 'Previsto: '+(item.previsto||0)+' / Realizado: '+(item.realizado||0);
+    else if(tipo==='nota') valorStr = 'Nota: '+(item.nota||0);
+    else if(tipo==='binario') valorStr = item.sim_nao ? '✓ Sim' : '✗ Não';
+    return `<tr>
+      <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">${item.indicadores?.nome||'—'}</td>
+      <td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">${valorStr}</td>
+      <td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:${(item.pontuacao||0)>=90?'#07583C':(item.pontuacao||0)>=70?'#c47d0e':'#d93025'}">${(item.pontuacao||0).toFixed(1)}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
+    <div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">GERÊNCIA</div>
+      <div style="font-size:16px;font-weight:800;color:#07583C">${lanc.gerencias?.nome||'—'}</div>
+      <div style="font-size:12px;color:#5a7a5a">${lanc.gerencias?.diretorias?.nome||''} · ${lanc.gerencias?.unidades?.nome||''}</div>
+    </div>
+    <div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">PERÍODO</div>
+      <div style="font-size:16px;font-weight:800;color:#07583C">${lanc.mes||lanc.periodo||'—'}</div>
+      <div style="font-size:12px;color:#5a7a5a">${lanc.safras?.nome||''}</div>
+    </div>
+    <div style="background:${cor}18;border-radius:10px;padding:14px;border-left:4px solid ${cor}">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">ÍNDICE DE PREVENÇÃO</div>
+      <div style="font-size:32px;font-weight:800;color:${cor}">${(lanc.indice_prevencao||0).toFixed(1)}</div>
+      <div style="font-size:12px;font-weight:700;color:${cor}">${st.label}</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:20px">
+    <div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center">
+      <div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">PONT. GERÊNCIA</div>
+      <div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.pontuacao_gerencia||0).toFixed(1)}</div>
+    </div>
+    <div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center">
+      <div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">MÉD. DIRETORIA</div>
+      <div style="font-size:20px;font-weight:800;color:#07583C">${lanc.media_diretoria!=null?lanc.media_diretoria.toFixed(1):'—'}</div>
+    </div>
+    <div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center">
+      <div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AUDITORIA</div>
+      <div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.nota_auditoria||0).toFixed(1)}</div>
+    </div>
+    <div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center">
+      <div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AJUSTE</div>
+      <div style="font-size:20px;font-weight:800;color:${(lanc.ajuste_pontos||0)>=0?'#07583C':'#d93025'}">${(lanc.ajuste_pontos||0)>0?'+':''}${lanc.ajuste_pontos||0}</div>
+    </div>
+  </div>
+
+  <div style="margin-bottom:16px">
+    <div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">📌 INDICADORES</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Indicador</th>
+        <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Valores</th>
+        <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Pontuação</th>
+      </tr></thead>
+      <tbody>${indRows}</tbody>
+    </table>
+  </div>
+
+  <div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a">
+    <b>Acidente:</b> ${acid[lanc.tipo_acidente]||'—'} &nbsp;|&nbsp;
+    <b>Regras que Salvam Vidas:</b> ${lanc.regras_salvas||0} &nbsp;|&nbsp;
+    <b>IP Acumulado:</b> ${lanc.acumulado_gerencia!=null?lanc.acumulado_gerencia.toFixed(1):'—'}
+    ${lanc.obs_auditoria ? '<br><b>Obs:</b> '+lanc.obs_auditoria : ''}
+  </div>`;
+}
+
+function imprimirDetalhe() {
+  const overlay = document.getElementById('print-overlay');
+  const content = document.getElementById('print-content');
+  const subtitle = document.getElementById('print-subtitle');
+  if(subtitle) subtitle.textContent = document.getElementById('modal-detalhe-title')?.textContent||'';
+  if(content) content.innerHTML = window._detalheHTML || '';
+  fecharModal('modal-detalhe');
+  overlay.style.display = 'block';
+}
+
+async function abrirImpressao() {
+  // Impressão do dashboard completo
+  if(!dashData?.length) { alert('Carregue o Dashboard primeiro.'); return; }
+  const overlay = document.getElementById('print-overlay');
+  const content = document.getElementById('print-content');
+  const subtitle = document.getElementById('print-subtitle');
+  const periodo = document.getElementById('dash-periodo')?.value || '';
+  if(subtitle) subtitle.textContent = 'Período: ' + periodo + ' · Exportado em ' + new Date().toLocaleDateString('pt-BR');
+
+  const rows = dashData.map(l => {
+    const idx = l.indice_prevencao||0, st = getStatus(idx), cor = getColor(idx);
+    return `<tr>
+      <td style="padding:10px 14px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td>
+      <td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td>
+      <td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td>
+      <td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
+      <td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td>
+      <td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.nota_auditoria||0).toFixed(1)}</td>
+      <td style="padding:10px 14px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td>
+      <td style="padding:10px 14px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td>
+    </tr>`;
+  }).join('');
+
+  const media = dashData.reduce((s,l)=>s+(l.indice_prevencao||0),0)/dashData.length;
+
+  content.innerHTML = `
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+    <div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">MÉDIA GERAL</div>
+      <div style="font-size:30px;font-weight:800;color:${getColor(media)}">${media.toFixed(1)}</div>
+    </div>
+    <div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">GERÊNCIAS</div>
+      <div style="font-size:30px;font-weight:800;color:#1a73e8">${dashData.length}</div>
+    </div>
+    <div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">META + MÁXIMO</div>
+      <div style="font-size:30px;font-weight:800;color:#07583C">${dashData.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length}</div>
+    </div>
+    <div style="background:#fef3e0;border-radius:10px;padding:16px;border-top:3px solid #c47d0e">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">PONTO DE ATENÇÃO</div>
+      <div style="font-size:30px;font-weight:800;color:#c47d0e">${dashData.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length}</div>
+    </div>
+  </div>
+  <table style="width:100%;border-collapse:collapse">
+    <thead><tr style="background:#07583C">
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">UNIDADE</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AJUSTE</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th>
+      <th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">STATUS</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  overlay.style.display = 'block';
+}
+
+function fecharImpressao() {
+  document.getElementById('print-overlay').style.display = 'none';
 }
 
 // ── START ─────────────────────────────────────────────────────
@@ -1868,6 +2079,44 @@ setInterval(async () => {
     </div>
   </div>
 </div>
+
+
+<!-- PÁGINA DE IMPRESSÃO -->
+<div id="print-overlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:500;overflow-y:auto;padding:30px">
+  <div style="max-width:900px;margin:0 auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:3px solid #07583C;padding-bottom:15px">
+      <div>
+        <div style="font-size:22px;font-weight:800;color:#07583C">Índice de Prevenção — VIDAS</div>
+        <div id="print-subtitle" style="font-size:14px;color:#5a7a5a;margin-top:4px"></div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button onclick="window.print()" style="background:#07583C;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimir</button>
+        <button onclick="fecharImpressao()" style="background:#f0f0f0;color:#333;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer">✕ Fechar</button>
+      </div>
+    </div>
+    <div id="print-content"></div>
+  </div>
+</div>
+
+<!-- MODAL DETALHE GERÊNCIA -->
+<div class="modal-overlay" id="modal-detalhe">
+  <div class="modal" style="width:680px;max-width:96vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title" id="modal-detalhe-title">📋 Detalhe do Lançamento</div>
+    <div id="modal-detalhe-content"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-detalhe')">Fechar</button>
+      <button class="btn btn-primary" onclick="imprimirDetalhe()">🖨️ Imprimir este</button>
+    </div>
+  </div>
+</div>
+
+<style>
+@media print {
+  body > *:not(#print-overlay) { display: none !important; }
+  #print-overlay { position: static !important; padding: 0 !important; }
+  #print-overlay > div > div:first-child button { display: none !important; }
+}
+</style>
 
 </body>
 </html>

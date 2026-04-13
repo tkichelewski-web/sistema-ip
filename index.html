@@ -881,6 +881,13 @@ async function carregarIndicadores(){
 // ── FORMS ─────────────────────────────────────────────────────
 function preencherForms(){
   const isGer=usuario.perfil==='gerencia';
+  // sel-safra (lançar dados)
+  const ss=document.getElementById('sel-safra');
+  if(ss){
+    ss.innerHTML='<option value="">— Selecione —</option>'+safrasData.map(s=>`<option value="${s.id}">${s.nome}</option>`).join('');
+    if(safrasData.length) ss.value=safrasData[0].id;
+    onSafraLancarChange();
+  }
   // sel-diretoria
   const sd=document.getElementById('sel-diretoria');
   if(sd){sd.innerHTML='<option value="">— Selecione —</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
@@ -1205,7 +1212,7 @@ async function carregarHistorico(){
   if(usuario.perfil==='gerencia')q=q.eq('gerencia_id',usuario.gerencia_id);
   const{data,error}=await q;
   if(error||!data?.length){if(tw)tw.innerHTML='<div class="loading">Nenhum registro encontrado.</div>';return;}
-  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Período</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Regras</th><th>Ajuste</th><th>Índice</th><th>Status</th></tr></thead><tbody>${data.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};return`<tr><td class="mono">${l.periodo}</td><td><b>${l.gerencias?.nome||'—'}</b></td><td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td><td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td><td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td><td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td><td class="mono">${l.regras_salvas||0}</td><td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td><td><span class="badge ${st.cls}">${st.label}</span></td></tr>`}).join('')}</tbody></table></div>`;
+  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Período</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Regras</th><th>Ajuste</th><th>Índice</th><th>Status</th><th>Ação</th></tr></thead><tbody>${data.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};return`<tr><td class="mono">${l.periodo||l.mes||'—'}</td><td><b>${l.gerencias?.nome||'—'}</b></td><td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td><td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td><td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td><td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td><td class="mono">${l.regras_salvas||0}</td><td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td><td><span class="badge ${st.cls}">${st.label}</span></td><td><button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})">✏️ Ver/Editar</button></td></tr>`}).join('')}</tbody></table></div>`;
 }
 
 // ── INDICADORES ───────────────────────────────────────────────
@@ -1710,6 +1717,85 @@ async function exportarBackupCompleto() {
     btn.disabled = false;
     btn.textContent = '💾 Backup Completo';
   }
+}
+
+
+// ── EDITAR LANÇAMENTO ─────────────────────────────────────────
+async function editarLancamento(lancId) {
+  // Busca lançamento completo
+  const { data: lanc } = await sb.from('lancamentos')
+    .select('*,gerencias(id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)),safras(id,nome)')
+    .eq('id', lancId).single();
+  if(!lanc) { alert('Lançamento não encontrado.'); return; }
+
+  // Busca itens do lançamento
+  const { data: itens } = await sb.from('lancamento_itens')
+    .select('*,indicadores(id,nome,tipo)')
+    .eq('lancamento_id', lancId);
+
+  // Vai para a aba Lançar
+  showTab('lancar');
+
+  // Aguarda DOM render
+  await new Promise(r => setTimeout(r, 100));
+
+  // Preenche safra
+  const ss = document.getElementById('sel-safra');
+  if(ss && lanc.safras) {
+    ss.value = lanc.safras.id;
+    onSafraLancarChange();
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // Preenche diretoria
+  const sd = document.getElementById('sel-diretoria');
+  if(sd) { sd.value = lanc.gerencias.diretoria_id; filtrarGerencias(); }
+  await new Promise(r => setTimeout(r, 100));
+
+  // Preenche gerência
+  const sg = document.getElementById('sel-gerencia');
+  if(sg) { sg.value = lanc.gerencias.id; await onGerenciaChange(); }
+  await new Promise(r => setTimeout(r, 200));
+
+  // Preenche unidade
+  const su = document.getElementById('sel-unidade');
+  if(su) { su.value = lanc.gerencias.unidade_id; }
+
+  // Preenche período
+  const sp = document.getElementById('sel-periodo');
+  if(sp) sp.value = lanc.mes || lanc.periodo || '';
+
+  // Preenche auditoria
+  const sa = document.getElementById('nota-auditoria');
+  if(sa) sa.value = lanc.nota_auditoria || '';
+  const so = document.getElementById('obs-auditoria');
+  if(so) so.value = lanc.obs_auditoria || '';
+
+  // Preenche acidente e regras
+  const sac = document.getElementById('sel-acidente');
+  if(sac) sac.value = lanc.tipo_acidente || 'nenhum';
+  const sr = document.getElementById('regras-salvas');
+  if(sr) sr.value = lanc.regras_salvas || 0;
+
+  // Preenche valores dos indicadores
+  await new Promise(r => setTimeout(r, 300));
+  for(const item of (itens||[])) {
+    const id = item.indicadores?.id || item.indicador_id;
+    if(item.indicadores?.tipo === 'previsto_realizado') {
+      const pEl = document.getElementById('prev_'+id);
+      const rEl = document.getElementById('real_'+id);
+      if(pEl) pEl.value = item.previsto || '';
+      if(rEl) rEl.value = item.realizado || '';
+    } else if(item.indicadores?.tipo === 'nota') {
+      const nEl = document.getElementById('nota_'+id);
+      if(nEl) nEl.value = item.nota || '';
+    } else if(item.indicadores?.tipo === 'binario') {
+      const bEl = document.getElementById('bin_'+id);
+      if(bEl) bEl.value = item.sim_nao ? 'sim' : 'nao';
+    }
+  }
+  calcPreview();
+  alert('✅ Lançamento carregado! Revise os dados e clique em "Salvar Lançamento" para atualizar.');
 }
 
 // ── START ─────────────────────────────────────────────────────

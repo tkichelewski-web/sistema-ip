@@ -568,18 +568,14 @@ async function mostrarApp() {
   }
   // Abas por perfil
   const perfil=(usuario.perfil||'').toLowerCase();
-  ['tab-indicadores','tab-gerencias'].forEach(id=>{
-    const el=document.getElementById(id);
-    if(el && (perfil==='admin'||perfil==='gestor')) el.classList.remove('hidden');
-  });
+  // admin: vê tudo
   if(perfil==='admin') {
-    const el=document.getElementById('tab-usuarios');
-    if(el) el.classList.remove('hidden');
+    ['tab-indicadores','tab-gerencias','tab-usuarios','tab-config'].forEach(id=>{
+      const el=document.getElementById(id);if(el)el.classList.remove('hidden');
+    });
   }
-  if(perfil==='admin'||perfil==='gestor') {
-    const ec=document.getElementById('tab-config');
-    if(ec) ec.classList.remove('hidden');
-  }
+  // gestor: vê Dashboard, Acumulado, Ranking, Lançar, Histórico apenas
+  // (sem Indicadores, Gerências, Usuários, Configurações)
   await carregarSafras();
   preencherForms();
   const now=new Date();

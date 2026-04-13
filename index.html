@@ -1289,4 +1289,515 @@ async function salvarLancamento(){
   window._editandoLancamento=false;
   dashData=null;carregarDashboard();
 }
->
+
+function limparForm(){
+  window._editandoLancamento = false;
+  if(usuario.perfil!=='gerencia'){const sd=document.getElementById('sel-diretoria');if(sd)sd.value='';const sg=document.getElementById('sel-gerencia');if(sg)sg.innerHTML='<option value="">— Selecione —</option>';}
+  ['nota-auditoria','obs-auditoria'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  const sa=document.getElementById('sel-acidente');if(sa)sa.value='nenhum';
+  const rs=document.getElementById('regras-salvas');if(rs)rs.value='0';
+  const rb=document.getElementById('result-box');if(rb)rb.style.display='none';
+  const ap=document.getElementById('ajuste-preview');if(ap)ap.innerHTML='';
+  const tw=document.getElementById('ind-table-wrap');if(tw)tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p>';
+}
+
+// ── HISTÓRICO ─────────────────────────────────────────────────
+function preencherHistoricoFiltros(){
+  const hg=document.getElementById('hist-gerencia');
+  if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
+  const ha=document.getElementById('hist-ano');
+  if(ha){const ano=new Date().getFullYear();ha.innerHTML='<option value="">Todos os anos</option>'+Array.from({length:5},(_,i)=>ano-i).map(a=>`<option value="${a}">${a}</option>`).join('');ha.value=String(ano);}
+}
+
+async function carregarHistorico(){
+  const gerId=parseInt(document.getElementById('hist-gerencia')?.value)||0;
+  const ano=document.getElementById('hist-ano')?.value||'';
+  const tw=document.getElementById('hist-table');
+  if(tw)tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
+  let q=sb.from('lancamentos').select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome),usuarios(nome)');
+  if(ano) q=q.or(`mes.like.${ano}-%,periodo.like.${ano}-%`);
+  q=q.order('mes',{ascending:false}).order('indice_prevencao',{ascending:false});
+  if(gerId)q=q.eq('gerencia_id',gerId);
+  if(usuario.perfil==='gerencia')q=q.eq('gerencia_id',usuario.gerencia_id);
+  const{data,error}=await q.limit(300);
+  if(error||!data?.length){if(tw)tw.innerHTML='<div class="loading">Nenhum registro encontrado.</div>';return;}
+  const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
+  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr>
+    <th>Safra</th><th>Mês</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th>
+    <th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Ajuste</th>
+    <th>Índice</th><th>Status</th><th>Atualizado em</th><th>Por</th><th>Ações</th>
+  </tr></thead><tbody>${data.map(l=>{
+    const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
+    return`<tr>
+      <td style="font-size:11px">${l.safras?.nome||'—'}</td>
+      <td class="mono">${l.mes||l.periodo||'—'}</td>
+      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id})">${l.gerencias?.nome||'—'}</b></td>
+      <td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td>
+      <td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td>
+      <td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
+      <td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td>
+      <td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td>
+      <td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td>
+      <td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td>
+      <td><span class="badge ${st.cls}">${st.label}</span></td>
+      <td style="font-size:11px;color:var(--muted);white-space:nowrap">${l.atualizado_em?new Date(l.atualizado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${l.usuarios?.nome||'—'}</td>
+      <td><div style="display:flex;gap:5px">
+        <button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})">✏️ Editar</button>
+        <button class="btn btn-danger btn-sm" onclick="apagarLancamento(${l.id},'${(l.gerencias?.nome||'').replace(/'/g,'')}','${l.mes||l.periodo||''}')">🗑️</button>
+      </div></td>
+    </tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+// ── EDITAR / APAGAR LANÇAMENTO ─────────────────────────────────
+async function editarLancamento(lancId) {
+  window._editandoLancamento = true;
+  const{data:lanc}=await sb.from('lancamentos').select('*,gerencias(id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)),safras(id,nome)').eq('id',lancId).single();
+  if(!lanc){alert('Lançamento não encontrado.');window._editandoLancamento=false;return;}
+  const{data:itens}=await sb.from('lancamento_itens').select('*,indicadores(id,nome,tipo)').eq('lancamento_id',lancId);
+  showTab('lancar');
+  await new Promise(r=>setTimeout(r,100));
+  const ss=document.getElementById('sel-safra');
+  if(ss&&lanc.safras){ss.value=lanc.safras.id;onSafraLancarChange();await new Promise(r=>setTimeout(r,100));}
+  const sd=document.getElementById('sel-diretoria');
+  if(sd){sd.value=lanc.gerencias.diretoria_id;filtrarGerencias();}
+  await new Promise(r=>setTimeout(r,150));
+  const sg=document.getElementById('sel-gerencia');
+  if(sg){sg.value=lanc.gerencias.id;await onGerenciaChange();}
+  await new Promise(r=>setTimeout(r,200));
+  const su=document.getElementById('sel-unidade');
+  if(su)su.value=lanc.gerencias.unidade_id;
+  const sp=document.getElementById('sel-periodo');
+  if(sp)sp.value=lanc.mes||lanc.periodo||'';
+  const sa=document.getElementById('nota-auditoria');
+  if(sa)sa.value=lanc.nota_auditoria||'';
+  const so=document.getElementById('obs-auditoria');
+  if(so)so.value=lanc.obs_auditoria||'';
+  const sac=document.getElementById('sel-acidente');
+  if(sac)sac.value=lanc.tipo_acidente||'nenhum';
+  const sr=document.getElementById('regras-salvas');
+  if(sr)sr.value=lanc.regras_salvas||0;
+  await new Promise(r=>setTimeout(r,300));
+  for(const item of (itens||[])){
+    const id=item.indicadores?.id||item.indicador_id;
+    if(item.indicadores?.tipo==='previsto_realizado'){
+      const pEl=document.getElementById('prev_'+id);const rEl=document.getElementById('real_'+id);
+      if(pEl)pEl.value=item.previsto||'';if(rEl)rEl.value=item.realizado||'';
+    } else if(item.indicadores?.tipo==='nota'){
+      const nEl=document.getElementById('nota_'+id);if(nEl)nEl.value=item.nota||'';
+    } else {
+      const bEl=document.getElementById('bin_'+id);if(bEl)bEl.value=item.sim_nao?'sim':'nao';
+    }
+  }
+  await calcPreview();
+  document.getElementById('result-box')?.scrollIntoView({behavior:'smooth',block:'center'});
+  alert('✅ Lançamento carregado! Revise e clique em "Salvar Lançamento" para atualizar.');
+}
+
+async function apagarLancamento(lancId,gerNome,periodo){
+  if(!confirm('Apagar lançamento de "'+gerNome+'" ('+periodo+')?\n\nEsta ação não pode ser desfeita.'))return;
+  await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
+  const{error}=await sb.from('lancamentos').delete().eq('id',lancId);
+  if(error){alert('Erro ao apagar: '+error.message);return;}
+  alert('✅ Lançamento apagado!');
+  carregarHistorico();dashData=null;
+}
+
+// ── INDICADORES ───────────────────────────────────────────────
+async function renderIndicadores(){
+  await carregarIndicadores();
+  const el=document.getElementById('ind-lista');if(!el)return;
+  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>Indicador</th><th>Tipo</th><th>Fonte</th><th>Ações</th></tr></thead><tbody>${indicadores.map((ind,i)=>`<tr>
+    <td class="mono" style="color:var(--muted)">${i+1}</td>
+    <td><b>${ind.nome}</b></td>
+    <td style="font-size:12px;color:var(--muted)">${ind.tipo==='previsto_realizado'?'Prev×Real':ind.tipo==='nota'?'Nota':'Sim/Não'}</td>
+    <td style="font-size:12px;color:var(--muted)">${ind.fonte||'—'}</td>
+    <td><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirEditInd(${ind.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarIndicador(${ind.id})">✕</button></div></td>
+  </tr>`).join('')}</tbody></table></div>`;
+}
+async function salvarIndicador(){
+  const nome=document.getElementById('ind-nome')?.value.trim();const tipo=document.getElementById('ind-tipo')?.value;
+  const fonte=document.getElementById('ind-fonte')?.value.trim()||'';
+  if(!nome){alert('Informe o nome do indicador.');return;}
+  const{error}=await sb.from('indicadores').insert({nome,tipo,fonte,peso:0});
+  if(error){alert('Erro: '+error.message);return;}
+  ['ind-nome','ind-fonte'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  await carregarIndicadores();renderIndicadores();
+}
+function abrirEditInd(id){
+  const ind=indicadores.find(i=>i.id===id);if(!ind)return;
+  document.getElementById('edit-ind-id').value=id;document.getElementById('edit-ind-nome').value=ind.nome;
+  document.getElementById('edit-ind-tipo').value=ind.tipo;document.getElementById('edit-ind-fonte').value=ind.fonte||'';
+  document.getElementById('modal-ind').classList.add('show');
+}
+async function atualizarIndicador(){
+  const id=parseInt(document.getElementById('edit-ind-id').value);
+  const nome=document.getElementById('edit-ind-nome').value.trim();const tipo=document.getElementById('edit-ind-tipo').value;
+  const fonte=document.getElementById('edit-ind-fonte').value.trim();
+  const{error}=await sb.from('indicadores').update({nome,tipo,fonte}).eq('id',id);
+  if(error){alert('Erro: '+error.message);return;}
+  fecharModal('modal-ind');await carregarIndicadores();renderIndicadores();
+}
+async function desativarIndicador(id){
+  if(!confirm('Desativar este indicador?'))return;
+  await sb.from('indicadores').update({ativo:false}).eq('id',id);
+  await carregarIndicadores();renderIndicadores();
+}
+
+// ── MODAL INDICADORES POR GERÊNCIA ───────────────────────────
+let modalIGGerId=null;
+function abrirModalIGById(gerId){const g=estrutura.gerencias.find(x=>x.id===gerId);abrirModalIG(gerId,g?g.nome:'');}
+async function abrirModalIG(gerId,gerNome){
+  modalIGGerId=gerId;
+  const el=document.getElementById('modal-ig-nome');if(el)el.textContent=gerNome;
+  const ms=document.getElementById('modal-ig-safra');
+  if(ms){ms.innerHTML=safrasData.map(s=>`<option value="${s.id}">${s.nome}</option>`).join('');if(safrasData.length)ms.value=safrasData[0].id;}
+  document.getElementById('modal-ig').classList.add('show');
+  await carregarModalIG();
+}
+async function carregarModalIG(){
+  if(!modalIGGerId)return;
+  const lista=document.getElementById('modal-ig-lista');
+  if(lista)lista.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
+  const safraIdModal=parseInt(document.getElementById('modal-ig-safra')?.value)||0;
+  if(!safraIdModal){if(lista)lista.innerHTML='<div class="loading">Selecione uma safra.</div>';return;}
+  const{data:cfg}=await sb.from('ind_gerencia_safra').select('indicador_id,peso,ativo').eq('gerencia_id',modalIGGerId).eq('safra_id',safraIdModal);
+  const cfgMap={};(cfg||[]).forEach(r=>{cfgMap[r.indicador_id]={peso:r.peso,ativo:r.ativo};});
+  await carregarIndicadores();
+  const rows=indicadores.map(ind=>{
+    const c=cfgMap[ind.id]||{peso:ind.peso||0,ativo:false};
+    const tipoLabel=ind.tipo==='previsto_realizado'?'Prev×Real':ind.tipo==='nota'?'Nota':'Sim/Não';
+    return`<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;text-align:center"><input type="checkbox" id="ig-ck-${ind.id}" ${c.ativo?'checked':''} style="width:auto;accent-color:#07583C" onchange="calcSomaIG()"></td>
+      <td style="padding:8px 12px;font-size:13px"><b>${ind.nome}</b></td>
+      <td style="padding:8px 12px;font-size:12px;color:var(--muted)">${tipoLabel}</td>
+      <td style="padding:8px 12px"><input type="number" id="ig-peso-${ind.id}" value="${c.peso||0}" min="0" max="100" step="1" oninput="calcSomaIG()" style="width:70px;padding:4px 7px;font-size:12px"> <span style="font-size:11px;color:var(--muted)">%</span></td>
+    </tr>`;
+  }).join('');
+  if(lista)lista.innerHTML=`<table style="width:100%;border-collapse:collapse">
+    <thead><tr>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;width:50px">Ativo</th>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">Indicador</th>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">Tipo</th>
+      <th style="background:#e8f5ee;padding:8px 12px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">Peso (%)</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  calcSomaIG();
+}
+function calcSomaIG(){
+  let soma=0;
+  indicadores.forEach(ind=>{const ck=document.getElementById('ig-ck-'+ind.id);const pp=document.getElementById('ig-peso-'+ind.id);if(ck?.checked&&pp)soma+=parseFloat(pp.value)||0;});
+  const el=document.getElementById('modal-ig-soma');
+  if(el){const ok=Math.abs(soma-100)<0.1;el.innerHTML='Soma dos pesos ativos: <b style="color:'+(ok?'#07583C':'var(--red)')+'">'+soma.toFixed(1)+'%</b>'+(ok?' ✅':' ⚠️ Deve somar 100%');}
+}
+async function salvarIndGer(){
+  const safraIdSalvar=parseInt(document.getElementById('modal-ig-safra')?.value)||0;
+  if(!safraIdSalvar||!modalIGGerId){alert('Selecione a safra.');return;}
+  const rows=[];
+  indicadores.forEach(ind=>{const ck=document.getElementById('ig-ck-'+ind.id);const pp=document.getElementById('ig-peso-'+ind.id);if(!ck||!pp)return;rows.push({gerencia_id:modalIGGerId,indicador_id:ind.id,safra_id:safraIdSalvar,peso:parseFloat(pp.value)||0,ativo:ck.checked});});
+  await sb.from('ind_gerencia_safra').delete().eq('gerencia_id',modalIGGerId).eq('safra_id',safraIdSalvar);
+  const ativos=rows.filter(r=>r.ativo);
+  if(ativos.length){const{error}=await sb.from('ind_gerencia_safra').insert(ativos);if(error){alert('Erro: '+error.message);return;}}
+  alert('✅ Indicadores configurados com sucesso!');fecharModal('modal-ig');
+}
+
+// ── GERÊNCIAS ─────────────────────────────────────────────────
+async function renderGerencias(){
+  await carregarEstrutura();preencherForms();
+  const dlEl=document.getElementById('dir-lista');
+  if(dlEl)dlEl.innerHTML=estrutura.diretorias.map(d=>`<div class="flex-row" style="padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:13px">${d.nome}</span><button class="btn btn-danger btn-sm" onclick="desativarDir(${d.id})">✕</button></div>`).join('');
+  const ulEl=document.getElementById('uni-lista');
+  if(ulEl)ulEl.innerHTML=estrutura.unidades.map(u=>`<div class="flex-row" style="padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:13px">${u.nome}</span><button class="btn btn-danger btn-sm" onclick="desativarUni(${u.id})">✕</button></div>`).join('');
+  const egd=document.getElementById('edit-ger-dir');if(egd)egd.innerHTML=estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');
+  const egu=document.getElementById('edit-ger-uni');if(egu)egu.innerHTML=estrutura.unidades.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
+  const glEl=document.getElementById('ger-lista');
+  if(glEl)glEl.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Ações</th></tr></thead><tbody>${estrutura.gerencias.map(g=>`<tr>
+    <td><b>${g.nome}</b></td>
+    <td style="font-size:12px;color:var(--muted)">${g.diretorias?.nome||'—'}</td>
+    <td style="font-size:12px;color:var(--blue)">${g.unidades?.nome||'—'}</td>
+    <td><div class="flex-row">
+      <button class="btn btn-secondary btn-sm" onclick="abrirModalIGById(${g.id})">⚙️ Indicadores</button>
+      <button class="btn btn-secondary btn-sm" onclick="abrirEditGer(${g.id})">✏️ Editar</button>
+      <button class="btn btn-danger btn-sm" onclick="desativarGerencia(${g.id})">✕</button>
+    </div></td>
+  </tr>`).join('')}</tbody></table></div>`;
+}
+async function salvarDiretoria(){const nome=document.getElementById('dir-nome')?.value.trim();if(!nome)return;const{error}=await sb.from('diretorias').insert({nome});if(error){alert('Erro: '+error.message);return;}document.getElementById('dir-nome').value='';await carregarEstrutura();preencherForms();renderGerencias();}
+async function salvarUnidade(){const nome=document.getElementById('uni-nome')?.value.trim();if(!nome)return;const{error}=await sb.from('unidades').insert({nome});if(error){alert('Erro: '+error.message);return;}document.getElementById('uni-nome').value='';await carregarEstrutura();preencherForms();renderGerencias();}
+async function salvarGerencia(){const nome=document.getElementById('ger-nome')?.value.trim(),dir=parseInt(document.getElementById('ger-diretoria')?.value)||0,uni=parseInt(document.getElementById('ger-unidade')?.value)||0;if(!nome||!dir||!uni){alert('Preencha todos os campos.');return;}const{error}=await sb.from('gerencias').insert({nome,diretoria_id:dir,unidade_id:uni});if(error){alert('Erro: '+error.message);return;}document.getElementById('ger-nome').value='';await carregarEstrutura();preencherForms();renderGerencias();}
+function abrirEditGer(id){const g=estrutura.gerencias.find(x=>x.id===id);if(!g)return;document.getElementById('edit-ger-id').value=id;document.getElementById('edit-ger-nome').value=g.nome;document.getElementById('edit-ger-dir').value=g.diretoria_id;document.getElementById('edit-ger-uni').value=g.unidade_id;document.getElementById('modal-ger').classList.add('show');}
+async function atualizarGerencia(){const id=parseInt(document.getElementById('edit-ger-id').value);const nome=document.getElementById('edit-ger-nome').value.trim();const dir=parseInt(document.getElementById('edit-ger-dir').value);const uni=parseInt(document.getElementById('edit-ger-uni').value);const{error}=await sb.from('gerencias').update({nome,diretoria_id:dir,unidade_id:uni}).eq('id',id);if(error){alert('Erro: '+error.message);return;}fecharModal('modal-ger');await carregarEstrutura();preencherForms();renderGerencias();}
+async function desativarGerencia(id){if(!confirm('Desativar esta gerência?'))return;await sb.from('gerencias').update({ativo:false}).eq('id',id);await carregarEstrutura();preencherForms();renderGerencias();}
+async function desativarDir(id){if(!confirm('Desativar esta diretoria?'))return;await sb.from('diretorias').update({ativo:false}).eq('id',id);await carregarEstrutura();preencherForms();renderGerencias();}
+async function desativarUni(id){if(!confirm('Desativar esta unidade?'))return;await sb.from('unidades').update({ativo:false}).eq('id',id);await carregarEstrutura();preencherForms();renderGerencias();}
+
+// ── USUÁRIOS ──────────────────────────────────────────────────
+function toggleGerSel(){const p=document.getElementById('usr-perfil')?.value;const w=document.getElementById('usr-ger-wrap');if(w)w.style.display=p==='gerencia'?'block':'none';}
+async function criarUsuario(){
+  const nome=document.getElementById('usr-nome')?.value.trim();const email=document.getElementById('usr-email')?.value.trim();
+  const perfil=document.getElementById('usr-perfil')?.value;const gerId=parseInt(document.getElementById('usr-gerencia')?.value)||null;
+  if(!nome||!email){alert('Nome e e-mail são obrigatórios.');return;}
+  const senhaTemp='Vidas@'+Math.floor(1000+Math.random()*9000);
+  const{data:authData,error:authErr}=await sb.auth.admin.createUser({email,password:senhaTemp,email_confirm:true});
+  if(authErr){alert('Erro ao criar: '+authErr.message);return;}
+  const{error}=await sb.from('usuarios').insert({auth_id:authData.user.id,nome,email,perfil,gerencia_id:gerId});
+  if(error){alert('Erro ao salvar perfil: '+error.message);return;}
+  alert('Usuário '+nome+' criado!\nSenha temporária: '+senhaTemp+'\nRepasse ao usuário.');
+  ['usr-nome','usr-email'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  renderUsuarios();
+}
+async function renderUsuarios(){
+  const{data}=await sb.from('usuarios').select('*,gerencias(nome)').order('nome');
+  const el=document.getElementById('usr-lista');if(!el)return;
+  const cores={admin:'badge-purple',gestor:'badge-blue',gerencia:'badge-green'};
+  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Gerência</th></tr></thead><tbody>${(data||[]).map(u=>`<tr>
+    <td><b>${u.nome}</b></td><td class="mono" style="font-size:12px">${u.email}</td>
+    <td><span class="badge ${cores[u.perfil]||'badge-green'}">${u.perfil}</span></td>
+    <td style="font-size:12px;color:var(--muted)">${u.gerencias?.nome||'—'}</td>
+  </tr>`).join('')}</tbody></table></div>`;
+}
+
+// ── CONFIGURAÇÕES ─────────────────────────────────────────────
+async function carregarConfigForm(){
+  await carregarConfig();
+  const el=id=>document.getElementById(id);
+  if(el('cfg-pg'))el('cfg-pg').value=config.peso_gerencia||0.5;
+  if(el('cfg-pd'))el('cfg-pd').value=config.peso_diretoria||0.3;
+  if(el('cfg-pa'))el('cfg-pa').value=config.peso_auditoria||0.2;
+  if(el('cfg-crit'))el('cfg-crit').value=config.faixa_critico||80;
+  if(el('cfg-meta'))el('cfg-meta').value=config.faixa_meta||90;
+  calcSomaPesos();
+  const audSafra=el('aud-safra');
+  if(audSafra){audSafra.innerHTML=safrasData.map(s=>`<option value="${s.id}">${s.nome}</option>`).join('');if(safrasData.length)audSafra.value=safrasData[0].id;}
+  carregarAuditorias();
+  const slEl=el('safra-lista');
+  if(slEl)slEl.innerHTML=safrasData.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+    <span style="flex:1;font-size:13px"><b>${s.nome}</b> <span style="font-size:11px;color:var(--muted)">${s.ano_ini}–${s.ano_fim}</span></span>
+    <button class="btn btn-danger" style="padding:3px 10px;font-size:11px" onclick="desativarSafra(${s.id})">✕</button>
+  </div>`).join('');
+}
+function calcSomaPesos(){const pg=parseFloat(document.getElementById('cfg-pg')?.value)||0,pd=parseFloat(document.getElementById('cfg-pd')?.value)||0,pa=parseFloat(document.getElementById('cfg-pa')?.value)||0,soma=pg+pd+pa;const el=document.getElementById('cfg-soma');if(el){const ok=Math.abs(soma-1)<0.01;el.innerHTML='Soma: <b style="color:'+(ok?'#07583C':'var(--red)')+'">'+soma.toFixed(2)+'</b>'+(ok?' ✅':' ⚠️ Deve ser 1.00');}}
+async function salvarPesos(){const pg=parseFloat(document.getElementById('cfg-pg')?.value)||0,pd=parseFloat(document.getElementById('cfg-pd')?.value)||0,pa=parseFloat(document.getElementById('cfg-pa')?.value)||0;if(Math.abs(pg+pd+pa-1)>0.01){alert('A soma dos pesos deve ser 1.00');return;}await Promise.all([sb.from('config').update({valor:String(pg)}).eq('chave','peso_gerencia'),sb.from('config').update({valor:String(pd)}).eq('chave','peso_diretoria'),sb.from('config').update({valor:String(pa)}).eq('chave','peso_auditoria')]);await carregarConfig();alert('✅ Pesos salvos!');}
+async function salvarFaixas(){const crit=parseFloat(document.getElementById('cfg-crit')?.value)||80,meta=parseFloat(document.getElementById('cfg-meta')?.value)||90;await Promise.all([sb.from('config').update({valor:String(crit)}).eq('chave','faixa_critico'),sb.from('config').update({valor:String(meta)}).eq('chave','faixa_meta')]);await carregarConfig();alert('✅ Faixas salvas!');}
+async function salvarSafra(){const nome=document.getElementById('sf-nome')?.value.trim(),ini=parseInt(document.getElementById('sf-ini')?.value)||0,fim=parseInt(document.getElementById('sf-fim')?.value)||0;if(!nome||!ini||!fim){alert('Preencha todos os campos.');return;}const{error}=await sb.from('safras').insert({nome,ano_ini:ini,ano_fim:fim});if(error){alert('Erro: '+error.message);return;}['sf-nome','sf-ini','sf-fim'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});await carregarSafras();carregarConfigForm();alert('✅ Safra '+nome+' criada!');}
+async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
+async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}
+async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}alert('✅ Notas de auditoria salvas!');carregarAuditorias();}
+async function getNotaAuditoria(unidadeId,safraId){if(!unidadeId||!safraId)return null;const{data}=await sb.from('auditoria_unidade').select('nota').eq('unidade_id',unidadeId).eq('safra_id',safraId).single();return data?.nota??null;}
+
+// ── EXPORTAR ──────────────────────────────────────────────────
+function exportarExcel(){
+  if(!dashData?.length){alert('Nenhum dado. Selecione um período primeiro.');return;}
+  const periodo=document.getElementById('dash-periodo')?.value||'';
+  let csv='Gerencia,Unidade,Diretoria,Pont.Gerencia,Med.Diretoria,Auditoria,Ajuste,Indice,IP Acumulado,Status\n';
+  for(const l of dashData){
+    const idx=l.indice_prevencao||0,st=getStatus(idx);
+    csv+='"'+(l.gerencias?.nome||'')+'","'+(l.gerencias?.unidades?.nome||'')+'","'+(l.gerencias?.diretorias?.nome||'')+'",'
+      +(l.pontuacao_gerencia||0).toFixed(2)+','
+      +(l.media_diretoria!=null?l.media_diretoria.toFixed(2):'')+','
+      +(l.nota_auditoria||0).toFixed(2)+','
+      +(l.ajuste_pontos||0)+','
+      +idx.toFixed(2)+','
+      +(l.acumulado_gerencia!=null?l.acumulado_gerencia.toFixed(2):'')+','
+      +'"'+st.label+'"\n';
+  }
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='IP_'+periodo+'.csv';a.click();
+}
+
+async function exportarHistoricoExcel(){
+  const hg=parseInt(document.getElementById('hist-gerencia')?.value)||0;
+  const ano=document.getElementById('hist-ano')?.value||new Date().getFullYear();
+  let q=sb.from('lancamentos').select('*,gerencias(nome,diretorias(nome),unidades(nome))').order('mes',{ascending:false});
+  if(ano)q=q.or('mes.like.'+ano+'-%,periodo.like.'+ano+'-%');
+  if(hg)q=q.eq('gerencia_id',hg);
+  const{data}=await q;
+  if(!data?.length){alert('Nenhum dado para exportar.');return;}
+  const acid={nenhum:'Nenhum',iap:'IAP',asa:'ASA',aca:'ACA',fatalidade:'Fatalidade'};
+  let csv='Periodo,Gerencia,Diretoria,Unidade,Pont.Gerencia,Auditoria,Acidente,Regras,Ajuste,Indice,Status\n';
+  for(const l of data){
+    const idx=l.indice_prevencao||0,st=getStatus(idx);
+    csv+='"'+(l.mes||l.periodo||'')+'","'+(l.gerencias?.nome||'')+'","'+(l.gerencias?.diretorias?.nome||'')+'","'+(l.gerencias?.unidades?.nome||'')+'",'
+      +(l.pontuacao_gerencia||0).toFixed(2)+','
+      +(l.nota_auditoria||0).toFixed(2)+',"'
+      +(acid[l.tipo_acidente]||'')+'",'
+      +(l.regras_salvas||0)+','
+      +(l.ajuste_pontos||0)+','
+      +idx.toFixed(2)+',"'
+      +st.label+'"\n';
+  }
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Historico_IP_'+ano+'.csv';a.click();
+}
+
+function exportarPDF(){if(!dashData?.length){alert('Nenhum dado.');return;}const{jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'landscape'});const periodo=document.getElementById('dash-periodo')?.value||'';doc.setFontSize(14);doc.setTextColor(7,88,60);doc.text('Índice de Prevenção — '+periodo,14,16);doc.setFontSize(9);doc.setTextColor(90,122,90);doc.text('VIDAS — Valores Internos Desenvolvendo Atitudes Sustentáveis',14,23);let y=32;const cols=['Gerência','Unidade','Diretoria','Pont.Ger.','Auditoria','Ajuste','IP Mensal','Status'];const cw=[48,28,42,22,20,16,20,20];doc.setFillColor(232,245,238);doc.rect(14,y-5,270,8,'F');doc.setTextColor(7,88,60);doc.setFont(undefined,'bold');doc.setFontSize(8);let x=14;cols.forEach((c,i)=>{doc.text(c,x,y);x+=cw[i];});y+=6;doc.setFont(undefined,'normal');doc.setTextColor(30,46,26);for(const l of dashData){if(y>185){doc.addPage();y=20;}x=14;const idx=l.indice_prevencao||0,st=getStatus(idx);const row=[l.gerencias?.nome||'',l.gerencias?.unidades?.nome||'',l.gerencias?.diretorias?.nome||'',(l.pontuacao_gerencia||0).toFixed(1),(l.nota_auditoria||0).toFixed(1),(l.ajuste_pontos||0)+'',idx.toFixed(1),st.label];row.forEach((v,i)=>{doc.text(String(v).substring(0,i===0?20:i===2?18:10),x,y);x+=cw[i];});y+=5.5;}doc.save(`IP_${periodo}.pdf`);}
+
+// ── BACKUP COMPLETO ───────────────────────────────────────────
+async function exportarBackupCompleto(){
+  const btn=event.target;btn.disabled=true;btn.textContent='⏳ Exportando...';
+  try{
+    const{data:lancs}=await sb.from('lancamentos')
+      .select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)')
+      .order('safra_id').order('mes').order('gerencia_id');
+    if(!lancs?.length){alert('Nenhum lançamento encontrado.');return;}
+    const acid={nenhum:'Nenhum',iap:'IAP',asa:'ASA',aca:'ACA',fatalidade:'Fatalidade'};
+    let csv='BACKUP COMPLETO - SISTEMA IP VIDAS - '+new Date().toLocaleDateString('pt-BR')+'\n\n';
+    csv+='LANCAMENTOS\n';
+    csv+='Safra,Mes,Gerencia,Diretoria,Unidade,Pont.Gerencia,Med.Diretoria,Auditoria,Acidente,Regras,Ajuste,IP Mensal,IP Acumulado,Status\n';
+    for(const l of lancs){
+      const idx=l.indice_prevencao||0,st=getStatus(idx);
+      csv+='"'+(l.safras?.nome||'')+'","'+(l.mes||l.periodo||'')+'","'+(l.gerencias?.nome||'')+'","'
+        +(l.gerencias?.diretorias?.nome||'')+'","'+(l.gerencias?.unidades?.nome||'')+'",'
+        +(l.pontuacao_gerencia||0).toFixed(2)+','
+        +(l.media_diretoria!=null?l.media_diretoria.toFixed(2):'')+','
+        +(l.nota_auditoria||0).toFixed(2)+',"'
+        +(acid[l.tipo_acidente]||'')+'",'
+        +(l.regras_salvas||0)+','
+        +(l.ajuste_pontos||0)+','
+        +idx.toFixed(2)+','
+        +(l.acumulado_gerencia!=null?l.acumulado_gerencia.toFixed(2):'')+','
+        +'"'+st.label+'"\n';
+    }
+    csv+='\nGERENCIAS\n';
+    csv+='Gerencia,Diretoria,Unidade\n';
+    for(const g of estrutura.gerencias){
+      csv+='"'+g.nome+'","'+(g.diretorias?.nome||'')+'","'+(g.unidades?.nome||'')+'"\n';
+    }
+    const agora=new Date();
+    const dataStr=agora.getFullYear()+String(agora.getMonth()+1).padStart(2,'0')+String(agora.getDate()).padStart(2,'0');
+    const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Backup_IP_VIDAS_'+dataStr+'.csv';a.click();
+    alert('✅ Backup exportado!');
+  }catch(e){alert('Erro: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='💾 Backup Completo';}
+}
+
+
+// ── IMPRESSÃO E DETALHE ───────────────────────────────────────
+async function verDetalheGerencia(lancId){
+  document.getElementById('modal-detalhe').classList.add('show');
+  const content=document.getElementById('modal-detalhe-content');
+  content.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
+  const{data:lanc}=await sb.from('lancamentos').select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)').eq('id',lancId).single();
+  const{data:itens}=await sb.from('lancamento_itens').select('*,indicadores(id,nome,tipo)').eq('lancamento_id',lancId);
+  if(!lanc){content.innerHTML='<p>Não encontrado.</p>';return;}
+  const title=document.getElementById('modal-detalhe-title');
+  if(title)title.textContent='📋 '+(lanc.gerencias?.nome||'')+' — '+(lanc.mes||lanc.periodo||'');
+  window._detalheHTML=gerarDetalheHTML(lanc,itens);
+  content.innerHTML=window._detalheHTML;
+}
+function gerarDetalheHTML(lanc,itens){
+  const st=getStatus(lanc.indice_prevencao||0),cor=getColor(lanc.indice_prevencao||0);
+  const acid={nenhum:'✅ Sem acidente',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
+  const indRows=(itens||[]).map(item=>{const tipo=item.indicadores?.tipo;let valorStr='—';if(tipo==='previsto_realizado')valorStr='Previsto: '+(item.previsto||0)+' / Realizado: '+(item.realizado||0);else if(tipo==='nota')valorStr='Nota: '+(item.nota||0);else if(tipo==='binario')valorStr=item.sim_nao?'✓ Sim':'✗ Não';return`<tr><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">${item.indicadores?.nome||'—'}</td><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">${valorStr}</td><td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:${(item.pontuacao||0)>=90?'#07583C':(item.pontuacao||0)>=70?'#c47d0e':'#d93025'}">${(item.pontuacao||0).toFixed(1)}</td></tr>`;}).join('');
+  return`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px"><div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">GERÊNCIA</div><div style="font-size:16px;font-weight:800;color:#07583C">${lanc.gerencias?.nome||'—'}</div><div style="font-size:12px;color:#5a7a5a">${lanc.gerencias?.diretorias?.nome||''} · ${lanc.gerencias?.unidades?.nome||''}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">PERÍODO</div><div style="font-size:16px;font-weight:800;color:#07583C">${lanc.mes||lanc.periodo||'—'}</div><div style="font-size:12px;color:#5a7a5a">${lanc.safras?.nome||''}</div></div><div style="background:${cor}18;border-radius:10px;padding:14px;border-left:4px solid ${cor}"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">ÍNDICE DE PREVENÇÃO</div><div style="font-size:32px;font-weight:800;color:${cor}">${(lanc.indice_prevencao||0).toFixed(1)}</div><div style="font-size:12px;font-weight:700;color:${cor}">${st.label}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:20px"><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">PONT. GERÊNCIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.pontuacao_gerencia||0).toFixed(1)}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">MÉD. DIRETORIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${lanc.media_diretoria!=null?lanc.media_diretoria.toFixed(1):'—'}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AUDITORIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.nota_auditoria||0).toFixed(1)}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AJUSTE</div><div style="font-size:20px;font-weight:800;color:${(lanc.ajuste_pontos||0)>=0?'#07583C':'#d93025'}">${(lanc.ajuste_pontos||0)>0?'+':''}${lanc.ajuste_pontos||0}</div></div></div><div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">📌 INDICADORES</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Indicador</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Valores</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Pontuação</th></tr></thead><tbody>${indRows}</tbody></table></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a"><b>Acidente:</b> ${acid[lanc.tipo_acidente]||'—'} &nbsp;|&nbsp;<b>Regras que Salvam Vidas:</b> ${lanc.regras_salvas||0} &nbsp;|&nbsp;<b>IP Acumulado:</b> ${lanc.acumulado_gerencia!=null?lanc.acumulado_gerencia.toFixed(1):'—'}${lanc.obs_auditoria?'<br><b>Obs:</b> '+lanc.obs_auditoria:''}</div>`;
+}
+function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTML||'';fecharModal('modal-detalhe');overlay.style.display='block';}
+async function abrirImpressao(){
+  if(!dashData?.length){alert('Carregue o Dashboard primeiro.');return;}
+  const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');
+  const periodo=document.getElementById('dash-periodo')?.value||'';
+  if(subtitle)subtitle.textContent='Período: '+periodo+' · Exportado em '+new Date().toLocaleDateString('pt-BR');
+  const rows=dashData.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);return`<tr><td style="padding:10px 14px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.nota_auditoria||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td style="padding:10px 14px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td><td style="padding:10px 14px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td></tr>`;}).join('');
+  const media=dashData.reduce((s,l)=>s+(l.indice_prevencao||0),0)/dashData.length;
+  content.innerHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px"><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">MÉDIA GERAL</div><div style="font-size:30px;font-weight:800;color:${getColor(media)}">${media.toFixed(1)}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">GERÊNCIAS</div><div style="font-size:30px;font-weight:800;color:#1a73e8">${dashData.length}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">META + MÁXIMO</div><div style="font-size:30px;font-weight:800;color:#07583C">${dashData.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length}</div></div><div style="background:#fef3e0;border-radius:10px;padding:16px;border-top:3px solid #c47d0e"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">PONTO DE ATENÇÃO</div><div style="font-size:30px;font-weight:800;color:#c47d0e">${dashData.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#07583C"><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">UNIDADE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AJUSTE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">STATUS</th></tr></thead><tbody>${rows}</tbody></table>`;
+  overlay.style.display='block';
+}
+function fecharImpressao(){document.getElementById('print-overlay').style.display='none';}
+
+// ── MODAIS ────────────────────────────────────────────────────
+function fecharModal(id){document.getElementById(id)?.classList.remove('show');}
+
+// ── START ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded',init);
+
+// Ping automático para evitar pausa do Supabase (a cada 5 minutos)
+setInterval(async()=>{try{await sb.from('config').select('chave').limit(1);}catch(e){}},5*60*1000);
+</script>
+
+<!-- PÁGINA DE IMPRESSÃO -->
+<div id="print-overlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:500;overflow-y:auto;padding:30px">
+  <div style="max-width:900px;margin:0 auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:3px solid #07583C;padding-bottom:15px">
+      <div>
+        <div style="font-size:22px;font-weight:800;color:#07583C">Índice de Prevenção — VIDAS</div>
+        <div id="print-subtitle" style="font-size:14px;color:#5a7a5a;margin-top:4px"></div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button onclick="window.print()" style="background:#07583C;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimir</button>
+        <button onclick="fecharImpressao()" style="background:#f0f0f0;color:#333;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer">✕ Fechar</button>
+      </div>
+    </div>
+    <div id="print-content"></div>
+  </div>
+</div>
+
+<!-- MODAL DETALHE GERÊNCIA -->
+<div class="modal-overlay" id="modal-detalhe">
+  <div class="modal" style="width:680px;max-width:96vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title" id="modal-detalhe-title">📋 Detalhe do Lançamento</div>
+    <div id="modal-detalhe-content"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-detalhe')">Fechar</button>
+      <button class="btn btn-primary" onclick="imprimirDetalhe()">🖨️ Imprimir este</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL INDICADORES POR GERÊNCIA -->
+<div class="modal-overlay" id="modal-ig" style="z-index:300">
+  <div class="modal" style="width:620px;max-width:96vw">
+    <div class="modal-title">⚙️ Indicadores — <span id="modal-ig-nome"></span></div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label>Safra</label>
+      <select id="modal-ig-safra" onchange="carregarModalIG()" style="max-width:250px;padding:7px 11px;font-size:13px"></select>
+    </div>
+    <div class="alert alert-info" style="margin-bottom:12px">Configure os indicadores e pesos. A soma deve ser <b>100%</b>.</div>
+    <div id="modal-ig-lista" style="max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
+    <div id="modal-ig-soma" style="font-size:13px;font-family:'DM Mono',monospace;margin-top:10px;padding:8px;background:var(--surface2);border-radius:6px;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-ig')">Fechar</button>
+      <button class="btn btn-primary" onclick="salvarIndGer()">✓ Salvar Configuração</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EDITAR INDICADOR -->
+<div class="modal-overlay" id="modal-ind">
+  <div class="modal">
+    <div class="modal-title">✏️ Editar Indicador</div>
+    <input type="hidden" id="edit-ind-id">
+    <div class="form-group"><label>Nome</label><input type="text" id="edit-ind-nome"></div>
+    <div class="form-group"><label>Tipo</label><select id="edit-ind-tipo"><option value="previsto_realizado">Previsto × Realizado</option><option value="nota">Nota (0–100)</option><option value="binario">Sim / Não</option></select></div>
+    <div class="form-group"><label>Fonte</label><input type="text" id="edit-ind-fonte"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-ind')">Cancelar</button>
+      <button class="btn btn-primary" onclick="atualizarIndicador()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EDITAR GERÊNCIA -->
+<div class="modal-overlay" id="modal-ger">
+  <div class="modal">
+    <div class="modal-title">✏️ Editar Gerência</div>
+    <input type="hidden" id="edit-ger-id">
+    <div class="form-group"><label>Nome</label><input type="text" id="edit-ger-nome"></div>
+    <div class="form-group"><label>Diretoria</label><select id="edit-ger-dir"></select></div>
+    <div class="form-group"><label>Unidade</label><select id="edit-ger-uni"></select></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-ger')">Cancelar</button>
+      <button class="btn btn-primary" onclick="atualizarGerencia()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<style>
+@media print {
+  body > *:not(#print-overlay){display:none !important;}
+  #print-overlay{position:static !important;padding:0 !important;}
+  #print-overlay > div > div:first-child button{display:none !important;}
+}
+</style>
+</body>
+</html>

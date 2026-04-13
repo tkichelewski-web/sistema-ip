@@ -1374,7 +1374,7 @@ async function carregarHistorico(){
       <td style="font-size:11px;color:var(--muted)">${l.usuarios?.nome||'—'}</td>
       <td><div style="display:flex;gap:5px">
         <button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})">✏️ Editar</button>
-        <button class="btn btn-danger btn-sm" onclick="apagarLancamento(${l.id},'${(l.gerencias?.nome||'').replace(/'/g,'')}','${l.mes||l.periodo||''}')">🗑️</button>
+        ${usuario.perfil==='admin'?`<button class="btn btn-danger btn-sm" onclick="apagarLancamento(${l.id},'${(l.gerencias?.nome||'').replace(/'/g,'')}','${l.mes||l.periodo||''}')">🗑️</button>`:''}
       </div></td>
     </tr>`;
   }).join('')}</tbody></table></div>`;

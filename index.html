@@ -6,6 +6,7 @@
 <title>Sistema IP — VIDAS Usina Santa Adélia</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Open+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -94,8 +95,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#07583C;}
 input[type=number]{font-family:'DM Mono',monospace;}
 
 /* RESULT BOX */
-.result-box{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-top:16px;display:none;}
-.result-box.show{display:block;}
+.result-box{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-top:16px;}
+
 .result-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);}
 .result-row:last-child{border-bottom:none;}
 .result-label{font-size:13px;color:var(--muted);}
@@ -215,8 +216,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="fr2" style="margin-bottom:17px;justify-content:space-between;">
         <div class="fr2">
           <label style="margin:0;font-size:12px">Safra:</label>
-          <select id="acum-safra" onchange="carregarAcumulado()" style="width:auto;padding:6px 10px;font-size:13px"></select>
-          <select id="acum-dir" onchange="renderAcumTable()" style="width:auto;padding:6px 10px;font-size:12px"></select>
+          <select id="acum-safra" onchange="carregarAcumulado()" style="width:auto;padding:6px 10px;font-size:13px;appearance:auto"></select>
+          <select id="acum-dir" onchange="renderAcumTable()" style="width:auto;padding:6px 10px;font-size:12px;appearance:auto"></select>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="exportarAcumCSV()">⬇ CSV</button>
       </div>
@@ -227,6 +228,19 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <span style="font-size:12px;color:var(--muted)">Coluna verde = acumulado até o mês</span>
         </div>
         <div id="acum-ger-tbl"><div class="loading">Selecione uma safra.</div></div>
+      </div>
+      <!-- Gráfico de Acumulado -->
+      <div class="table-wrap" style="margin-bottom:20px">
+        <div class="table-header">
+          <span class="table-title">📈 Evolução do IP Acumulado</span>
+          <select id="acum-chart-tipo" onchange="renderAcumChart()" style="font-size:12px;padding:4px 8px">
+            <option value="gerencia">Por Gerência</option>
+            <option value="diretoria">Por Diretoria</option>
+          </select>
+        </div>
+        <div style="padding:16px">
+          <canvas id="acum-chart" style="width:100%;max-height:320px"></canvas>
+        </div>
       </div>
       <!-- Acumulado por Diretoria -->
       <div class="table-wrap">
@@ -690,6 +704,8 @@ async function carregarAcumulado() {
     adEl.innerHTML = '<option value="">Todas as Diretorias</option>' + dirs.map(([id,n]) => `<option value="${id}">${n}</option>`).join('');
   }
   renderAcumTable();
+  renderAcumDirTbl();
+  setTimeout(renderAcumChart, 100);
 }
 
 function renderAcumTable() {
@@ -1100,7 +1116,7 @@ async function calcPreview(){
   if(!gerId)return;
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const indsGer=await getIndsGerencia(gerId, safraId);
-  if(!indsGer.length)return;
+  // Mostra preview mesmo sem indicadores configurados
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id};
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
@@ -1126,7 +1142,9 @@ async function calcPreview(){
   if(apEl){const partes=[];if(tipo==='nenhum')partes.push('<span style="color:#07583C">+5 sem acidente</span>');else if(tipo==='iap')partes.push('<span style="color:var(--yellow)">-5 IAP</span>');else if(tipo==='asa')partes.push('<span style="color:var(--yellow)">-10 ASA</span>');else if(tipo==='aca')partes.push('<span style="color:var(--red)">-15 ACA</span>');else if(tipo==='fatalidade')partes.push('<span style="color:var(--red)">-30 Fatalidade</span>');if(regras>0)partes.push(`<span style="color:#07583C">+${Math.min(regras,5)} regras</span>`);apEl.innerHTML='Ajuste: '+partes.join(' · ')+` = <b style="color:${aj>=0?'#07583C':'var(--red)'}">${aj>0?'+':''}${aj} pts</b>`;}
   const base=calcIndice(pg,null,aud,0);
   const final=calcIndice(pg,null,aud,aj);
-  document.getElementById('result-box')?.classList.add('show');
+  // Garante que a prévia aparece
+  const rbEl = document.getElementById('result-box');
+  if(rbEl) rbEl.style.display = 'block';
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
   set('rv-ger',`${pg.toFixed(1)} × 0.5 = ${(pg*.5).toFixed(1)}`);
   set('rv-dir','(calculado ao salvar) × 0.3');
@@ -2048,6 +2066,75 @@ async function abrirImpressao() {
 
 function fecharImpressao() {
   document.getElementById('print-overlay').style.display = 'none';
+}
+
+
+// ── GRÁFICO ACUMULADO ─────────────────────────────────────────
+let acumChartInstance = null;
+
+function renderAcumChart() {
+  const safraId = document.getElementById('acum-safra')?.value;
+  const safra = safrasData.find(s => s.id == safraId);
+  const tipo = document.getElementById('acum-chart-tipo')?.value || 'gerencia';
+  const canvas = document.getElementById('acum-chart');
+  if(!canvas || !acumAllData.length || !safra) return;
+
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  if(!meses.length) return;
+
+  const COLORS = ['#07583C','#B3DD64','#1a73e8','#7c3aed','#c47d0e','#d93025','#0a6e4a','#4CAF50','#2196F3','#FF5722','#9C27B0','#FF9800','#607D8B','#E91E63','#00BCD4'];
+
+  let datasets = [];
+  if(tipo === 'gerencia') {
+    const gers = [...new Map(acumAllData.map(l => [l.gerencia_id, {id:l.gerencia_id, nome:l.gerencias?.nome}])).values()];
+    datasets = gers.map((g, gi) => {
+      let soma = 0, count = 0;
+      const data = meses.map(m => {
+        const l = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
+        if(l) { soma += l.indice_prevencao||0; count++; }
+        return count > 0 ? parseFloat((soma/count).toFixed(1)) : null;
+      });
+      return { label: g.nome, data, borderColor: COLORS[gi%COLORS.length], backgroundColor: COLORS[gi%COLORS.length]+'22', tension: 0.3, pointRadius: 5, fill: false };
+    });
+  } else {
+    const dirs = [...new Map(acumAllData.map(l => [l.gerencias?.diretoria_id, l.gerencias?.diretorias?.nome])).entries()].map(([id,n]) => ({id,n}));
+    datasets = dirs.map((d, di) => {
+      let soma = 0, count = 0;
+      const data = meses.map(m => {
+        const lancs = acumAllData.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
+        const media = lancs.length ? lancs.reduce((s,l)=>s+(l.indice_prevencao||0),0)/lancs.length : null;
+        if(media != null) { soma += media; count++; }
+        return count > 0 ? parseFloat((soma/count).toFixed(1)) : null;
+      });
+      return { label: d.n||'—', data, borderColor: COLORS[di%COLORS.length], backgroundColor: COLORS[di%COLORS.length]+'22', tension: 0.3, pointRadius: 5, fill: false };
+    });
+  }
+
+  if(acumChartInstance) acumChartInstance.destroy();
+  acumChartInstance = new Chart(canvas, {
+    type: 'line',
+    data: { labels: meses.map(m => m.nome), datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: 'Open Sans', size: 11 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + ctx.parsed.y } }
+      },
+      scales: {
+        y: {
+          min: 60, max: 100,
+          grid: { color: '#e0f0e8' },
+          ticks: { font: { family: 'DM Mono', size: 11 } }
+        },
+        x: { grid: { color: '#e0f0e8' }, ticks: { font: { family: 'Open Sans', size: 11 } } }
+      },
+      annotation: {
+        annotations: {
+          metaLine: { type: 'line', yMin: config.faixa_meta||90, yMax: config.faixa_meta||90, borderColor: '#07583C', borderWidth: 1, borderDash: [6,3], label: { display: true, content: 'Meta', position: 'start' } }
+        }
+      }
+    }
+  });
 }
 
 // ── START ─────────────────────────────────────────────────────

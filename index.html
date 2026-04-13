@@ -1141,6 +1141,7 @@ async function calcPreview(){
   // Se não houver, usa o campo manual como fallback
   const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
   const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
+  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
   let aud=audManual;
   if(uniId&&safraIdLanc) {
     const notaUni=await getNotaAuditoria(uniId,safraIdLanc);
@@ -1155,7 +1156,7 @@ async function calcPreview(){
   const final=calcIndice(pg,null,aud,aj);
   // Garante que a prévia aparece
   const rbEl = document.getElementById('result-box');
-  if(rbEl) rbEl.style.display = 'block';
+  if(rbEl) { rbEl.style.display = 'block'; rbEl.style.visibility = 'visible'; }
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
   set('rv-ger',`${pg.toFixed(1)} × 0.5 = ${(pg*.5).toFixed(1)}`);
   set('rv-dir','(calculado ao salvar) × 0.3');

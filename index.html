@@ -1065,7 +1065,7 @@ function renderDashTable(){
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
     const aj=l.ajuste_pontos||0;
     return`<tr>
-      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id})">${l.gerencias?.nome||'—'}</b></td>
+      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id||0})" title="Ver detalhes">${l.gerencias?.nome||'—'}</b></td>
       <td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td>
       <td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
@@ -1343,7 +1343,7 @@ async function carregarHistorico(){
     return`<tr>
       <td style="font-size:11px">${l.safras?.nome||'—'}</td>
       <td class="mono">${l.mes||l.periodo||'—'}</td>
-      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id})">${l.gerencias?.nome||'—'}</b></td>
+      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id||0})" title="Ver detalhes">${l.gerencias?.nome||'—'}</b></td>
       <td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td>
       <td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td>
       <td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
@@ -1367,13 +1367,18 @@ async function editarLancamento(lancId) {
   window._editandoLancamento = true;
 
   // 1. Busca dados do lançamento e itens
-  const{data:lanc}=await sb.from('lancamentos')
+  const{data:lanc,error:eLanc}=await sb.from('lancamentos')
     .select('*,gerencias(id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)),safras(id,nome)')
     .eq('id',lancId).single();
-  if(!lanc){alert('Lançamento não encontrado.');window._editandoLancamento=false;return;}
-  const{data:itens}=await sb.from('lancamento_itens')
+  if(eLanc||!lanc){
+    alert('Erro ao carregar lançamento: '+(eLanc?.message||'não encontrado'));
+    window._editandoLancamento=false;return;
+  }
+  const{data:itens,error:eItens}=await sb.from('lancamento_itens')
     .select('*,indicadores(id,nome,tipo)')
     .eq('lancamento_id',lancId);
+  if(eItens) console.warn('Erro ao buscar itens:',eItens.message);
+  console.log('Lançamento carregado:',lanc,'Itens:',itens?.length||0);
 
   // 2. Navega para aba Lançar
   showTab('lancar');
@@ -1392,12 +1397,14 @@ async function editarLancamento(lancId) {
   await new Promise(r=>setTimeout(r,200));
 
   // 5. Preenche Gerência e aguarda carregar indicadores (await onGerenciaChange)
+  // Garante que indicadores base estão carregados
+  await carregarIndicadores();
   const sg=document.getElementById('sel-gerencia');
   if(sg){
     sg.value=lanc.gerencias.id;
     await onGerenciaChange(); // aguarda renderIndTable completar
   }
-  await new Promise(r=>setTimeout(r,500)); // dá tempo para DOM renderizar inputs
+  await new Promise(r=>setTimeout(r,800)); // dá tempo para DOM renderizar inputs
 
   // 6. Preenche Unidade e carrega auditoria
   const su=document.getElementById('sel-unidade');
@@ -1727,13 +1734,26 @@ async function verDetalheGerencia(lancId){
   document.getElementById('modal-detalhe').classList.add('show');
   const content=document.getElementById('modal-detalhe-content');
   content.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
-  const{data:lanc}=await sb.from('lancamentos').select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)').eq('id',lancId).single();
-  const{data:itens}=await sb.from('lancamento_itens').select('*,indicadores(id,nome,tipo)').eq('lancamento_id',lancId);
-  if(!lanc){content.innerHTML='<p>Não encontrado.</p>';return;}
-  const title=document.getElementById('modal-detalhe-title');
-  if(title)title.textContent='📋 '+(lanc.gerencias?.nome||'')+' — '+(lanc.mes||lanc.periodo||'');
-  window._detalheHTML=gerarDetalheHTML(lanc,itens);
-  content.innerHTML=window._detalheHTML;
+  try {
+    const{data:lanc,error:eLanc}=await sb.from('lancamentos')
+      .select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)')
+      .eq('id',lancId).single();
+    if(eLanc||!lanc){
+      content.innerHTML='<div class="alert alert-warn">Erro ao carregar: '+(eLanc?.message||'não encontrado')+'</div>';
+      return;
+    }
+    const{data:itens,error:eItens}=await sb.from('lancamento_itens')
+      .select('*,indicadores(id,nome,tipo)')
+      .eq('lancamento_id',lancId);
+    if(eItens) console.warn('Erro itens:',eItens.message);
+    console.log('Itens encontrados:',itens?.length||0,'para lancamento',lancId);
+    const title=document.getElementById('modal-detalhe-title');
+    if(title)title.textContent='📋 '+(lanc.gerencias?.nome||'')+' — '+(lanc.mes||lanc.periodo||'');
+    window._detalheHTML=gerarDetalheHTML(lanc,itens||[]);
+    content.innerHTML=window._detalheHTML;
+  } catch(e) {
+    content.innerHTML='<div class="alert alert-warn">Erro inesperado: '+e.message+'</div>';
+  }
 }
 function gerarDetalheHTML(lanc,itens){
   const st=getStatus(lanc.indice_prevencao||0),cor=getColor(lanc.indice_prevencao||0);

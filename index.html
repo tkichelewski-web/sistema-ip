@@ -932,6 +932,12 @@ async function onUnidadeChange(){
 function onSafraLancarChange(){
   const safraId=document.getElementById('sel-safra')?.value;
   preencherMesesLancar(safraId);
+  // Reload indicators and audit if gerencia already selected
+  const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
+  if(gerId) onGerenciaChange();
+  // Reload audit if unidade selected
+  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  if(uniId) onUnidadeChange();
 }
 
 function filtrarGerencias(){
@@ -1199,7 +1205,7 @@ function preencherHistoricoFiltros(){
   const hg=document.getElementById('hist-gerencia');
   if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
   const ha=document.getElementById('hist-ano');
-  if(ha){const ano=new Date().getFullYear();ha.innerHTML=Array.from({length:5},(_,i)=>ano-i).map(a=>`<option value="${a}">${a}</option>`).join('');}
+  if(ha){const ano=new Date().getFullYear();ha.innerHTML='<option value="">Todos os anos</option>'+Array.from({length:5},(_,i)=>ano-i).map(a=>`<option value="${a}">${a}</option>`).join('');ha.value=String(ano);}
 }
 
 async function carregarHistorico(){
@@ -1207,12 +1213,18 @@ async function carregarHistorico(){
   const ano=document.getElementById('hist-ano')?.value||new Date().getFullYear();
   const tw=document.getElementById('hist-table');
   if(tw)tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
-  let q=sb.from('lancamentos').select('*,gerencias(nome,diretorias(nome),unidades(nome))').like('periodo',`${ano}-%`).order('periodo',{ascending:false}).order('indice_prevencao',{ascending:false});
+  // Query both 'mes' and 'periodo' columns (sistema antigo usava 'periodo', novo usa 'mes')
+  let q=sb.from('lancamentos')
+    .select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)');
+  if(ano) q=q.or(`mes.like.${ano}-%,periodo.like.${ano}-%`);
+  q=q
+    .order('mes',{ascending:false})
+    .order('indice_prevencao',{ascending:false});
   if(gerId)q=q.eq('gerencia_id',gerId);
   if(usuario.perfil==='gerencia')q=q.eq('gerencia_id',usuario.gerencia_id);
   const{data,error}=await q;
   if(error||!data?.length){if(tw)tw.innerHTML='<div class="loading">Nenhum registro encontrado.</div>';return;}
-  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Período</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Regras</th><th>Ajuste</th><th>Índice</th><th>Status</th><th>Ações</th></tr></thead><tbody>${data.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};return`<tr><td class="mono">${l.periodo||l.mes||'—'}</td><td><b>${l.gerencias?.nome||'—'}</b></td><td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td><td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td><td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td><td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td><td class="mono">${l.regras_salvas||0}</td><td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td><td><span class="badge ${st.cls}">${st.label}</span></td><td><div style="display:flex;gap:5px">
+  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Safra</th><th>Mês</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Regras</th><th>Ajuste</th><th>Índice</th><th>Status</th><th>Ações</th></tr></thead><tbody>${data.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};return`<tr><td class="mono" style="font-size:11px">${l.safras?.nome||'—'}</td><td class="mono">${l.mes||l.periodo||'—'}</td><td><b>${l.gerencias?.nome||'—'}</b></td><td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td><td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td><td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td><td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td><td class="mono">${l.regras_salvas||0}</td><td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td><td><span class="badge ${st.cls}">${st.label}</span></td><td><div style="display:flex;gap:5px">
   <button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})">✏️ Editar</button>
   <button class="btn btn-danger btn-sm" onclick="apagarLancamento(${l.id},'${(l.gerencias?.nome||'').replace(/'/g,'')}','${l.mes||l.periodo||''}')">🗑️</button>
 </div></td></tr>`}).join('')}</tbody></table></div>`;
@@ -1641,7 +1653,16 @@ async function getIndsGerencia(gerId, safraId) {
   if(cfg && cfg.length > 0) {
     return cfg.map(r => ({...r.indicadores, peso: r.peso}));
   }
-  // Fallback: usa indicadores base com peso padrão
+  // Fallback: tenta buscar sem filtro de safra
+  if(safraId) {
+    const { data: cfgAll } = await sb.from('ind_gerencia_safra')
+      .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+      .eq('gerencia_id', gerId).eq('ativo', true);
+    if(cfgAll && cfgAll.length > 0) {
+      return cfgAll.map(r => ({...r.indicadores, peso: r.peso}));
+    }
+  }
+  // Ultimo fallback: indicadores base
   return indicadores.filter(i => i.base);
 }
 

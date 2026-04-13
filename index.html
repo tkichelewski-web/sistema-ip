@@ -204,7 +204,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <button class="btn btn-secondary btn-sm" onclick="abrirImpressao()">🖨️ Imprimir</button>
         </div>
       </div>
-      <div class="stats-row" id="dash-stats"><div class="stat-card"><div class="stat-label">Período</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">—</div></div><div class="stat-card"><div class="stat-label">Meta+Máximo</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Crítico</div><div class="stat-value c-red">—</div></div></div>
+      <div class="stats-row" id="dash-stats"><div class="stat-card"><div class="stat-label">Período</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">—</div></div><div class="stat-card"><div class="stat-label">Meta+Máximo</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Ponto de Atenção</div><div class="stat-value c-red">—</div></div></div>
       <div class="table-wrap">
         <div class="table-header"><span class="table-title">Gerências — Índice de Prevenção</span></div>
         <div id="dash-table-wrap"><div class="loading">Selecione um período para carregar os dados.</div></div>
@@ -274,7 +274,13 @@ input[type=number]{font-family:'DM Mono',monospace;}
         </div>
       </div>
       <div class="form-section">
-        <div class="form-section-title">📌 Indicadores</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div class="form-section-title" style="margin:0">📌 Indicadores</div>
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="filtro-nao-atingidos" style="width:auto;accent-color:#07583C" onchange="filtrarNaoAtingidos()">
+          Mostrar apenas não atingidos
+        </label>
+      </div>
         <div id="ind-table-wrap"><p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p></div>
       </div>
       <div class="form-section">
@@ -434,10 +440,10 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <div class="form-section">
             <div class="form-section-title">🎯 Faixas de Classificação</div>
             <div class="form-row">
-              <div><label>Crítico abaixo de</label><input type="number" id="cfg-crit" min="0" max="100"></div>
+              <div><label>Ponto de Atenção abaixo de</label><input type="number" id="cfg-crit" min="0" max="100"></div>
               <div><label>Meta a partir de</label><input type="number" id="cfg-meta" min="0" max="100"></div>
             </div>
-            <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Crítico &lt; X · Mínimo X–Y · Meta Y–99 · Máximo = 100</p>
+            <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Ponto de Atenção &lt; X · Mínimo X–Y · Meta Y–99 · Máximo = 100</p>
             <button class="btn btn-primary" onclick="salvarFaixas()">Salvar Faixas</button>
           </div>
         </div>
@@ -1041,7 +1047,7 @@ function renderDashStats(){
     <div class="stat-card"><div class="stat-label">Média Geral</div><div class="stat-value" style="color:${getColor(media)}">${media.toFixed(1)}</div></div>
     <div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">${idxs.length}</div></div>
     <div class="stat-card"><div class="stat-label">Meta + Máximo</div><div class="stat-value c-green">${maximo+meta}</div></div>
-    <div class="stat-card"><div class="stat-label">Crítico</div><div class="stat-value c-red">${critico}</div></div>`;
+    <div class="stat-card"><div class="stat-label">Ponto de Atenção</div><div class="stat-value c-red">${critico}</div></div>`;
 }
 
 function renderDashTable(){
@@ -1187,6 +1193,7 @@ async function salvarLancamento(){
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
     else if(ind.tipo==='nota'){item.nota=parseFloat(document.getElementById('nota_'+ind.id)?.value)||0;}
     else{item.sim_nao=document.getElementById('bin_'+ind.id)?.value==='sim';}
+    item.comentario=document.getElementById('coment_'+ind.id)?.value?.trim()||null;
     return item;
   });
   const pg=calcPontGer(itens,indsGer);
@@ -1204,20 +1211,24 @@ async function salvarLancamento(){
   const ger=estrutura.gerencias.find(g=>g.id===gerId);
 
   // ── MÉDIA DA DIRETORIA ──────────────────────────────────────
-  // Busca pontuações de TODAS as gerências da diretoria já lançadas neste mês
+  // Usa TODAS as gerências da diretoria (inclusive as que não lançaram = 0)
   let mediaDir=null;
   if(ger){
-    const gersDir=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id).map(g=>g.id);
+    const gersDir=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id);
+    const totalGers=gersDir.length; // denominador fixo = total de gerências
+    const gersIds=gersDir.map(g=>g.id);
+    // Busca lançamentos existentes
     const{data:lancsDir}=await sb.from('lancamentos')
       .select('pontuacao_gerencia,gerencia_id')
       .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
-      .in('gerencia_id',gersDir);
-
-    // Pontuações das outras gerências já lançadas + a atual
-    const outrasMap=Object.fromEntries((lancsDir||[]).filter(l=>l.gerencia_id!==gerId).map(l=>[l.gerencia_id,l.pontuacao_gerencia]));
-    outrasMap[gerId]=pg; // inclui a atual
-    const todasPonts=Object.values(outrasMap);
-    mediaDir=todasPonts.reduce((s,v)=>s+v,0)/todasPonts.length;
+      .in('gerencia_id',gersIds);
+    // Monta mapa: gerencia_id → pontuacao (0 para quem não lançou)
+    const pontMap={};
+    gersDir.forEach(g=>{ pontMap[g.id]=0; }); // inicializa todas com 0
+    (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
+    pontMap[gerId]=pg; // sobrescreve com a pontuação atual
+    const soma=Object.values(pontMap).reduce((s,v)=>s+v,0);
+    mediaDir=soma/totalGers;
   }
 
   const indBase=calcIndice(pg,mediaDir,aud,0);
@@ -1257,7 +1268,7 @@ async function salvarLancamento(){
   const lancId=(lanc||{}).id;
   if(lancId&&itens.length){
     await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
-    await sb.from('lancamento_itens').insert(itens.map(item=>({lancamento_id:lancId,indicador_id:item.indicador_id,previsto:item.previsto||null,realizado:item.realizado||null,nota:item.nota||null,sim_nao:item.sim_nao||null,pontuacao:item.pontuacao||0})));
+    await sb.from('lancamento_itens').insert(itens.map(item=>({lancamento_id:lancId,indicador_id:item.indicador_id,previsto:item.previsto||null,realizado:item.realizado||null,nota:item.nota||null,sim_nao:item.sim_nao||null,pontuacao:item.pontuacao||0,comentario:item.comentario||null})));
   }
 
   // ── RECALCULA TODAS AS GERÊNCIAS DA DIRETORIA COM A MESMA MÉDIA ──
@@ -1389,6 +1400,7 @@ async function editarLancamento(lancId) {
     } else {
       const bEl=document.getElementById('bin_'+id);if(bEl)bEl.value=item.sim_nao?'sim':'nao';
     }
+    const cEl=document.getElementById('coment_'+id);if(cEl)cEl.value=item.comentario||'';
   }
   await calcPreview();
   document.getElementById('result-box')?.scrollIntoView({behavior:'smooth',block:'center'});
@@ -1689,7 +1701,7 @@ async function verDetalheGerencia(lancId){
 function gerarDetalheHTML(lanc,itens){
   const st=getStatus(lanc.indice_prevencao||0),cor=getColor(lanc.indice_prevencao||0);
   const acid={nenhum:'✅ Sem acidente',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
-  const indRows=(itens||[]).map(item=>{const tipo=item.indicadores?.tipo;let valorStr='—';if(tipo==='previsto_realizado')valorStr='Previsto: '+(item.previsto||0)+' / Realizado: '+(item.realizado||0);else if(tipo==='nota')valorStr='Nota: '+(item.nota||0);else if(tipo==='binario')valorStr=item.sim_nao?'✓ Sim':'✗ Não';return`<tr><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">${item.indicadores?.nome||'—'}</td><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">${valorStr}</td><td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:${(item.pontuacao||0)>=90?'#07583C':(item.pontuacao||0)>=70?'#c47d0e':'#d93025'}">${(item.pontuacao||0).toFixed(1)}</td></tr>`;}).join('');
+  const indRows=(itens||[]).map(item=>{const tipo=item.indicadores?.tipo;let valorStr='—';if(tipo==='previsto_realizado')valorStr='Previsto: '+(item.previsto||0)+' / Realizado: '+(item.realizado||0);else if(tipo==='nota')valorStr='Nota: '+(item.nota||0);else if(tipo==='binario')valorStr=item.sim_nao?'✓ Sim':'✗ Não';const coment=item.comentario?'<div style="font-size:11px;color:#c47d0e;margin-top:3px">💬 '+item.comentario+'</div>':'';return`<tr><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">${item.indicadores?.nome||'—'}${coment}</td><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">${valorStr}</td><td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:${(item.pontuacao||0)>=90?'#07583C':(item.pontuacao||0)>=70?'#c47d0e':'#d93025'}">${(item.pontuacao||0).toFixed(1)}</td></tr>`;}).join('');
   return`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px"><div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">GERÊNCIA</div><div style="font-size:16px;font-weight:800;color:#07583C">${lanc.gerencias?.nome||'—'}</div><div style="font-size:12px;color:#5a7a5a">${lanc.gerencias?.diretorias?.nome||''} · ${lanc.gerencias?.unidades?.nome||''}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">PERÍODO</div><div style="font-size:16px;font-weight:800;color:#07583C">${lanc.mes||lanc.periodo||'—'}</div><div style="font-size:12px;color:#5a7a5a">${lanc.safras?.nome||''}</div></div><div style="background:${cor}18;border-radius:10px;padding:14px;border-left:4px solid ${cor}"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">ÍNDICE DE PREVENÇÃO</div><div style="font-size:32px;font-weight:800;color:${cor}">${(lanc.indice_prevencao||0).toFixed(1)}</div><div style="font-size:12px;font-weight:700;color:${cor}">${st.label}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:20px"><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">PONT. GERÊNCIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.pontuacao_gerencia||0).toFixed(1)}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">MÉD. DIRETORIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${lanc.media_diretoria!=null?lanc.media_diretoria.toFixed(1):'—'}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AUDITORIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.nota_auditoria||0).toFixed(1)}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AJUSTE</div><div style="font-size:20px;font-weight:800;color:${(lanc.ajuste_pontos||0)>=0?'#07583C':'#d93025'}">${(lanc.ajuste_pontos||0)>0?'+':''}${lanc.ajuste_pontos||0}</div></div></div><div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">📌 INDICADORES</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Indicador</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Valores</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Pontuação</th></tr></thead><tbody>${indRows}</tbody></table></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a"><b>Acidente:</b> ${acid[lanc.tipo_acidente]||'—'} &nbsp;|&nbsp;<b>Regras que Salvam Vidas:</b> ${lanc.regras_salvas||0} &nbsp;|&nbsp;<b>IP Acumulado:</b> ${lanc.acumulado_gerencia!=null?lanc.acumulado_gerencia.toFixed(1):'—'}${lanc.obs_auditoria?'<br><b>Obs:</b> '+lanc.obs_auditoria:''}</div>`;
 }
 function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTML||'';fecharModal('modal-detalhe');overlay.style.display='block';}
@@ -1707,6 +1719,21 @@ function fecharImpressao(){document.getElementById('print-overlay').style.displa
 
 // ── MODAIS ────────────────────────────────────────────────────
 function fecharModal(id){document.getElementById(id)?.classList.remove('show');}
+
+
+function filtrarNaoAtingidos(){
+  const filtrar=document.getElementById('filtro-nao-atingidos')?.checked;
+  const rows=document.querySelectorAll('#ind-table-wrap tbody tr');
+  rows.forEach(row=>{
+    if(!filtrar){row.style.display='';return;}
+    // Verifica se a pontuação está abaixo de 100%
+    const percEl=row.querySelector('[id^="perc_"]');
+    if(!percEl){row.style.display='';return;}
+    const txt=percEl.textContent||'';
+    const val=parseFloat(txt)||0;
+    row.style.display=(val<100||txt==='—')?'':'none';
+  });
+}
 
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);

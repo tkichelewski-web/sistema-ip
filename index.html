@@ -1212,7 +1212,10 @@ async function carregarHistorico(){
   if(usuario.perfil==='gerencia')q=q.eq('gerencia_id',usuario.gerencia_id);
   const{data,error}=await q;
   if(error||!data?.length){if(tw)tw.innerHTML='<div class="loading">Nenhum registro encontrado.</div>';return;}
-  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Período</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Regras</th><th>Ajuste</th><th>Índice</th><th>Status</th><th>Ação</th></tr></thead><tbody>${data.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};return`<tr><td class="mono">${l.periodo||l.mes||'—'}</td><td><b>${l.gerencias?.nome||'—'}</b></td><td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td><td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td><td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td><td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td><td class="mono">${l.regras_salvas||0}</td><td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td><td><span class="badge ${st.cls}">${st.label}</span></td><td><button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})">✏️ Ver/Editar</button></td></tr>`}).join('')}</tbody></table></div>`;
+  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Período</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Regras</th><th>Ajuste</th><th>Índice</th><th>Status</th><th>Ações</th></tr></thead><tbody>${data.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};return`<tr><td class="mono">${l.periodo||l.mes||'—'}</td><td><b>${l.gerencias?.nome||'—'}</b></td><td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td><td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td><td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td><td style="font-size:12px">${acid[l.tipo_acidente]||'—'}</td><td class="mono">${l.regras_salvas||0}</td><td class="mono" style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'var(--red)'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td class="mono" style="font-weight:800;color:${cor}">${idx.toFixed(1)}</td><td><span class="badge ${st.cls}">${st.label}</span></td><td><div style="display:flex;gap:5px">
+  <button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})">✏️ Editar</button>
+  <button class="btn btn-danger btn-sm" onclick="apagarLancamento(${l.id},'${(l.gerencias?.nome||'').replace(/'/g,'')}','${l.mes||l.periodo||''}')">🗑️</button>
+</div></td></tr>`}).join('')}</tbody></table></div>`;
 }
 
 // ── INDICADORES ───────────────────────────────────────────────
@@ -1778,6 +1781,7 @@ async function editarLancamento(lancId) {
   if(sr) sr.value = lanc.regras_salvas || 0;
 
   // Preenche valores dos indicadores
+  document.getElementById('result-box')?.classList.remove('show');
   await new Promise(r => setTimeout(r, 300));
   for(const item of (itens||[])) {
     const id = item.indicadores?.id || item.indicador_id;
@@ -1794,8 +1798,24 @@ async function editarLancamento(lancId) {
       if(bEl) bEl.value = item.sim_nao ? 'sim' : 'nao';
     }
   }
-  calcPreview();
-  alert('✅ Lançamento carregado! Revise os dados e clique em "Salvar Lançamento" para atualizar.');
+  await calcPreview();
+  // Scroll to result box
+  document.getElementById('rb')?.scrollIntoView({behavior:'smooth', block:'center'});
+  alert('✅ Lançamento carregado para revisão! Verifique os dados e a prévia do cálculo abaixo. Clique em "Salvar Lançamento" para atualizar.');
+}
+
+
+// ── APAGAR LANÇAMENTO ─────────────────────────────────────────
+async function apagarLancamento(lancId, gerNome, periodo) {
+  if(!confirm(`Apagar lançamento de "${gerNome}" (${periodo})?\n\nEsta ação não pode ser desfeita.`)) return;
+  // Apaga itens primeiro
+  await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId);
+  // Apaga lançamento
+  const { error } = await sb.from('lancamentos').delete().eq('id', lancId);
+  if(error) { alert('Erro ao apagar: '+error.message); return; }
+  alert('✅ Lançamento apagado!');
+  carregarHistorico();
+  dashData = null;
 }
 
 // ── START ─────────────────────────────────────────────────────

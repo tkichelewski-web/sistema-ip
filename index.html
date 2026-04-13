@@ -1266,10 +1266,31 @@ async function salvarLancamento(){
     if(err2){alert('Erro ao salvar: '+err2.message);if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}return;}
   }
 
-  const lancId=(lanc||{}).id;
+  // Busca o ID do lançamento salvo (pode vir do upsert ou de busca direta)
+  let lancId=(lanc||{}).id;
+  if(!lancId) {
+    // Busca o lançamento que acabou de ser salvo
+    const{data:lancBusca}=await sb.from('lancamentos').select('id')
+      .eq('gerencia_id',gerId).or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`).single();
+    lancId=lancBusca?.id;
+  }
+  console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);
   if(lancId&&itens.length){
     await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
-    await sb.from('lancamento_itens').insert(itens.map(item=>({lancamento_id:lancId,indicador_id:item.indicador_id,previsto:item.previsto||null,realizado:item.realizado||null,nota:item.nota||null,sim_nao:item.sim_nao||null,pontuacao:item.pontuacao||0,comentario:item.comentario||null})));
+    const{error:errItens}=await sb.from('lancamento_itens').insert(
+      itens.map(item=>({
+        lancamento_id:lancId,
+        indicador_id:item.indicador_id,
+        previsto:item.previsto||null,
+        realizado:item.realizado||null,
+        nota:item.nota||null,
+        sim_nao:item.sim_nao??null,
+        pontuacao:item.pontuacao||0,
+        comentario:item.comentario||null
+      }))
+    );
+    if(errItens) console.error('Erro ao salvar itens:', errItens.message);
+    else console.log('Itens salvos com sucesso:', itens.length);
   }
 
   // ── RECALCULA TODAS AS GERÊNCIAS DA DIRETORIA COM A MESMA MÉDIA ──
@@ -1426,23 +1447,38 @@ async function editarLancamento(lancId) {
   const srg=document.getElementById('regras-salvas');
   if(srg)srg.value=lanc.regras_salvas||0;
 
-  // 10. Preenche valores dos indicadores (inputs já devem estar no DOM)
-  for(const item of (itens||[])){
-    const id=item.indicadores?.id||item.indicador_id;
-    if(item.indicadores?.tipo==='previsto_realizado'){
-      const pEl=document.getElementById('prev_'+id);
-      const rEl=document.getElementById('real_'+id);
-      if(pEl)pEl.value=item.previsto??'';
-      if(rEl)rEl.value=item.realizado??'';
-    } else if(item.indicadores?.tipo==='nota'){
-      const nEl=document.getElementById('nota_'+id);
-      if(nEl)nEl.value=item.nota??'';
-    } else {
-      const bEl=document.getElementById('bin_'+id);
-      if(bEl)bEl.value=item.sim_nao?'sim':'nao';
+  // 10. Preenche valores dos indicadores com retry se inputs não estiverem no DOM
+  const preencherItens = async () => {
+    let preenchidos = 0;
+    for(const item of (itens||[])){
+      const id=item.indicadores?.id||item.indicador_id;
+      if(!id) continue;
+      if(item.indicadores?.tipo==='previsto_realizado'){
+        const pEl=document.getElementById('prev_'+id);
+        const rEl=document.getElementById('real_'+id);
+        if(pEl){pEl.value=item.previsto??'';preenchidos++;}
+        if(rEl)rEl.value=item.realizado??'';
+      } else if(item.indicadores?.tipo==='nota'){
+        const nEl=document.getElementById('nota_'+id);
+        if(nEl){nEl.value=item.nota??'';preenchidos++;}
+      } else {
+        const bEl=document.getElementById('bin_'+id);
+        if(bEl){bEl.value=item.sim_nao?'sim':'nao';preenchidos++;}
+      }
+      const cEl=document.getElementById('coment_'+id);
+      if(cEl)cEl.value=item.comentario||'';
     }
-    const cEl=document.getElementById('coment_'+id);
-    if(cEl)cEl.value=item.comentario||'';
+    return preenchidos;
+  };
+
+  // Tenta preencher, com retry se inputs ainda não existirem
+  let tentativas = 0;
+  while(tentativas < 5) {
+    const ok = await preencherItens();
+    console.log('Tentativa '+(tentativas+1)+': '+ok+' inputs preenchidos de '+(itens?.length||0));
+    if(ok >= (itens?.length||0) || ok > 0) break;
+    await new Promise(r=>setTimeout(r,400));
+    tentativas++;
   }
 
   // 11. Calcula prévia
@@ -1744,7 +1780,8 @@ async function verDetalheGerencia(lancId){
     }
     const{data:itens,error:eItens}=await sb.from('lancamento_itens')
       .select('*,indicadores(id,nome,tipo)')
-      .eq('lancamento_id',lancId);
+      .eq('lancamento_id',lancId)
+      .order('id');
     if(eItens) console.warn('Erro itens:',eItens.message);
     console.log('Itens encontrados:',itens?.length||0,'para lancamento',lancId);
     const title=document.getElementById('modal-detalhe-title');
@@ -1758,7 +1795,24 @@ async function verDetalheGerencia(lancId){
 function gerarDetalheHTML(lanc,itens){
   const st=getStatus(lanc.indice_prevencao||0),cor=getColor(lanc.indice_prevencao||0);
   const acid={nenhum:'✅ Sem acidente',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
-  const indRows=(itens||[]).map(item=>{const tipo=item.indicadores?.tipo;let valorStr='—';if(tipo==='previsto_realizado')valorStr='Previsto: '+(item.previsto||0)+' / Realizado: '+(item.realizado||0);else if(tipo==='nota')valorStr='Nota: '+(item.nota||0);else if(tipo==='binario')valorStr=item.sim_nao?'✓ Sim':'✗ Não';const coment=item.comentario?'<div style="font-size:11px;color:#c47d0e;margin-top:3px">💬 '+item.comentario+'</div>':'';return`<tr><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">${item.indicadores?.nome||'—'}${coment}</td><td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">${valorStr}</td><td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:${(item.pontuacao||0)>=90?'#07583C':(item.pontuacao||0)>=70?'#c47d0e':'#d93025'}">${(item.pontuacao||0).toFixed(1)}</td></tr>`;}).join('');
+  const indRows = (()=>{
+    if(!itens||!itens.length) return '<tr><td colspan="3" style="padding:16px;text-align:center;color:#c47d0e">⚠️ Nenhum indicador registrado.</td></tr>';
+    return itens.map(item=>{
+      const tipo=item.indicadores?.tipo;
+      let v='—';
+      if(tipo==='previsto_realizado') v='Prev: '+(item.previsto||0)+' / Real: '+(item.realizado||0);
+      else if(tipo==='nota') v='Nota: '+(item.nota||0);
+      else if(tipo==='binario') v=item.sim_nao?'✓ Sim':'✗ Não';
+      const c=item.comentario?'<div style="font-size:11px;color:#c47d0e;margin-top:2px">💬 '+item.comentario+'</div>':'';
+      const p=item.pontuacao||0;
+      const cor=p>=90?'#07583C':p>=70?'#c47d0e':'#d93025';
+      return '<tr>'
+        +'<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">'+(item.indicadores?.nome||'—')+c+'</td>'
+        +'<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">'+v+'</td>'
+        +'<td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:'+cor+'">'+p.toFixed(1)+'</td>'
+        +'</tr>';
+    }).join('');
+  })();
   return`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px"><div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">GERÊNCIA</div><div style="font-size:16px;font-weight:800;color:#07583C">${lanc.gerencias?.nome||'—'}</div><div style="font-size:12px;color:#5a7a5a">${lanc.gerencias?.diretorias?.nome||''} · ${lanc.gerencias?.unidades?.nome||''}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">PERÍODO</div><div style="font-size:16px;font-weight:800;color:#07583C">${lanc.mes||lanc.periodo||'—'}</div><div style="font-size:12px;color:#5a7a5a">${lanc.safras?.nome||''}</div></div><div style="background:${cor}18;border-radius:10px;padding:14px;border-left:4px solid ${cor}"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">ÍNDICE DE PREVENÇÃO</div><div style="font-size:32px;font-weight:800;color:${cor}">${(lanc.indice_prevencao||0).toFixed(1)}</div><div style="font-size:12px;font-weight:700;color:${cor}">${st.label}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:20px"><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">PONT. GERÊNCIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.pontuacao_gerencia||0).toFixed(1)}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">MÉD. DIRETORIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${lanc.media_diretoria!=null?lanc.media_diretoria.toFixed(1):'—'}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AUDITORIA</div><div style="font-size:20px;font-weight:800;color:#07583C">${(lanc.nota_auditoria||0).toFixed(1)}</div></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;text-align:center"><div style="font-size:11px;color:#5a7a5a;margin-bottom:4px">AJUSTE</div><div style="font-size:20px;font-weight:800;color:${(lanc.ajuste_pontos||0)>=0?'#07583C':'#d93025'}">${(lanc.ajuste_pontos||0)>0?'+':''}${lanc.ajuste_pontos||0}</div></div></div><div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">📌 INDICADORES</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Indicador</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Valores</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Pontuação</th></tr></thead><tbody>${indRows}</tbody></table></div><div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a"><b>Acidente:</b> ${acid[lanc.tipo_acidente]||'—'} &nbsp;|&nbsp;<b>Regras que Salvam Vidas:</b> ${lanc.regras_salvas||0} &nbsp;|&nbsp;<b>IP Acumulado:</b> ${lanc.acumulado_gerencia!=null?lanc.acumulado_gerencia.toFixed(1):'—'}${lanc.obs_auditoria?'<br><b>Obs:</b> '+lanc.obs_auditoria:''}</div>`;
 }
 function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTML||'';fecharModal('modal-detalhe');overlay.style.display='block';}

@@ -967,7 +967,7 @@ function filtrarGerencias(){
   const dirId=parseInt(document.getElementById('sel-diretoria')?.value)||0;
   const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):[];
   const sg=document.getElementById('sel-gerencia');
-  if(sg){sg.innerHTML='<option value="">— Selecione —</option>'+gers.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
+  if(sg){sg.innerHTML='<option value="">— Selecione —</option>'+gers.map(g=>`<option value="${g.id}">${g.nome}${g.unidades?' ('+g.unidades.nome+')':''}</option>`).join('');}
   calcPreview();
 }
 
@@ -1334,7 +1334,7 @@ function limparForm(){
 // ── HISTÓRICO ─────────────────────────────────────────────────
 function preencherHistoricoFiltros(){
   const hg=document.getElementById('hist-gerencia');
-  if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
+  if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}${g.unidades?' ('+g.unidades.nome+')':''}</option>`).join('');}
   const ha=document.getElementById('hist-ano');
   if(ha){const ano=new Date().getFullYear();ha.innerHTML='<option value="">Todos os anos</option>'+Array.from({length:5},(_,i)=>ano-i).map(a=>`<option value="${a}">${a}</option>`).join('');ha.value=String(ano);}
 }
@@ -1613,7 +1613,23 @@ async function renderGerencias(){
 }
 async function salvarDiretoria(){const nome=document.getElementById('dir-nome')?.value.trim();if(!nome)return;const{error}=await sb.from('diretorias').insert({nome});if(error){alert('Erro: '+error.message);return;}document.getElementById('dir-nome').value='';await carregarEstrutura();preencherForms();renderGerencias();}
 async function salvarUnidade(){const nome=document.getElementById('uni-nome')?.value.trim();if(!nome)return;const{error}=await sb.from('unidades').insert({nome});if(error){alert('Erro: '+error.message);return;}document.getElementById('uni-nome').value='';await carregarEstrutura();preencherForms();renderGerencias();}
-async function salvarGerencia(){const nome=document.getElementById('ger-nome')?.value.trim(),dir=parseInt(document.getElementById('ger-diretoria')?.value)||0,uni=parseInt(document.getElementById('ger-unidade')?.value)||0;if(!nome||!dir||!uni){alert('Preencha todos os campos.');return;}const{error}=await sb.from('gerencias').insert({nome,diretoria_id:dir,unidade_id:uni});if(error){alert('Erro: '+error.message);return;}document.getElementById('ger-nome').value='';await carregarEstrutura();preencherForms();renderGerencias();}
+async function salvarGerencia(){
+  const nome=document.getElementById('ger-nome')?.value.trim(),dir=parseInt(document.getElementById('ger-diretoria')?.value)||0,uni=parseInt(document.getElementById('ger-unidade')?.value)||0;
+  if(!nome||!dir||!uni){alert('Preencha todos os campos.');return;}
+  // Verifica se já existe uma gerência com mesmo nome+diretoria+unidade (mesmo inativa)
+  const{data:existente}=await sb.from('gerencias').select('id,ativo').eq('nome',nome).eq('diretoria_id',dir).eq('unidade_id',uni).maybeSingle();
+  if(existente){
+    if(existente.ativo){alert('Já existe uma gerência com este nome nesta diretoria e unidade.');return;}
+    // Reativa a gerência que foi desativada
+    const{error}=await sb.from('gerencias').update({ativo:true}).eq('id',existente.id);
+    if(error){alert('Erro ao reativar: '+error.message);return;}
+  } else {
+    const{error}=await sb.from('gerencias').insert({nome,diretoria_id:dir,unidade_id:uni});
+    if(error){alert('Erro: '+error.message);return;}
+  }
+  document.getElementById('ger-nome').value='';
+  await carregarEstrutura();preencherForms();renderGerencias();
+}
 function abrirEditGer(id){const g=estrutura.gerencias.find(x=>x.id===id);if(!g)return;document.getElementById('edit-ger-id').value=id;document.getElementById('edit-ger-nome').value=g.nome;document.getElementById('edit-ger-dir').value=g.diretoria_id;document.getElementById('edit-ger-uni').value=g.unidade_id;document.getElementById('modal-ger').classList.add('show');}
 async function atualizarGerencia(){const id=parseInt(document.getElementById('edit-ger-id').value);const nome=document.getElementById('edit-ger-nome').value.trim();const dir=parseInt(document.getElementById('edit-ger-dir').value);const uni=parseInt(document.getElementById('edit-ger-uni').value);const{error}=await sb.from('gerencias').update({nome,diretoria_id:dir,unidade_id:uni}).eq('id',id);if(error){alert('Erro: '+error.message);return;}fecharModal('modal-ger');await carregarEstrutura();preencherForms();renderGerencias();}
 async function desativarGerencia(id){if(!confirm('Desativar esta gerência?'))return;await sb.from('gerencias').update({ativo:false}).eq('id',id);await carregarEstrutura();preencherForms();renderGerencias();}

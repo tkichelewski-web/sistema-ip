@@ -530,11 +530,22 @@ let config={peso_gerencia:.5,peso_diretoria:.3,peso_auditoria:.2,faixa_critico:8
 
 // ── INIT ─────────────────────────────────────────────────────
 async function init() {
-  // Checa se voltou de link mágico
+  // Detecta se veio de link de redefinição de senha (type=recovery na hash)
   const hash = window.location.hash;
-  if (hash.includes('access_token')) {
-    const { data:{ session }, error } = await sb.auth.getSession();
-    if (session) { window.location.hash=''; await carregarUsuario(session.user); return; }
+  if (hash.includes('type=recovery') || hash.includes('access_token')) {
+    const { data:{ session } } = await sb.auth.getSession();
+    if (session && hash.includes('type=recovery')) {
+      // Veio do link de redefinição — mostra tela de login com modal de nova senha aberto
+      window.location.hash = '';
+      mostrarLogin();
+      // Abre modal de redefinição em modo recovery (sem pedir senha atual)
+      window._recoverySession = session;
+      document.getElementById('pw-recovery-info').style.display = 'block';
+      document.getElementById('pw-atual-wrap').style.display = 'none';
+      document.getElementById('modal-senha').classList.add('show');
+      return;
+    }
+    if (session) { window.location.hash = ''; await carregarUsuario(session.user); return; }
   }
   const { data:{ session } } = await sb.auth.getSession();
   if (session) await carregarUsuario(session.user);
@@ -657,25 +668,39 @@ function pwCheck(){
 }
 
 async function salvarSenha(){
-  const atual=document.getElementById('pw-atual').value;
   const v=document.getElementById('pw-nova').value;
   const c=document.getElementById('pw-conf').value;
   const err=document.getElementById('pw-err');
   const ok=document.getElementById('pw-ok');
   err.style.display='none';ok.style.display='none';
-  if(!atual){err.textContent='Informe a senha atual.';err.style.display='block';return;}
   if(v.length<6){err.textContent='A nova senha deve ter pelo menos 6 caracteres.';err.style.display='block';return;}
   if(v!==c){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
   const btn=document.getElementById('pw-btn');
-  btn.disabled=true;btn.textContent='Verificando...';
-  // 1. Re-autentica com a senha atual para confirmar identidade
+  btn.disabled=true;btn.textContent='Salvando...';
+  // Modo recovery (veio do link de e-mail): não precisa da senha atual
+  if(window._recoverySession){
+    const{error}=await sb.auth.updateUser({password:v});
+    btn.disabled=false;btn.textContent='Salvar senha';
+    if(error){err.textContent='Erro: '+error.message;err.style.display='block';return;}
+    ok.textContent='✓ Senha redefinida! Fazendo login...';ok.style.display='block';
+    window._recoverySession=null;
+    setTimeout(async()=>{
+      const{data:{session}}=await sb.auth.getSession();
+      if(session){fecharModal('modal-senha');await carregarUsuario(session.user);}
+      else location.reload();
+    },1500);
+    return;
+  }
+  // Modo normal (usuário logado): re-autentica com senha atual antes de trocar
+  const atual=document.getElementById('pw-atual').value;
+  if(!atual){err.textContent='Informe a senha atual.';err.style.display='block';btn.disabled=false;btn.textContent='Salvar senha';return;}
+  btn.textContent='Verificando...';
   const{error:errLogin}=await sb.auth.signInWithPassword({email:usuario.email,password:atual});
   if(errLogin){err.textContent='Senha atual incorreta.';err.style.display='block';btn.disabled=false;btn.textContent='Salvar senha';return;}
-  // 2. Após re-autenticar, atualiza para a nova senha
   btn.textContent='Salvando...';
   const{error}=await sb.auth.updateUser({password:v});
   btn.disabled=false;btn.textContent='Salvar senha';
-  if(error){err.textContent='Erro ao salvar: '+error.message;err.style.display='block';return;}
+  if(error){err.textContent='Erro: '+error.message;err.style.display='block';return;}
   ok.textContent='✓ Senha alterada com sucesso!';ok.style.display='block';
   document.getElementById('pw-atual').value='';
   document.getElementById('pw-nova').value='';
@@ -2022,9 +2047,12 @@ setInterval(async()=>{try{await sb.from('config').select('chave').limit(1);}catc
 <div class="modal-overlay" id="modal-senha">
   <div class="modal">
     <div class="modal-title">🔑 Alterar minha senha</div>
+    <div class="alert alert-info" id="pw-recovery-info" style="display:none">
+      Você chegou pelo link de redefinição. Digite e confirme sua nova senha abaixo.
+    </div>
     <div class="err-box" id="pw-err"></div>
     <div class="alert alert-success" id="pw-ok" style="display:none"></div>
-    <div class="form-group">
+    <div class="form-group" id="pw-atual-wrap">
       <label>Senha atual</label>
       <input type="password" id="pw-atual" placeholder="Digite sua senha atual">
     </div>

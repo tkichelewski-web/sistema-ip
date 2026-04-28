@@ -140,7 +140,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
 .flex-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mono{font-family:'DM Mono',monospace;}
 .acum-cell{background:#f0f9f0 !important;font-weight:700;}
-@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
 @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -270,7 +269,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <div><label>Safra</label><select id="sel-safra" onchange="onSafraLancarChange()"><option value="">— Selecione —</option></select></div>
           <div><label>Diretoria</label><select id="sel-diretoria" onchange="filtrarGerencias()"><option value="">— Selecione —</option></select></div>
           <div><label>Gerência</label><select id="sel-gerencia" onchange="onGerenciaChange()"><option value="">— Selecione —</option></select></div>
-          <div><label>Unidade</label><select id="sel-unidade" onchange="onUnidadeChange()"><option value="">— Selecione —</option></select></div>
           <div><label>Período</label><input type="month" id="sel-periodo"></div>
         </div>
       </div>
@@ -318,7 +316,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
             </select>
           </div>
           <div>
-            <label>Regras que Salvam Vidas (0–8)</label>
+            <label>Regras que Salvam Vidas</label>
             <input type="number" id="regras-salvas" min="0" max="8" value="0" oninput="calcPreview()">
             <div style="font-size:11px;color:var(--muted);margin-top:3px">+1 ponto por regra, máx +5 pts</div>
           </div>
@@ -525,25 +523,6 @@ const sb = createClient(
   { auth: { persistSession:true, storageKey:'sistema-ip-auth', flowType:'implicit' } }
 );
 
-// ── TOAST / FEEDBACK ──────────────────────────────────────────
-function toast(msg, tipo='info', duracao=3500){
-  const cores={info:'#1a73e8',success:'#07583C',warn:'#c47d0e',error:'#d93025'};
-  const icones={info:'ℹ️',success:'✅',warn:'⚠️',error:'❌'};
-  const t=document.createElement('div');
-  t.style.cssText=`position:fixed;bottom:24px;right:24px;z-index:9999;background:#fff;border-left:4px solid ${cores[tipo]};border-radius:8px;padding:12px 18px;font-size:13px;font-family:'Open Sans',sans-serif;box-shadow:0 4px 20px rgba(0,0,0,0.15);max-width:360px;display:flex;align-items:center;gap:10px;animation:slideIn .3s ease;`;
-  t.innerHTML=`<span style="font-size:16px">${icones[tipo]}</span><span style="color:#1a2e1a">${msg}</span>`;
-  document.body.appendChild(t);
-  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},duracao);
-}
-
-// Wrapper com timeout para chamadas ao Supabase (evita travamento infinito)
-async function sbCall(fn, timeoutMs=12000){
-  return Promise.race([
-    fn(),
-    new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),timeoutMs))
-  ]);
-}
-
 let usuario=null, dashData=null;
 let estrutura={diretorias:[],gerencias:[],unidades:[]};
 let indicadores=[];
@@ -623,12 +602,11 @@ function preencherGerencia() {
   const g=usuario.gerencias;
   const sd=document.getElementById('sel-diretoria');
   const sg=document.getElementById('sel-gerencia');
-  const su=document.getElementById('sel-unidade');
   if(sd){sd.value=g.diretoria_id;sd.disabled=true;}
   filtrarGerencias();
   setTimeout(()=>{
     if(sg){sg.value=g.id;sg.disabled=true;}
-    if(su){su.value=g.unidade_id;su.disabled=true;}
+    window._uniIdAtual=g.unidade_id;
     onGerenciaChange();
   },200);
 }
@@ -874,7 +852,7 @@ async function salvarFaixas() {
     sb.from('config').update({valor:String(meta)}).eq('chave','faixa_meta'),
   ]);
   await carregarConfig();
-  toast('✅ Faixas salvas!','success',3500);
+  alert('✅ Faixas salvas!');
 }
 
 async function salvarSafra() {
@@ -943,9 +921,6 @@ function preencherForms(){
   // sel-diretoria
   const sd=document.getElementById('sel-diretoria');
   if(sd){sd.innerHTML='<option value="">— Selecione —</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
-  // sel-unidade
-  const su=document.getElementById('sel-unidade');
-  if(su){su.innerHTML='<option value="">— Selecione —</option>'+estrutura.unidades.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');}
   // dash filtro
   const fd=document.getElementById('dash-filtro-dir');
   if(fd){fd.innerHTML='<option value="">Todas as Diretorias</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
@@ -962,53 +937,40 @@ function preencherForms(){
   if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
 }
 
-async function onUnidadeChange(){
-  // Carrega nota de auditoria quando unidade muda
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
-  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
-  const infoEl=document.getElementById('aud-info-lancar');
-  const audEl=document.getElementById('nota-auditoria');
-  if(uniId&&safraId){
-    const nota=await getNotaAuditoria(uniId,safraId);
-    if(nota!=null){
-      if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
-      if(infoEl)infoEl.innerHTML='✅ Nota de auditoria da unidade: <b>'+nota+'</b> (cadastrada em Configurações)';
-    } else {
-      if(audEl){audEl.value='';audEl.style.background='';}
-      if(infoEl)infoEl.innerHTML='⚠️ Nenhuma nota de auditoria cadastrada para esta unidade. Vá em <b>Configurações</b> para cadastrar.';
-    }
-  }
-  calcPreview();
-}
 
 function onSafraLancarChange(){
   const safraId=document.getElementById('sel-safra')?.value;
   preencherMesesLancar(safraId);
-  // Reload indicators and audit if gerencia already selected
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
   if(gerId) onGerenciaChange();
-  // Reload audit if unidade selected
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
-  if(uniId) onUnidadeChange();
 }
 
 function filtrarGerencias(){
   const dirId=parseInt(document.getElementById('sel-diretoria')?.value)||0;
   const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):[];
   const sg=document.getElementById('sel-gerencia');
-  if(sg){sg.innerHTML='<option value="">— Selecione —</option>'+gers.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
+  if(sg){sg.innerHTML='<option value="">— Selecione —</option>'+gers.map(g=>`<option value="${g.id}" data-uni="${g.unidade_id}">${g.nome}${g.unidades?' — '+g.unidades.nome:''}</option>`).join('');}
   calcPreview();
 }
 
 async function onGerenciaChange(){
+  const sg=document.getElementById('sel-gerencia');
+  const selectedOpt=sg?.options[sg.selectedIndex];
+  window._uniIdAtual=parseInt(selectedOpt?.dataset?.uni)||0;
   await renderIndTable();
-  // Also trigger unidade audit load
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const infoEl=document.getElementById('aud-info-lancar');
   const audEl=document.getElementById('nota-auditoria');
-  if(uniId) onUnidadeChange();
-  else calcPreview();
+  if(window._uniIdAtual&&safraId){
+    const nota=await getNotaAuditoria(window._uniIdAtual,safraId);
+    if(nota!=null){
+      if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
+      if(infoEl)infoEl.innerHTML='✅ Nota de auditoria: <b>'+nota+'</b>';
+    } else {
+      if(audEl){audEl.value='';audEl.style.background='';}
+      if(infoEl)infoEl.innerHTML='⚠️ Sem nota de auditoria para esta unidade. Cadastre em Configurações.';
+    }
+  } else { calcPreview(); }
 }
 
 // ── CÁLCULOS ──────────────────────────────────────────────────
@@ -1173,7 +1135,7 @@ async function calcPreview(){
   // Se não houver, usa o campo manual como fallback
   const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
   const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  const uniId=window._uniIdAtual||0;
   let aud=audManual;
   if(uniId&&safraIdLanc) {
     const notaUni=await getNotaAuditoria(uniId,safraIdLanc);
@@ -1200,25 +1162,19 @@ async function calcPreview(){
 
 async function salvarLancamento(){
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  const uniId=window._uniIdAtual||0;
   const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
   const mesLancar=document.getElementById('sel-periodo')?.value||'';
-  if(!gerId||!mesLancar||!uniId){alert('Preencha Safra, Mês, Gerência e Unidade.');return;}
+  if(!gerId||!mesLancar||!uniId){alert('Preencha Safra, Mês e Gerência.');return;}
 
   const btn=document.getElementById('btn-salvar');
   if(btn){btn.disabled=true;btn.textContent='Verificando...';}
-  toast('Conectando ao servidor...','info',10000);
 
   // Trava: verifica se já existe lançamento para esta gerência/mês
-  let existing;
-  try{
-    const res=await sbCall(()=>sb.from('lancamentos').select('id').eq('gerencia_id',gerId).or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`).maybeSingle());
-    existing=res.data;
-  }catch(e){
-    toast('Servidor demorou para responder. Tentando novamente...','warn',4000);
-    if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
-    return;
-  }
+  const{data:existing}=await sb.from('lancamentos')
+    .select('id').eq('gerencia_id',gerId)
+    .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
+    .maybeSingle();
   if(existing && !window._editandoLancamento){
     alert('⚠️ Já existe um lançamento para esta gerência em '+mesLancar+'.\n\nPara editar, use o botão "✏️ Editar" no Histórico.');
     if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
@@ -1356,7 +1312,7 @@ async function salvarLancamento(){
   }
 
   const st=getStatus(indFinal);
-  toast('✅ Lançamento salvo! '+(ger?.nome||'')+' — IP: '+indFinal.toFixed(1)+' ('+st.label+')','success',5000);
+  alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+( mediaDir!=null?mediaDir.toFixed(1):'—'));
   if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
   window._editandoLancamento=false;
   dashData=null;carregarDashboard();
@@ -1471,8 +1427,8 @@ async function editarLancamento(lancId) {
   await new Promise(r=>setTimeout(r,800)); // dá tempo para DOM renderizar inputs
 
   // 6. Preenche Unidade e carrega auditoria
-  const su=document.getElementById('sel-unidade');
-  if(su){su.value=lanc.gerencias.unidade_id;await onUnidadeChange();}
+  window._uniIdAtual=lanc.gerencias.unidade_id||0;
+  await onGerenciaChange();
 
   // 7. Preenche Período
   const sp=document.getElementById('sel-periodo');
@@ -1527,7 +1483,7 @@ async function editarLancamento(lancId) {
   // 11. Calcula prévia
   await calcPreview();
   document.getElementById('result-box')?.scrollIntoView({behavior:'smooth',block:'center'});
-  toast('✅ Lançamento carregado! Revise e clique em "Salvar Lançamento" para atualizar.','success',3500);
+  alert('✅ Lançamento carregado! Revise e clique em "Salvar Lançamento" para atualizar.');
 }
 
 async function apagarLancamento(lancId,gerNome,periodo){
@@ -1535,7 +1491,7 @@ async function apagarLancamento(lancId,gerNome,periodo){
   await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
   const{error}=await sb.from('lancamentos').delete().eq('id',lancId);
   if(error){alert('Erro ao apagar: '+error.message);return;}
-  toast('✅ Lançamento apagado!','success',3500);
+  alert('✅ Lançamento apagado!');
   carregarHistorico();dashData=null;
 }
 
@@ -1633,7 +1589,7 @@ async function salvarIndGer(){
   await sb.from('ind_gerencia_safra').delete().eq('gerencia_id',modalIGGerId).eq('safra_id',safraIdSalvar);
   const ativos=rows.filter(r=>r.ativo);
   if(ativos.length){const{error}=await sb.from('ind_gerencia_safra').insert(ativos);if(error){alert('Erro: '+error.message);return;}}
-  toast('✅ Indicadores configurados com sucesso!','success',3500);fecharModal('modal-ig');
+  alert('✅ Indicadores configurados com sucesso!');fecharModal('modal-ig');
 }
 
 // ── GERÊNCIAS ─────────────────────────────────────────────────
@@ -1712,12 +1668,12 @@ async function carregarConfigForm(){
   </div>`).join('');
 }
 function calcSomaPesos(){const pg=parseFloat(document.getElementById('cfg-pg')?.value)||0,pd=parseFloat(document.getElementById('cfg-pd')?.value)||0,pa=parseFloat(document.getElementById('cfg-pa')?.value)||0,soma=pg+pd+pa;const el=document.getElementById('cfg-soma');if(el){const ok=Math.abs(soma-1)<0.01;el.innerHTML='Soma: <b style="color:'+(ok?'#07583C':'var(--red)')+'">'+soma.toFixed(2)+'</b>'+(ok?' ✅':' ⚠️ Deve ser 1.00');}}
-async function salvarPesos(){const pg=parseFloat(document.getElementById('cfg-pg')?.value)||0,pd=parseFloat(document.getElementById('cfg-pd')?.value)||0,pa=parseFloat(document.getElementById('cfg-pa')?.value)||0;if(Math.abs(pg+pd+pa-1)>0.01){alert('A soma dos pesos deve ser 1.00');return;}await Promise.all([sb.from('config').update({valor:String(pg)}).eq('chave','peso_gerencia'),sb.from('config').update({valor:String(pd)}).eq('chave','peso_diretoria'),sb.from('config').update({valor:String(pa)}).eq('chave','peso_auditoria')]);await carregarConfig();toast('✅ Pesos salvos!','success',3500);}
-async function salvarFaixas(){const crit=parseFloat(document.getElementById('cfg-crit')?.value)||80,meta=parseFloat(document.getElementById('cfg-meta')?.value)||90;await Promise.all([sb.from('config').update({valor:String(crit)}).eq('chave','faixa_critico'),sb.from('config').update({valor:String(meta)}).eq('chave','faixa_meta')]);await carregarConfig();toast('✅ Faixas salvas!','success',3500);}
+async function salvarPesos(){const pg=parseFloat(document.getElementById('cfg-pg')?.value)||0,pd=parseFloat(document.getElementById('cfg-pd')?.value)||0,pa=parseFloat(document.getElementById('cfg-pa')?.value)||0;if(Math.abs(pg+pd+pa-1)>0.01){alert('A soma dos pesos deve ser 1.00');return;}await Promise.all([sb.from('config').update({valor:String(pg)}).eq('chave','peso_gerencia'),sb.from('config').update({valor:String(pd)}).eq('chave','peso_diretoria'),sb.from('config').update({valor:String(pa)}).eq('chave','peso_auditoria')]);await carregarConfig();alert('✅ Pesos salvos!');}
+async function salvarFaixas(){const crit=parseFloat(document.getElementById('cfg-crit')?.value)||80,meta=parseFloat(document.getElementById('cfg-meta')?.value)||90;await Promise.all([sb.from('config').update({valor:String(crit)}).eq('chave','faixa_critico'),sb.from('config').update({valor:String(meta)}).eq('chave','faixa_meta')]);await carregarConfig();alert('✅ Faixas salvas!');}
 async function salvarSafra(){const nome=document.getElementById('sf-nome')?.value.trim(),ini=parseInt(document.getElementById('sf-ini')?.value)||0,fim=parseInt(document.getElementById('sf-fim')?.value)||0;if(!nome||!ini||!fim){alert('Preencha todos os campos.');return;}const{error}=await sb.from('safras').insert({nome,ano_ini:ini,ano_fim:fim});if(error){alert('Erro: '+error.message);return;}['sf-nome','sf-ini','sf-fim'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});await carregarSafras();carregarConfigForm();alert('✅ Safra '+nome+' criada!');}
 async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
 async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}
-async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}toast('✅ Notas de auditoria salvas!','success',3500);carregarAuditorias();}
+async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}alert('✅ Notas de auditoria salvas!');carregarAuditorias();}
 async function getNotaAuditoria(unidadeId,safraId){if(!unidadeId||!safraId)return null;const{data}=await sb.from('auditoria_unidade').select('nota').eq('unidade_id',unidadeId).eq('safra_id',safraId).single();return data?.nota??null;}
 
 // ── EXPORTAR ──────────────────────────────────────────────────
@@ -1802,7 +1758,7 @@ async function exportarBackupCompleto(){
     const dataStr=agora.getFullYear()+String(agora.getMonth()+1).padStart(2,'0')+String(agora.getDate()).padStart(2,'0');
     const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Backup_IP_VIDAS_'+dataStr+'.csv';a.click();
-    toast('✅ Backup exportado!','success',3500);
+    alert('✅ Backup exportado!');
   }catch(e){alert('Erro: '+e.message);}
   finally{btn.disabled=false;btn.textContent='💾 Backup Completo';}
 }
@@ -1932,11 +1888,8 @@ function filtrarNaoAtingidos(){
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
 
-// Ping automático para evitar pausa do Supabase (a cada 2 minutos)
-setInterval(async()=>{try{await sb.from('config').select('chave').limit(1);}catch(e){}},2*60*1000);
-
-// Acordar o Supabase imediatamente ao carregar a página
-(async()=>{try{await sb.from('config').select('chave').limit(1);}catch(e){}})();
+// Ping automático para evitar pausa do Supabase (a cada 5 minutos)
+setInterval(async()=>{try{await sb.from('config').select('chave').limit(1);}catch(e){}},5*60*1000);
 </script>
 
 <!-- PÁGINA DE IMPRESSÃO -->

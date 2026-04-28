@@ -142,8 +142,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
 .acum-cell{background:#f0f9f0 !important;font-weight:700;}
 .pw-strength-bar{height:4px;border-radius:2px;margin-top:8px;background:var(--border);overflow:hidden;}
 .pw-strength-fill{height:100%;width:0;border-radius:2px;transition:width .3s,background .3s;}
-.link-btn{background:none;border:none;color:var(--green);font-size:12px;cursor:pointer;padding:0;font-family:'Open Sans',sans-serif;text-decoration:underline;}
-.link-btn:hover{color:#0a6e4a;}
 @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -167,9 +165,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="password" id="login-senha" placeholder="••••••••" onkeydown="if(event.key==='Enter')fazerLogin()">
     </div>
     <button class="btn btn-primary btn-full" id="btn-login" onclick="fazerLogin()">Entrar</button>
-    <div style="text-align:right;margin-top:8px;">
-      <button class="link-btn" onclick="esqueceuSenha()">Esqueci minha senha</button>
-    </div>
     <div class="err-box" id="login-err"></div>
   </div>
 </div>
@@ -530,22 +525,11 @@ let config={peso_gerencia:.5,peso_diretoria:.3,peso_auditoria:.2,faixa_critico:8
 
 // ── INIT ─────────────────────────────────────────────────────
 async function init() {
-  // Detecta se veio de link de redefinição de senha (type=recovery na hash)
+  // Checa se voltou de link mágico
   const hash = window.location.hash;
-  if (hash.includes('type=recovery') || hash.includes('access_token')) {
-    const { data:{ session } } = await sb.auth.getSession();
-    if (session && hash.includes('type=recovery')) {
-      // Veio do link de redefinição — mostra tela de login com modal de nova senha aberto
-      window.location.hash = '';
-      mostrarLogin();
-      // Abre modal de redefinição em modo recovery (sem pedir senha atual)
-      window._recoverySession = session;
-      document.getElementById('pw-recovery-info').style.display = 'block';
-      document.getElementById('pw-atual-wrap').style.display = 'none';
-      document.getElementById('modal-senha').classList.add('show');
-      return;
-    }
-    if (session) { window.location.hash = ''; await carregarUsuario(session.user); return; }
+  if (hash.includes('access_token')) {
+    const { data:{ session }, error } = await sb.auth.getSession();
+    if (session) { window.location.hash=''; await carregarUsuario(session.user); return; }
   }
   const { data:{ session } } = await sb.auth.getSession();
   if (session) await carregarUsuario(session.user);
@@ -639,18 +623,6 @@ window.fazerLogin = async function fazerLogin() {
 
 window.sair = async function sair(){await sb.auth.signOut();location.reload();}
 
-window.esqueceuSenha = async function esqueceuSenha(){
-  const email=document.getElementById('login-email').value.trim();
-  const err=document.getElementById('login-err');
-  const info=document.getElementById('login-info');
-  err.style.display='none';
-  if(!email){err.textContent='Digite seu e-mail acima antes de continuar.';err.style.display='block';return;}
-  const{error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:window.location.href});
-  if(error){err.textContent='Erro ao enviar e-mail: '+error.message;err.style.display='block';return;}
-  info.textContent='✅ E-mail enviado! Verifique sua caixa de entrada e clique no link para redefinir a senha.';
-  info.classList.add('show');
-}
-
 function pwCheck(){
   const v=document.getElementById('pw-nova').value;
   const c=document.getElementById('pw-conf').value;
@@ -668,35 +640,21 @@ function pwCheck(){
 }
 
 async function salvarSenha(){
+  const atual=document.getElementById('pw-atual').value;
   const v=document.getElementById('pw-nova').value;
   const c=document.getElementById('pw-conf').value;
   const err=document.getElementById('pw-err');
   const ok=document.getElementById('pw-ok');
   err.style.display='none';ok.style.display='none';
+  if(!atual){err.textContent='Informe a senha atual.';err.style.display='block';return;}
   if(v.length<6){err.textContent='A nova senha deve ter pelo menos 6 caracteres.';err.style.display='block';return;}
   if(v!==c){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
   const btn=document.getElementById('pw-btn');
-  btn.disabled=true;btn.textContent='Salvando...';
-  // Modo recovery (veio do link de e-mail): não precisa da senha atual
-  if(window._recoverySession){
-    const{error}=await sb.auth.updateUser({password:v});
-    btn.disabled=false;btn.textContent='Salvar senha';
-    if(error){err.textContent='Erro: '+error.message;err.style.display='block';return;}
-    ok.textContent='✓ Senha redefinida! Fazendo login...';ok.style.display='block';
-    window._recoverySession=null;
-    setTimeout(async()=>{
-      const{data:{session}}=await sb.auth.getSession();
-      if(session){fecharModal('modal-senha');await carregarUsuario(session.user);}
-      else location.reload();
-    },1500);
-    return;
-  }
-  // Modo normal (usuário logado): re-autentica com senha atual antes de trocar
-  const atual=document.getElementById('pw-atual').value;
-  if(!atual){err.textContent='Informe a senha atual.';err.style.display='block';btn.disabled=false;btn.textContent='Salvar senha';return;}
-  btn.textContent='Verificando...';
+  btn.disabled=true;btn.textContent='Verificando...';
+  // Re-autentica com a senha atual para garantir identidade
   const{error:errLogin}=await sb.auth.signInWithPassword({email:usuario.email,password:atual});
   if(errLogin){err.textContent='Senha atual incorreta.';err.style.display='block';btn.disabled=false;btn.textContent='Salvar senha';return;}
+  // Atualiza para a nova senha
   btn.textContent='Salvando...';
   const{error}=await sb.auth.updateUser({password:v});
   btn.disabled=false;btn.textContent='Salvar senha';
@@ -2047,12 +2005,9 @@ setInterval(async()=>{try{await sb.from('config').select('chave').limit(1);}catc
 <div class="modal-overlay" id="modal-senha">
   <div class="modal">
     <div class="modal-title">🔑 Alterar minha senha</div>
-    <div class="alert alert-info" id="pw-recovery-info" style="display:none">
-      Você chegou pelo link de redefinição. Digite e confirme sua nova senha abaixo.
-    </div>
     <div class="err-box" id="pw-err"></div>
     <div class="alert alert-success" id="pw-ok" style="display:none"></div>
-    <div class="form-group" id="pw-atual-wrap">
+    <div class="form-group">
       <label>Senha atual</label>
       <input type="password" id="pw-atual" placeholder="Digite sua senha atual">
     </div>

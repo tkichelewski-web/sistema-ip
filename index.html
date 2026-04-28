@@ -651,11 +651,21 @@ async function salvarSenha(){
   if(v!==c){err.textContent='As senhas não coincidem.';err.style.display='block';return;}
   const btn=document.getElementById('pw-btn');
   btn.disabled=true;btn.textContent='Verificando...';
-  // Re-autentica com a senha atual para garantir identidade
+  // Verifica senha atual fazendo login — se errar, rejeita
   const{error:errLogin}=await sb.auth.signInWithPassword({email:usuario.email,password:atual});
-  if(errLogin){err.textContent='Senha atual incorreta.';err.style.display='block';btn.disabled=false;btn.textContent='Salvar senha';return;}
-  // Atualiza para a nova senha
+  if(errLogin){
+    err.textContent='Senha atual incorreta.';err.style.display='block';
+    btn.disabled=false;btn.textContent='Salvar senha';return;
+  }
+  // Faz logout completo e login fresh para garantir sessão limpa antes de updateUser
   btn.textContent='Salvando...';
+  await sb.auth.signOut();
+  const{error:errLogin2}=await sb.auth.signInWithPassword({email:usuario.email,password:atual});
+  if(errLogin2){
+    err.textContent='Erro ao autenticar. Tente novamente.';err.style.display='block';
+    btn.disabled=false;btn.textContent='Salvar senha';location.reload();return;
+  }
+  // Agora atualiza a senha com sessão recém-criada
   const{error}=await sb.auth.updateUser({password:v});
   btn.disabled=false;btn.textContent='Salvar senha';
   if(error){err.textContent='Erro: '+error.message;err.style.display='block';return;}

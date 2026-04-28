@@ -269,7 +269,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <div><label>Safra</label><select id="sel-safra" onchange="onSafraLancarChange()"><option value="">— Selecione —</option></select></div>
           <div><label>Diretoria</label><select id="sel-diretoria" onchange="filtrarGerencias()"><option value="">— Selecione —</option></select></div>
           <div><label>Gerência</label><select id="sel-gerencia" onchange="onGerenciaChange()"><option value="">— Selecione —</option></select></div>
-          <div><label>Unidade</label><select id="sel-unidade" onchange="onUnidadeChange()"><option value="">— Selecione —</option></select></div>
           <div><label>Período</label><input type="month" id="sel-periodo"></div>
         </div>
       </div>
@@ -603,12 +602,11 @@ function preencherGerencia() {
   const g=usuario.gerencias;
   const sd=document.getElementById('sel-diretoria');
   const sg=document.getElementById('sel-gerencia');
-  const su=document.getElementById('sel-unidade');
   if(sd){sd.value=g.diretoria_id;sd.disabled=true;}
   filtrarGerencias();
   setTimeout(()=>{
     if(sg){sg.value=g.id;sg.disabled=true;}
-    if(su){su.value=g.unidade_id;su.disabled=true;}
+    window._uniIdAtual=g.unidade_id;
     onGerenciaChange();
   },200);
 }
@@ -923,9 +921,6 @@ function preencherForms(){
   // sel-diretoria
   const sd=document.getElementById('sel-diretoria');
   if(sd){sd.innerHTML='<option value="">— Selecione —</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
-  // sel-unidade
-  const su=document.getElementById('sel-unidade');
-  if(su){su.innerHTML='<option value="">— Selecione —</option>'+estrutura.unidades.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');}
   // dash filtro
   const fd=document.getElementById('dash-filtro-dir');
   if(fd){fd.innerHTML='<option value="">Todas as Diretorias</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
@@ -942,14 +937,34 @@ function preencherForms(){
   if(hg){hg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
 }
 
-async function onUnidadeChange(){
-  // Carrega nota de auditoria quando unidade muda
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+// onUnidadeChange removido — unidade detectada automaticamente da gerência
+
+function onSafraLancarChange(){
+  const safraId=document.getElementById('sel-safra')?.value;
+  preencherMesesLancar(safraId);
+  const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
+  if(gerId) onGerenciaChange();
+}
+
+function filtrarGerencias(){
+  const dirId=parseInt(document.getElementById('sel-diretoria')?.value)||0;
+  const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):[];
+  const sg=document.getElementById('sel-gerencia');
+  if(sg){sg.innerHTML='<option value="">— Selecione —</option>'+gers.map(g=>`<option value="${g.id}" data-uni="${g.unidade_id}">${g.nome}${g.unidades?' — '+g.unidades.nome:''}</option>`).join('');}
+  calcPreview();
+}
+
+async function onGerenciaChange(){
+  const sg=document.getElementById('sel-gerencia');
+  const selectedOpt=sg?.options[sg.selectedIndex];
+  window._uniIdAtual=parseInt(selectedOpt?.dataset?.uni)||0;
+  await renderIndTable();
+  // Carrega nota de auditoria automaticamente pela unidade da gerência
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const infoEl=document.getElementById('aud-info-lancar');
   const audEl=document.getElementById('nota-auditoria');
-  if(uniId&&safraId){
-    const nota=await getNotaAuditoria(uniId,safraId);
+  if(window._uniIdAtual&&safraId){
+    const nota=await getNotaAuditoria(window._uniIdAtual,safraId);
     if(nota!=null){
       if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
       if(infoEl)infoEl.innerHTML='✅ Nota de auditoria da unidade: <b>'+nota+'</b> (cadastrada em Configurações)';
@@ -957,38 +972,9 @@ async function onUnidadeChange(){
       if(audEl){audEl.value='';audEl.style.background='';}
       if(infoEl)infoEl.innerHTML='⚠️ Nenhuma nota de auditoria cadastrada para esta unidade. Vá em <b>Configurações</b> para cadastrar.';
     }
+  } else {
+    calcPreview();
   }
-  calcPreview();
-}
-
-function onSafraLancarChange(){
-  const safraId=document.getElementById('sel-safra')?.value;
-  preencherMesesLancar(safraId);
-  // Reload indicators and audit if gerencia already selected
-  const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
-  if(gerId) onGerenciaChange();
-  // Reload audit if unidade selected
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
-  if(uniId) onUnidadeChange();
-}
-
-function filtrarGerencias(){
-  const dirId=parseInt(document.getElementById('sel-diretoria')?.value)||0;
-  const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):[];
-  const sg=document.getElementById('sel-gerencia');
-  if(sg){sg.innerHTML='<option value="">— Selecione —</option>'+gers.map(g=>`<option value="${g.id}">${g.nome}</option>`).join('');}
-  calcPreview();
-}
-
-async function onGerenciaChange(){
-  await renderIndTable();
-  // Also trigger unidade audit load
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
-  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
-  const infoEl=document.getElementById('aud-info-lancar');
-  const audEl=document.getElementById('nota-auditoria');
-  if(uniId) onUnidadeChange();
-  else calcPreview();
 }
 
 // ── CÁLCULOS ──────────────────────────────────────────────────
@@ -1153,7 +1139,7 @@ async function calcPreview(){
   // Se não houver, usa o campo manual como fallback
   const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
   const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  const uniId=window._uniIdAtual||0;
   let aud=audManual;
   if(uniId&&safraIdLanc) {
     const notaUni=await getNotaAuditoria(uniId,safraIdLanc);
@@ -1180,10 +1166,10 @@ async function calcPreview(){
 
 async function salvarLancamento(){
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
-  const uniId=parseInt(document.getElementById('sel-unidade')?.value)||0;
+  const uniId=window._uniIdAtual||0;
   const safraIdLanc=parseInt(document.getElementById('sel-safra')?.value)||0;
   const mesLancar=document.getElementById('sel-periodo')?.value||'';
-  if(!gerId||!mesLancar||!uniId){alert('Preencha Safra, Mês, Gerência e Unidade.');return;}
+  if(!gerId||!mesLancar||!uniId){alert('Preencha Safra, Mês e Gerência.');return;}
 
   const btn=document.getElementById('btn-salvar');
   if(btn){btn.disabled=true;btn.textContent='Verificando...';}
@@ -1444,9 +1430,9 @@ async function editarLancamento(lancId) {
   }
   await new Promise(r=>setTimeout(r,800)); // dá tempo para DOM renderizar inputs
 
-  // 6. Preenche Unidade e carrega auditoria
-  const su=document.getElementById('sel-unidade');
-  if(su){su.value=lanc.gerencias.unidade_id;await onUnidadeChange();}
+  // 6. Define unidade automaticamente pela gerência
+  window._uniIdAtual=lanc.gerencias.unidade_id||0;
+  await onGerenciaChange();
 
   // 7. Preenche Período
   const sp=document.getElementById('sel-periodo');

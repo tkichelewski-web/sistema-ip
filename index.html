@@ -980,6 +980,27 @@ function formatEventos(tipoAcidente) {
       const m={iap:'IAP',asa:'ASA',aca:'ACA',fatalidade:'Fatal.'};
       return evs.map(e=>(e.tipo==='incidente'?'⚠️ Inc.':'🔴 Acid.')+' '+(m[e.classe]||e.classe)).join(' + ');
     }
+
+// Extrai observação limpa (sem o JSON de eventos embutido)
+function extrairObs(obsAuditoria) {
+  if(!obsAuditoria) return '';
+  return obsAuditoria.replace(/\s*\[ev:.*\]\s*$/, '').trim();
+}
+
+// Extrai array de eventos do campo obs_auditoria
+function extrairEventos(lancamento) {
+  // Tenta ler do obs_auditoria (novo formato: '...[ev:[...]]')
+  const obs = lancamento.obs_auditoria || '';
+  const match = obs.match(/\[ev:(.*?)\]$/s);
+  if(match) {
+    try { const ev=JSON.parse(match[1]); if(Array.isArray(ev)) return ev; } catch(e) {}
+  }
+  // Fallback: usa tipo_acidente como evento único (legado)
+  const t = lancamento.tipo_acidente;
+  if(!t || t === 'nenhum') return [];
+  const legMap = {iap:'incidente', asa:'acidente', aca:'acidente', fatalidade:'acidente'};
+  return [{id:1, tipo: legMap[t]||'acidente', classe: t}];
+}
     return '✅ Nenhum';
   }catch(e){
     const m={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
@@ -1283,7 +1304,17 @@ async function salvarLancamento(){
   const obs=document.getElementById('obs-auditoria')?.value||'';
   const aj=calcAjuste(_eventos,regras);
   const eventosJSON=JSON.stringify(_eventos);
-
+  const eventosJSON=JSON.stringify(_eventos);
+  // Para compatibilidade com constraint do banco: salva o pior evento como tipo_acidente
+  const _piorOrdem=['fatalidade','aca','asa','iap'];
+  let _tipoAcidente='nenhum';
+  if(_eventos.length>0){
+    for(const ord of _piorOrdem){
+      if(_eventos.some(e=>e.classe===ord)){_tipoAcidente=ord;break;}
+    }
+  }
+  // Guarda JSON dos eventos na obs_auditoria com prefixo especial
+  const _obsCompleta=(obs?obs+' ':'')+'[ev:'+eventosJSON+']';
   const ger=estrutura.gerencias.find(g=>g.id===gerId);
 
   // ── MÉDIA DA DIRETORIA ──────────────────────────────────────
@@ -1323,7 +1354,7 @@ async function salvarLancamento(){
   // Salva o lançamento
   const{data:lanc,error}=await sb.from('lancamentos').upsert({
     gerencia_id:gerId,safra_id:safraIdLanc||null,mes:mesLancar,periodo:mesLancar,
-    nota_auditoria:aud,obs_auditoria:obs,tipo_acidente:eventosJSON,regras_salvas:regras,
+    nota_auditoria:aud,obs_auditoria:_obsCompleta,tipo_acidente:_tipoAcidente,regras_salvas:regras,
     pontuacao_gerencia:pg,media_diretoria:mediaDir,indice_base:indBase,
     ajuste_pontos:aj,indice_prevencao:indFinal,acumulado_gerencia:acumGer,
     lancado_por:usuario.id,atualizado_em:new Date().toISOString()
@@ -1333,7 +1364,7 @@ async function salvarLancamento(){
     // Tenta com periodo como conflito
     const{data:lanc2,error:err2}=await sb.from('lancamentos').upsert({
       gerencia_id:gerId,safra_id:safraIdLanc||null,mes:mesLancar,periodo:mesLancar,
-      nota_auditoria:aud,obs_auditoria:obs,tipo_acidente:eventosJSON,regras_salvas:regras,
+      nota_auditoria:aud,obs_auditoria:_obsCompleta,tipo_acidente:_tipoAcidente,regras_salvas:regras,
       pontuacao_gerencia:pg,media_diretoria:mediaDir,indice_base:indBase,
       ajuste_pontos:aj,indice_prevencao:indFinal,acumulado_gerencia:acumGer,
       lancado_por:usuario.id,atualizado_em:new Date().toISOString()
@@ -1519,12 +1550,12 @@ async function editarLancamento(lancId) {
   if(sa&&!sa.value)sa.value=lanc.nota_auditoria||'';
   const so=document.getElementById('obs-auditoria');
   if(so)so.value=lanc.obs_auditoria||'';
-
+  if(so)so.value=extrairObs(lanc.obs_auditoria);
   // 9. Preenche Acidente e Regras
   // 9. Preenche Eventos (Acidentes/Incidentes) e Regras
   try{const ev=JSON.parse(lanc.tipo_acidente||'[]');_eventos=Array.isArray(ev)?ev.map((e,idx)=>({...e,id:Date.now()+idx})):[];}catch(e){_eventos=[];}
+  _eventos=extrairEventos(lanc).map((e,idx)=>({...e,id:Date.now()+idx}));
   renderEventos();
-  const srg=document.getElementById('regras-salvas');
   if(srg)srg.value=lanc.regras_salvas||0;
   // 10. Preenche valores dos indicadores com retry se inputs não estiverem no DOM
   const preencherItens = async () => {
@@ -1873,15 +1904,8 @@ async function verDetalheGerencia(lancId){
 }
 function gerarDetalheHTML(lanc,itens){
   const st=getStatus(lanc.indice_prevencao||0),cor=getColor(lanc.indice_prevencao||0);
-  // Parse eventos (novo formato JSON ou legado string)
-  let eventos=[];
-  try{const parsed=JSON.parse(lanc.tipo_acidente||'[]');eventos=Array.isArray(parsed)?parsed:[];}catch(e){
-    // Legado: tipo_acidente é string
-    if(lanc.tipo_acidente&&lanc.tipo_acidente!=='nenhum'){
-      const legMap={iap:'incidente',asa:'acidente',aca:'acidente',fatalidade:'acidente'};
-      eventos=[{id:1,tipo:legMap[lanc.tipo_acidente]||'acidente',classe:lanc.tipo_acidente}];
-    }
-  }
+  // Parse eventos usando helper (suporta novo e legado)
+  const eventos=extrairEventos(lanc);
   const pLabel={iap:'IAP (Incidente Alto Potencial)',asa:'ASA – Sem Afastamento',aca:'ACA – Com Afastamento',fatalidade:'Fatalidade'};
   const pValor={iap:-5,asa:-10,aca:-15,fatalidade:-30};
   const semEvento=eventos.length===0;
@@ -1970,7 +1994,7 @@ function gerarDetalheHTML(lanc,itens){
     // Rodapé
     +'<div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a">'
     +'<b>IP Acumulado:</b> '+(lanc.acumulado_gerencia!=null?lanc.acumulado_gerencia.toFixed(1):'—')
-    +(lanc.obs_auditoria?'&nbsp;|&nbsp;<b>Obs:</b> '+lanc.obs_auditoria:'')
+    +(extrairObs(lanc.obs_auditoria)?'&nbsp;|&nbsp;<b>Obs:</b> '+extrairObs(lanc.obs_auditoria):'')
     +'</div>';
 }
 function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTML||'';fecharModal('modal-detalhe');overlay.style.display='block';}

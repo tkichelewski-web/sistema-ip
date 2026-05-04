@@ -1168,9 +1168,9 @@ function renderDashTable(){
   const tw=document.getElementById('dash-table-wrap');
   if(!lista.length){if(tw)tw.innerHTML='<div class="loading">Nenhum lançamento encontrado para este período.</div>';return;}
 
-  const wPG=config.peso_gerencia||0.5;
-  const wMD=config.peso_diretoria||0.3;
-  const wAUD=config.peso_auditoria||0.2;
+  const wPG=(typeof config!=='undefined'&&config.peso_gerencia)||0.5;
+  const wMD=(typeof config!=='undefined'&&config.peso_diretoria)||0.3;
+  const wAUD=(typeof config!=='undefined'&&config.peso_auditoria)||0.2;
 
   const rows=lista.map(l=>{
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
@@ -1636,96 +1636,94 @@ async function editarLancamento(lancId) {
     alert('Erro ao carregar lançamento: '+(eLanc?.message||'não encontrado'));
     window._editandoLancamento=false;return;
   }
-  const{data:itens,error:eItens}=await sb.from('lancamento_itens')
+  const{data:itens}=await sb.from('lancamento_itens')
     .select('*,indicadores(id,nome,tipo)')
     .eq('lancamento_id',lancId);
-  if(eItens) console.warn('Erro ao buscar itens:',eItens.message);
-  console.log('Lançamento carregado:',lanc,'Itens:',itens?.length||0);
 
   // 2. Navega para aba Lançar
   showTab('lancar');
-  await new Promise(r=>setTimeout(r,200));
+  await new Promise(r=>setTimeout(r,150));
 
-  // 3. Preenche Safra PRIMEIRO (necessário para carregar indicadores)
+  // 3. Preenche Safra
   const ss=document.getElementById('sel-safra');
-  if(ss&&lanc.safras){
-    ss.value=lanc.safras.id;
-    await new Promise(r=>setTimeout(r,100));
-  }
+  if(ss&&lanc.safra_id) ss.value=lanc.safra_id;
 
-  // 4. Preenche Diretoria e aguarda filtrar gerências
+  // 4. Preenche Diretoria e filtra gerências
   const sd=document.getElementById('sel-diretoria');
-  if(sd){sd.value=lanc.gerencias.diretoria_id;filtrarGerencias();}
-  await new Promise(r=>setTimeout(r,200));
+  if(sd){ sd.value=lanc.gerencias.diretoria_id; filtrarGerencias(); }
+  await new Promise(r=>setTimeout(r,100));
 
-  // 5. Preenche Gerência e aguarda carregar indicadores (await onGerenciaChange)
-  // Garante que indicadores base estão carregados
-  await carregarIndicadores();
+  // 5. Preenche Gerência — invalida cache para forçar render limpo
+  _cachedGerId=null; _cachedSafraId=null; _cachedIndsGer=[];
   const sg=document.getElementById('sel-gerencia');
-  if(sg){
-    sg.value=lanc.gerencias.id;
-    await onGerenciaChange(); // aguarda renderIndTable completar
-  }
-  await new Promise(r=>setTimeout(r,800)); // dá tempo para DOM renderizar inputs
+  if(sg) sg.value=lanc.gerencias.id;
 
-  // 6. Preenche Unidade e carrega auditoria
+  // 6. Carrega indicadores UMA SÓ VEZ e atualiza cache
   window._uniIdAtual=lanc.gerencias.unidade_id||0;
-  await onGerenciaChange();
+  const safraId=lanc.safra_id||parseInt(document.getElementById('sel-safra')?.value)||0;
+  const gerId=lanc.gerencias.id;
+  const tw=document.getElementById('ind-table-wrap');
+  if(tw) tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando indicadores...</div>';
+  const indsGer=await getIndsGerencia(gerId, safraId);
+  _cachedIndsGer=indsGer; _cachedGerId=gerId; _cachedSafraId=safraId;
+
+  // Renderiza tabela de indicadores sem chamar onGerenciaChange
+  if(tw){
+    if(!indsGer.length){
+      tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Nenhum indicador configurado para esta gerência/safra.</p>';
+    } else {
+      tw.innerHTML='<table><thead><tr><th>Indicador</th><th>Tipo</th><th>Peso</th><th colspan="2">Valor</th><th>Pontuação</th><th>Comentário</th></tr></thead><tbody>'+
+        indsGer.map(ind=>{
+          if(ind.tipo==='previsto_realizado')return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-blue" style="font-size:10px">Prev×Real</span></td><td class="mono">${ind.peso}%</td><td><input type="number" id="prev_${ind.id}" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td><input type="number" id="real_${ind.id}" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
+          if(ind.tipo==='nota')return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-green" style="font-size:10px">Nota</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><input type="number" id="nota_${ind.id}" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
+          return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-yellow" style="font-size:10px">Sim/Não</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><select id="bin_${ind.id}" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
+        }).join('')+
+      '</tbody></table>';
+    }
+  }
+  await new Promise(r=>setTimeout(r,100)); // aguarda DOM atualizar
 
   // 7. Preenche Período
   const sp=document.getElementById('sel-periodo');
-  if(sp)sp.value=lanc.mes||lanc.periodo||'';
+  if(sp) sp.value=lanc.mes||lanc.periodo||'';
 
-  // 8. Preenche Auditoria manual (fallback se não vier da unidade)
+  // 8. Preenche Auditoria
   const sa=document.getElementById('nota-auditoria');
-  if(sa&&!sa.value)sa.value=lanc.nota_auditoria||'';
+  if(sa) sa.value=lanc.nota_auditoria||'';
   const so=document.getElementById('obs-auditoria');
-  if(so)so.value=lanc.obs_auditoria||'';
-  if(so)so.value=extrairObs(lanc.obs_auditoria);
-  // 9. Preenche Acidente e Regras
-  // 9. Preenche Eventos (Acidentes/Incidentes) e Regras
-  try{const ev=JSON.parse(lanc.tipo_acidente||'[]');_eventos=Array.isArray(ev)?ev.map((e,idx)=>({...e,id:Date.now()+idx})):[];}catch(e){_eventos=[];}
-  _eventos=extrairEventos(lanc).map((e,idx)=>({...e,id:Date.now()+idx}));
-  renderEventos();
-  if(srg)srg.value=lanc.regras_salvas||0;
-  // 10. Preenche valores dos indicadores com retry se inputs não estiverem no DOM
-  const preencherItens = async () => {
-    let preenchidos = 0;
-    for(const item of (itens||[])){
-      const id=item.indicadores?.id||item.indicador_id;
-      if(!id) continue;
-      if(item.indicadores?.tipo==='previsto_realizado'){
-        const pEl=document.getElementById('prev_'+id);
-        const rEl=document.getElementById('real_'+id);
-        if(pEl){pEl.value=item.previsto??'';preenchidos++;}
-        if(rEl)rEl.value=item.realizado??'';
-      } else if(item.indicadores?.tipo==='nota'){
-        const nEl=document.getElementById('nota_'+id);
-        if(nEl){nEl.value=item.nota??'';preenchidos++;}
-      } else {
-        const bEl=document.getElementById('bin_'+id);
-        if(bEl){bEl.value=item.sim_nao?'sim':'nao';preenchidos++;}
-      }
-      const cEl=document.getElementById('coment_'+id);
-      if(cEl)cEl.value=item.comentario||'';
-    }
-    return preenchidos;
-  };
+  if(so) so.value=extrairObs(lanc.obs_auditoria);
 
-  // Tenta preencher, com retry se inputs ainda não existirem
-  let tentativas = 0;
-  while(tentativas < 5) {
-    const ok = await preencherItens();
-    console.log('Tentativa '+(tentativas+1)+': '+ok+' inputs preenchidos de '+(itens?.length||0));
-    if(ok >= (itens?.length||0) || ok > 0) break;
-    await new Promise(r=>setTimeout(r,400));
-    tentativas++;
+  // 9. Preenche Eventos e Regras
+  _eventos=extrairEventos(lanc).map((e,i)=>({...e,id:Date.now()+i}));
+  renderEventos();
+  const srg=document.getElementById('regras-salvas');
+  if(srg) srg.value=lanc.regras_salvas||0;
+
+  // 10. Preenche valores dos indicadores (inputs já estão no DOM)
+  for(const item of (itens||[])){
+    const id=item.indicadores?.id||item.indicador_id;
+    if(!id) continue;
+    const tipo=item.indicadores?.tipo;
+    if(tipo==='previsto_realizado'){
+      const pEl=document.getElementById('prev_'+id);
+      const rEl=document.getElementById('real_'+id);
+      if(pEl) pEl.value=item.previsto??'';
+      if(rEl) rEl.value=item.realizado??'';
+    } else if(tipo==='nota'){
+      const nEl=document.getElementById('nota_'+id);
+      if(nEl) nEl.value=item.nota??'';
+    } else {
+      const bEl=document.getElementById('bin_'+id);
+      if(bEl) bEl.value=item.sim_nao?'sim':'nao';
+    }
+    const cEl=document.getElementById('coment_'+id);
+    if(cEl) cEl.value=item.comentario||'';
   }
 
-  // 11. Calcula prévia
+  // 11. Calcula prévia e rola para o resultado
   await calcPreview();
   document.getElementById('result-box')?.scrollIntoView({behavior:'smooth',block:'center'});
-  alert('✅ Lançamento carregado! Revise e clique em "Salvar Lançamento" para atualizar.');
+  alert('✅ Lançamento carregado para edição! Revise e clique em "Salvar Lançamento".');
 }
 
 async function apagarLancamento(lancId,gerNome,periodo){
@@ -2027,10 +2025,11 @@ async function verDetalheGerencia(lancId){
     console.log('Itens encontrados:',itens?.length||0,'para lancamento',lancId);
     const title=document.getElementById('modal-detalhe-title');
     if(title)title.textContent='📋 '+(lanc.gerencias?.nome||'')+' — '+(lanc.mes||lanc.periodo||'');
-    window._detalheHTML=gerarDetalheHTML(lanc,itens||[]);
-    content.innerHTML=window._detalheHTML;
+    const html=gerarDetalheHTML(lanc,itens||[]);
+    content.innerHTML=html;
   } catch(e) {
-    content.innerHTML='<div class="alert alert-warn">Erro inesperado: '+e.message+'</div>';
+    console.error('verDetalheGerencia erro:',e);
+    content.innerHTML='<div class="alert alert-warn" style="padding:20px">Erro ao carregar detalhes: '+e.message+'<br><small>Verifique o console para mais detalhes.</small></div>';
   }
 }
 function gerarDetalheHTML(lanc,itens){
@@ -2090,9 +2089,9 @@ function gerarDetalheHTML(lanc,itens){
   const pg=lanc.pontuacao_gerencia||0;
   const md=lanc.media_diretoria;
   const aud=lanc.nota_auditoria||0;
-  const wPG=config.peso_gerencia||0.5;
-  const wMD=config.peso_diretoria||0.3;
-  const wAUD=config.peso_auditoria||0.2;
+  const wPG=(typeof config!=='undefined'&&config.peso_gerencia)||0.5;
+  const wMD=(typeof config!=='undefined'&&config.peso_diretoria)||0.3;
+  const wAUD=(typeof config!=='undefined'&&config.peso_auditoria)||0.2;
   const baseCalc=pg*wPG+(md!=null?md:pg)*wMD+aud*wAUD;
   const ipFinal=Math.max(0,Math.min(100,baseCalc+ajuste));
   const calcRow=(label,val,peso,parcela)=>'<tr><td style="padding:6px 12px;font-size:12px;border-bottom:1px solid #e0f0e8">'+label+'</td>'

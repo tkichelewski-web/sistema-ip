@@ -327,9 +327,9 @@ input[type=number]{font-family:'DM Mono',monospace;}
       </div>
       <div class="result-box" id="result-box">
         <div style="font-size:11px;font-weight:700;margin-bottom:10px;color:var(--muted);font-family:'DM Mono',monospace;">PRÉVIA DO CÁLCULO</div>
-        <div class="result-row"><span class="result-label">Pontuação da Gerência (×0.5)</span><span class="result-val" id="rv-ger">—</span></div>
-        <div class="result-row"><span class="result-label">Média da Diretoria (×0.3)</span><span class="result-val" id="rv-dir">—</span></div>
-        <div class="result-row"><span class="result-label">Auditoria (×0.2)</span><span class="result-val" id="rv-aud">—</span></div>
+        <div class="result-row"><span class="result-label" id="lbl-rv-ger">Pontuação da Gerência</span><span class="result-val" id="rv-ger">—</span></div>
+        <div class="result-row"><span class="result-label" id="lbl-rv-dir">Média da Diretoria</span><span class="result-val" id="rv-dir">—</span></div>
+        <div class="result-row"><span class="result-label" id="lbl-rv-aud">Auditoria</span><span class="result-val" id="rv-aud">—</span></div>
         <div class="result-row"><span class="result-label">Índice Base</span><span class="result-val" id="rv-base">—</span></div>
         <div class="result-row"><span class="result-label">Ajuste Acidentes/Bônus</span><span class="result-val" id="rv-ajuste">—</span></div>
         <div class="result-row" style="margin-top:6px;border-top:2px solid var(--border);padding-top:8px;">
@@ -525,7 +525,7 @@ const sb = createClient(
 let usuario=null, dashData=null;
 let estrutura={diretorias:[],gerencias:[],unidades:[]};
 let indicadores=[];
-let config={peso_gerencia:.5,peso_diretoria:.3,peso_auditoria:.2,faixa_critico:80,faixa_meta:90};
+let config={peso_gerencia:.5,peso_diretoria:.2,peso_auditoria:.3,faixa_critico:80,faixa_meta:90};
 
 // ── INIT ─────────────────────────────────────────────────────
 async function init() {
@@ -771,6 +771,154 @@ function renderAcumTable() {
     }).join('')}</tr>`;
   }).join('')}</tbody></table></div>`;
 }
+
+let _acumChartInstance = null;
+
+function renderAcumChart() {
+  const canvas = document.getElementById('acum-chart');
+  if(!canvas) return;
+  const tipo = document.getElementById('acum-chart-tipo')?.value || 'gerencia';
+  const safraId = document.getElementById('acum-safra')?.value;
+  const safra = safrasData.find(s => s.id == safraId);
+  if(!acumAllData.length || !safra) {
+    canvas.style.display = 'none';
+    return;
+  }
+  canvas.style.display = 'block';
+
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const labels = meses.map(m => m.nome);
+
+  // Paleta de cores
+  const CORES = [
+    '#07583C','#B3DD64','#1a73e8','#e8710a','#7c3aed',
+    '#0891b2','#dc2626','#059669','#d97706','#7c3aed',
+    '#be185d','#0369a1','#15803d','#c2410c','#4338ca',
+  ];
+
+  let datasets = [];
+
+  if(tipo === 'gerencia') {
+    const gers = [...new Map(acumAllData.map(l =>
+      [l.gerencia_id, {id: l.gerencia_id, nome: l.gerencias?.nome}]
+    )).values()];
+
+    datasets = gers.map((g, idx) => {
+      let soma = 0, count = 0;
+      const dataPoints = meses.map(m => {
+        const l = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
+        if(l) { soma += l.indice_prevencao || 0; count++; }
+        return count > 0 ? parseFloat((soma / count).toFixed(2)) : null;
+      });
+      const cor = CORES[idx % CORES.length];
+      return {
+        label: g.nome || '—',
+        data: dataPoints,
+        borderColor: cor,
+        backgroundColor: cor + '22',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        tension: 0.3,
+        spanGaps: true,
+      };
+    });
+  } else {
+    const dirs = [...new Map(acumAllData.map(l =>
+      [l.gerencias?.diretoria_id, l.gerencias?.diretorias?.nome]
+    )).entries()].map(([id, n]) => ({id, nome: n}));
+
+    datasets = dirs.map((d, idx) => {
+      let soma = 0, count = 0;
+      const dataPoints = meses.map(m => {
+        const lancs = acumAllData.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
+        if(lancs.length) {
+          const media = lancs.reduce((s, l) => s + (l.indice_prevencao || 0), 0) / lancs.length;
+          soma += media; count++;
+        }
+        return count > 0 ? parseFloat((soma / count).toFixed(2)) : null;
+      });
+      const cor = CORES[idx % CORES.length];
+      return {
+        label: d.nome || '—',
+        data: dataPoints,
+        borderColor: cor,
+        backgroundColor: cor + '22',
+        borderWidth: 2.5,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        tension: 0.3,
+        spanGaps: true,
+      };
+    });
+  }
+
+  // Destroy previous chart instance
+  if(_acumChartInstance) { _acumChartInstance.destroy(); _acumChartInstance = null; }
+
+  _acumChartInstance = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { font: { size: 11 }, padding: 12, usePointStyle: true }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ' ' + ctx.dataset.label + ': ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) : '—'),
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: '#e8f0e8' },
+          ticks: { font: { size: 11 } }
+        },
+        y: {
+          min: 0, max: 100,
+          grid: { color: '#e8f0e8' },
+          ticks: {
+            font: { size: 11 },
+            callback: v => v.toFixed(0)
+          },
+          // Linhas de referência (meta e crítico)
+          afterDataLimits: scale => { scale.max = 100; scale.min = 0; }
+        }
+      },
+      // Linha de meta e crítico como annotation via plugin nativo não disponível
+      // Usamos plugins.annotation se disponível, senão ignoramos
+    },
+    plugins: [{
+      id: 'refLines',
+      afterDraw(chart) {
+        const { ctx, chartArea: { left, right }, scales: { y } } = chart;
+        const meta  = config.faixa_meta    || 90;
+        const crit  = config.faixa_critico || 80;
+        [[meta, '#07583C', 'Meta ('+meta+')'], [crit, '#c47d0e', 'Crítico ('+crit+')']].forEach(([val, color, label]) => {
+          const yPx = y.getPixelForValue(val);
+          ctx.save();
+          ctx.setLineDash([6, 4]);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.7;
+          ctx.beginPath(); ctx.moveTo(left, yPx); ctx.lineTo(right, yPx); ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.setLineDash([]);
+          ctx.fillStyle = color;
+          ctx.font = '10px DM Mono, monospace';
+          ctx.fillText(label, right - 80, yPx - 4);
+          ctx.restore();
+        });
+      }
+    }]
+  });
+}
+
 
 function exportarAcumCSV() {
   if(!acumAllData.length) { alert('Sem dados.'); return; }
@@ -1171,8 +1319,8 @@ function renderDashTable(){
   if(!lista.length){if(tw)tw.innerHTML='<div class="loading">Nenhum lançamento encontrado para este período.</div>';return;}
 
   const wPG=Number(config?.peso_gerencia)||0.5;
-  const wMD=Number(config?.peso_diretoria)||0.3;
-  const wAUD=Number(config?.peso_auditoria)||0.2;
+  const wMD=Number(config?.peso_diretoria)||0.2;
+  const wAUD=Number(config?.peso_auditoria)||0.3;
 
   const rows=lista.map(l=>{
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
@@ -1381,9 +1529,16 @@ async function calcPreview(){
   const rbEl = document.getElementById('result-box');
   if(rbEl) { rbEl.style.display = 'block'; rbEl.style.visibility = 'visible'; }
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
-  set('rv-ger',`${pg.toFixed(1)} × 0.5 = ${(pg*.5).toFixed(1)}`);
-  set('rv-dir','(calculado ao salvar) × 0.3');
-  set('rv-aud',`${aud.toFixed(1)} × 0.2 = ${(aud*.2).toFixed(1)}`);
+  const wPG2=config.peso_gerencia||0.5;
+  const wMD2=config.peso_diretoria||0.3;
+  const wAUD2=config.peso_auditoria||0.2;
+  // Atualiza labels com pesos corretos vindos do config
+  const lGer=document.getElementById('lbl-rv-ger');if(lGer)lGer.textContent='Pontuação da Gerência (×'+wPG2+')';
+  const lDir=document.getElementById('lbl-rv-dir');if(lDir)lDir.textContent='Média da Diretoria (×'+wMD2+')';
+  const lAud=document.getElementById('lbl-rv-aud');if(lAud)lAud.textContent='Auditoria (×'+wAUD2+')';
+  set('rv-ger',`${pg.toFixed(1)} × ${wPG2} = ${(pg*wPG2).toFixed(1)}`);
+  set('rv-dir','(média calculada ao salvar) × '+wMD2);
+  set('rv-aud',`${aud.toFixed(1)} × ${wAUD2} = ${(aud*wAUD2).toFixed(1)}`);
   set('rv-base',base.toFixed(1));
   const ajEl=document.getElementById('rv-ajuste');if(ajEl){ajEl.textContent=(aj>=0?'+':'')+aj+' pts';ajEl.style.color=aj>=0?'#07583C':'var(--red)';}
   const fEl=document.getElementById('rv-final');if(fEl){fEl.textContent=final.toFixed(1);fEl.style.color=getColor(final);}
@@ -2041,8 +2196,8 @@ async function verDetalheGerencia(lancId){
 
 function gerarDetalheHTML(lanc, itens){
   var wPG  = Number(config && config.peso_gerencia)  || 0.5;
-  var wMD  = Number(config && config.peso_diretoria) || 0.3;
-  var wAUD = Number(config && config.peso_auditoria) || 0.2;
+  var wMD  = Number(config && config.peso_diretoria) || 0.2;
+  var wAUD = Number(config && config.peso_auditoria) || 0.3;
   var pg   = Number(lanc.pontuacao_gerencia)  || 0;
   var mdRaw= lanc.media_diretoria;
   var md   = (mdRaw != null) ? Number(mdRaw) : null;

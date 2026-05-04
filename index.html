@@ -1152,32 +1152,137 @@ function renderDashStats(){
     <div class="stat-card"><div class="stat-label">Ponto de Atenção</div><div class="stat-value c-red">${critico}</div></div>`;
 }
 
+function toggleCalculo(id){
+  const el=document.getElementById('calc-row-'+id);
+  const btn=document.getElementById('calc-btn-'+id);
+  if(!el)return;
+  const open=el.style.display==='none'||el.style.display==='';
+  el.style.display=open?'table-row':'none';
+  if(btn)btn.textContent=open?'▲':'▼';
+}
+
 function renderDashTable(){
   if(!dashData)return;
   const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
   let lista=filtDir?dashData.filter(l=>l.gerencias?.diretoria_id===filtDir):dashData;
   const tw=document.getElementById('dash-table-wrap');
   if(!lista.length){if(tw)tw.innerHTML='<div class="loading">Nenhum lançamento encontrado para este período.</div>';return;}
-  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr>
-    <th>Gerência</th><th>Unidade</th><th>Diretoria</th>
-    <th>Pont. Ger.</th><th>Méd. Dir.</th><th>Auditoria</th>
-    <th>Ajuste</th><th>Índice Final</th><th>Status</th><th>Progresso</th>
-  </tr></thead><tbody>${lista.map(l=>{
+
+  const wPG=config.peso_gerencia||0.5;
+  const wMD=config.peso_diretoria||0.3;
+  const wAUD=config.peso_auditoria||0.2;
+
+  const rows=lista.map(l=>{
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
     const aj=l.ajuste_pontos||0;
-    return`<tr>
-      <td><b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id||0})" title="Ver detalhes">${l.gerencias?.nome||'—'}</b></td>
+    const pg=l.pontuacao_gerencia||0;
+    const md=l.media_diretoria;
+    const aud=l.nota_auditoria||0;
+    const mdVal=md!=null?md:pg;
+
+    // Parcelas
+    const parcPG=(pg*wPG).toFixed(1);
+    const parcMD=(mdVal*wMD).toFixed(1);
+    const parcAUD=(aud*wAUD).toFixed(1);
+    const base=(pg*wPG+mdVal*wMD+aud*wAUD).toFixed(1);
+
+    // Eventos/deflatores
+    const eventos=extrairEventos(l);
+    const pValor={iap:-5,asa:-10,aca:-15,fatalidade:-30};
+    const pLabel={iap:'IAP',asa:'ASA',aca:'ACA',fatalidade:'Fatalidade'};
+    let deflatorHTML='';
+    if(eventos.length===0){
+      deflatorHTML='<span style="color:#07583C;font-weight:600">+5 (sem acidente)</span>';
+    } else {
+      deflatorHTML=eventos.map(ev=>{
+        const v=pValor[ev.classe]||0;
+        return'<span style="color:#d93025;font-weight:600">'+(ev.tipo==='incidente'?'Inc.':'Acid.')+' '+(pLabel[ev.classe]||ev.classe)+': '+v+'</span>';
+      }).join(' + ');
+    }
+    const regras=l.regras_salvas||0;
+    if(regras>0) deflatorHTML+=' <span style="color:#07583C;font-weight:600">+ Regras: +'+Math.min(regras,5)+'</span>';
+
+    const ajCor=aj>=0?'#07583C':'#d93025';
+
+    // Linha de cálculo expandível
+    const calcRow=`<tr id="calc-row-${l.id}" style="display:none;background:#f7fbf7;">
+      <td colspan="9" style="padding:0;">
+        <div style="padding:14px 20px 14px 32px;border-top:1px dashed var(--border);border-bottom:2px solid #B3DD64;">
+          <div style="font-size:11px;font-weight:700;color:#07583C;letter-spacing:1px;margin-bottom:10px;font-family:'DM Mono',monospace;">CÁLCULO DO ÍNDICE DE PREVENÇÃO</div>
+          <div style="display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap;">
+
+            <!-- Fórmula principal -->
+            <div style="flex:1;min-width:320px;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;">FÓRMULA BASE</div>
+              <div style="display:grid;grid-template-columns:auto auto auto auto auto auto auto;align-items:center;gap:4px;font-family:'DM Mono',monospace;font-size:13px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;width:fit-content;">
+                <span style="color:#07583C;font-weight:700">${pg.toFixed(1)}</span>
+                <span style="color:var(--muted);font-size:11px">×${wPG}</span>
+                <span style="color:var(--muted);padding:0 4px">+</span>
+                <span style="color:#1a73e8;font-weight:700">${md!=null?md.toFixed(1):'—'}</span>
+                <span style="color:var(--muted);font-size:11px">×${wMD}</span>
+                <span style="color:var(--muted);padding:0 4px">+</span>
+                <span style="color:#7c3aed;font-weight:700">${aud.toFixed(1)}</span>
+                <span style="color:var(--muted);font-size:11px">×${wAUD}</span>
+                <span style="color:var(--muted);padding:0 8px">=</span>
+                <span style="font-weight:800;color:#07583C">${base}</span>
+              </div>
+              <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;font-family:'DM Mono',monospace;">
+                <span><span style="color:#07583C;font-weight:700">●</span> Ger: ${pg.toFixed(1)} × ${wPG} = <b>${parcPG}</b></span>
+                <span><span style="color:#1a73e8;font-weight:700">●</span> Dir: ${md!=null?md.toFixed(1):'—'} × ${wMD} = <b>${parcMD}</b></span>
+                <span><span style="color:#7c3aed;font-weight:700">●</span> Aud: ${aud.toFixed(1)} × ${wAUD} = <b>${parcAUD}</b></span>
+              </div>
+            </div>
+
+            <!-- Ajuste -->
+            <div style="min-width:200px;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;">DEFLATORES / BÔNUS</div>
+              <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;">
+                ${deflatorHTML}
+              </div>
+            </div>
+
+            <!-- Resultado final -->
+            <div style="min-width:160px;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;">RESULTADO</div>
+              <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:'DM Mono',monospace;font-size:13px;">
+                <div style="color:var(--muted)">${base} <span style="color:${ajCor}">${aj>=0?'+':''}${aj}</span></div>
+                <div style="font-size:22px;font-weight:800;color:${cor};margin-top:2px">${idx.toFixed(1)}</div>
+                <div style="font-size:10px;color:var(--muted)">= base + ajuste</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </td>
+    </tr>`;
+
+    const mainRow=`<tr style="border-bottom:1px solid var(--border)">
+      <td>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button id="calc-btn-${l.id}" onclick="toggleCalculo(${l.id})"
+            style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--muted);"
+            title="Ver cálculo">▼</button>
+          <b style="cursor:pointer;color:#07583C;text-decoration:underline dotted" onclick="verDetalheGerencia(${l.id||0})" title="Ver detalhes completos">${l.gerencias?.nome||'—'}</b>
+        </div>
+      </td>
       <td style="font-size:11px;color:var(--blue)">${l.gerencias?.unidades?.nome||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${l.gerencias?.diretorias?.nome||'—'}</td>
-      <td class="mono">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
-      <td class="mono">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td>
-      <td class="mono">${(l.nota_auditoria||0).toFixed(1)}</td>
-      <td class="mono" style="color:${aj>=0?'#07583C':'var(--red)'}">${aj>0?'+':''}${aj}</td>
+      <td class="mono" style="color:#07583C">${pg.toFixed(1)} <span style="font-size:10px;color:var(--muted)">×${wPG}=${parcPG}</span></td>
+      <td class="mono" style="color:#1a73e8">${md!=null?md.toFixed(1):'—'} <span style="font-size:10px;color:var(--muted)">×${wMD}=${parcMD}</span></td>
+      <td class="mono" style="color:#7c3aed">${aud.toFixed(1)} <span style="font-size:10px;color:var(--muted)">×${wAUD}=${parcAUD}</span></td>
+      <td class="mono" style="color:${ajCor};font-weight:700">${aj>=0?'+':''}${aj}</td>
       <td class="mono" style="font-weight:800;font-size:15px;color:${cor}">${idx.toFixed(1)}</td>
       <td><span class="badge ${st.cls}">${st.label}</span></td>
-      <td><div class="bar-wrap"><div class="bar-fill" style="width:${Math.min(idx,100)}%;background:${cor}"></div></div></td>
     </tr>`;
-  }).join('')}</tbody></table></div>`;
+
+    return mainRow+calcRow;
+  }).join('');
+
+  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table style="min-width:700px"><thead><tr>
+    <th>Gerência</th><th>Unidade</th><th>Diretoria</th>
+    <th>Pont. Ger.</th><th>Méd. Dir.</th><th>Auditoria</th>
+    <th>Ajuste</th><th>IP Final</th><th>Status</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // ── RANKING ───────────────────────────────────────────────────

@@ -989,6 +989,12 @@ function formatEventos(tipoAcidente) {
       const m={iap:'IAP',asa:'ASA',aca:'ACA',fatalidade:'Fatal.'};
       return evs.map(e=>(e.tipo==='incidente'?'⚠️ Inc.':'🔴 Acid.')+' '+(m[e.classe]||e.classe)).join(' + ');
     }
+    return '✅ Nenhum';
+  }catch(e){
+    const m={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
+    return m[tipoAcidente]||tipoAcidente;
+  }
+}
 
 // Extrai observação limpa (sem o JSON de eventos embutido)
 function extrairObs(obsAuditoria) {
@@ -998,24 +1004,17 @@ function extrairObs(obsAuditoria) {
 
 // Extrai array de eventos do campo obs_auditoria
 function extrairEventos(lancamento) {
-  // Tenta ler do obs_auditoria (novo formato: '...[ev:[...]]')
   const obs = lancamento.obs_auditoria || '';
   const match = obs.match(/\[ev:(.*?)\]$/s);
   if(match) {
     try { const ev=JSON.parse(match[1]); if(Array.isArray(ev)) return ev; } catch(e) {}
   }
-  // Fallback: usa tipo_acidente como evento único (legado)
   const t = lancamento.tipo_acidente;
   if(!t || t === 'nenhum') return [];
   const legMap = {iap:'incidente', asa:'acidente', aca:'acidente', fatalidade:'acidente'};
   return [{id:1, tipo: legMap[t]||'acidente', classe: t}];
 }
-    return '✅ Nenhum';
-  }catch(e){
-    const m={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
-    return m[tipoAcidente]||tipoAcidente;
-  }
-}
+
 function adicionarEvento() {
   const id = Date.now();
   _eventos.push({id, tipo:'acidente', classe:'asa'});

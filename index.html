@@ -2012,129 +2012,167 @@ async function exportarBackupCompleto(){
 // ── IMPRESSÃO E DETALHE ───────────────────────────────────────
 async function verDetalheGerencia(lancId){
   const modalEl=document.getElementById('modal-detalhe');
-  const content=document.getElementById('modal-detalhe-content');
-  if(!modalEl||!content){console.error('Modal detalhe não encontrado no DOM');return;}
+  const contentEl=document.getElementById('modal-detalhe-content');
+  if(!modalEl||!contentEl) return;
   modalEl.classList.add('show');
-  content.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
-  try {
-    const{data:lanc,error:eLanc}=await sb.from('lancamentos')
+  contentEl.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
+  try{
+    const{data:lanc,error:e1}=await sb.from('lancamentos')
       .select('*,gerencias(nome,diretorias(nome),unidades(nome)),safras(nome)')
       .eq('id',lancId).single();
-    if(eLanc||!lanc){
-      content.innerHTML='<div class="alert alert-warn">Erro ao carregar: '+(eLanc?.message||'não encontrado')+'</div>';
-      return;
-    }
-    const{data:itens,error:eItens}=await sb.from('lancamento_itens')
-      .select('*,indicadores(id,nome,tipo)')
-      .eq('lancamento_id',lancId)
-      .order('id');
-    if(eItens) console.warn('Erro itens:',eItens.message);
-    console.log('Itens encontrados:',itens?.length||0,'para lancamento',lancId);
-    const title=document.getElementById('modal-detalhe-title');
-    if(title)title.textContent='📋 '+(lanc.gerencias?.nome||'')+' — '+(lanc.mes||lanc.periodo||'');
-    const html=gerarDetalheHTML(lanc,itens||[]);
-    content.innerHTML=html;
-  } catch(e) {
-    console.error('verDetalheGerencia erro:',e);
-    content.innerHTML='<div class="alert alert-warn" style="padding:20px">Erro ao carregar detalhes: '+e.message+'<br><small>Verifique o console para mais detalhes.</small></div>';
+    if(e1||!lanc){contentEl.innerHTML='<div class="alert alert-warn">Erro: '+(e1?.message||'não encontrado')+'</div>';return;}
+    const{data:itens}=await sb.from('lancamento_itens')
+      .select('*,indicadores(id,nome,tipo)').eq('lancamento_id',lancId).order('id');
+    const titleEl=document.getElementById('modal-detalhe-title');
+    if(titleEl) titleEl.textContent='Detalhes — '+(lanc.gerencias?.nome||'')+' ('+((lanc.mes||lanc.periodo)||'')+')';
+    const html=gerarDetalheHTML(lanc, itens||[]);
+    contentEl.innerHTML=html;
+    window._detalheHTMLAtual=html;
+  }catch(err){
+    console.error('verDetalheGerencia:',err);
+    contentEl.innerHTML='<div class="alert alert-warn" style="padding:20px">Erro inesperado: '+err.message+'</div>';
   }
 }
-function gerarDetalheHTML(lanc,itens){
-  const st=getStatus(lanc.indice_prevencao||0),cor=getColor(lanc.indice_prevencao||0);
-  // Parse eventos usando helper (suporta novo e legado)
-  const eventos=extrairEventos(lanc);
-  const pLabel={iap:'IAP (Incidente Alto Potencial)',asa:'ASA – Sem Afastamento',aca:'ACA – Com Afastamento',fatalidade:'Fatalidade'};
-  const pValor={iap:-5,asa:-10,aca:-15,fatalidade:-30};
-  const semEvento=eventos.length===0;
-  const regras=lanc.regras_salvas||0;
-  const bonusSeg=semEvento?5:0;
-  const totalDeflator=eventos.reduce((s,ev)=>s+(pValor[ev.classe]||0),0);
-  const bonusRegras=Math.min(regras,5);
-  const ajuste=lanc.ajuste_pontos||0;
-  // Linhas dos indicadores
-  const indRows = (()=>{
-    if(!itens||!itens.length) return '<tr><td colspan="3" style="padding:16px;text-align:center;color:#c47d0e">⚠️ Nenhum indicador registrado.</td></tr>';
-    return itens.map(item=>{
-      const tipo=item.indicadores?.tipo;
-      let v='—';
-      if(tipo==='previsto_realizado') v='Prev: '+(item.previsto||0)+' / Real: '+(item.realizado||0);
-      else if(tipo==='nota') v='Nota: '+(item.nota||0);
-      else if(tipo==='binario') v=item.sim_nao?'✓ Sim':'✗ Não';
-      const c=item.comentario?'<div style="font-size:11px;color:#c47d0e;margin-top:2px">💬 '+item.comentario+'</div>':'';
-      const p=item.pontuacao||0;
-      const corP=p>=90?'#07583C':p>=70?'#c47d0e':'#d93025';
-      return '<tr>'
-        +'<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">'+(item.indicadores?.nome||'—')+c+'</td>'
-        +'<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">'+v+'</td>'
-        +'<td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:'+corP+'">'+p.toFixed(1)+'</td>'
-        +'</tr>';
-    }).join('');
-  })();
-  // Linhas de deflatores
-  let defRows='';
-  if(semEvento){
-    defRows='<tr><td style="padding:7px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">✅ Sem acidente/incidente</td>'
-      +'<td style="padding:7px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;text-align:center">—</td>'
-      +'<td style="padding:7px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:#07583C">+5 pts</td></tr>';
+
+function gerarDetalheHTML(lanc, itens){
+  // Pesos com fallback seguro
+  var wPG = Number(config&&config.peso_gerencia) || 0.5;
+  var wMD = Number(config&&config.peso_diretoria) || 0.3;
+  var wAUD= Number(config&&config.peso_auditoria) || 0.2;
+
+  var pg  = Number(lanc.pontuacao_gerencia) || 0;
+  var md  = lanc.media_diretoria != null ? Number(lanc.media_diretoria) : null;
+  var aud = Number(lanc.nota_auditoria) || 0;
+  var aj  = Number(lanc.ajuste_pontos) || 0;
+  var ip  = Number(lanc.indice_prevencao) || 0;
+
+  var mdVal = md != null ? md : pg;
+  var base  = pg*wPG + mdVal*wMD + aud*wAUD;
+
+  var st  = getStatus(ip);
+  var cor = getColor(ip);
+
+  // Eventos
+  var eventos = extrairEventos(lanc);
+  var pValor  = {iap:-5,asa:-10,aca:-15,fatalidade:-30};
+  var pLabel  = {iap:'IAP (Alto Potencial)',asa:'ASA – Sem Afastamento',aca:'ACA – Com Afastamento',fatalidade:'Fatalidade'};
+  var regras  = Number(lanc.regras_salvas)||0;
+
+  // ── Cards do topo ──────────────────────────────────────────
+  var html = '';
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">';
+  html +=   '<div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C">';
+  html +=     '<div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">GERÊNCIA</div>';
+  html +=     '<div style="font-size:15px;font-weight:800;color:#07583C">'+(lanc.gerencias&&lanc.gerencias.nome||'—')+'</div>';
+  html +=     '<div style="font-size:11px;color:#5a7a5a">'+((lanc.gerencias&&lanc.gerencias.diretorias&&lanc.gerencias.diretorias.nome)||'')+' · '+((lanc.gerencias&&lanc.gerencias.unidades&&lanc.gerencias.unidades.nome)||'')+'</div>';
+  html +=   '</div>';
+  html +=   '<div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C">';
+  html +=     '<div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">PERÍODO</div>';
+  html +=     '<div style="font-size:15px;font-weight:800;color:#07583C">'+(lanc.mes||lanc.periodo||'—')+'</div>';
+  html +=     '<div style="font-size:11px;color:#5a7a5a">'+(lanc.safras&&lanc.safras.nome||'')+'</div>';
+  html +=   '</div>';
+  html +=   '<div style="background:'+cor+'18;border-radius:10px;padding:14px;border-left:4px solid '+cor+'">';
+  html +=     '<div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">ÍNDICE DE PREVENÇÃO</div>';
+  html +=     '<div style="font-size:32px;font-weight:800;color:'+cor+'">'+ip.toFixed(1)+'</div>';
+  html +=     '<div style="font-size:11px;font-weight:700;color:'+cor+'">'+st.label+'</div>';
+  html +=   '</div>';
+  html += '</div>';
+
+  // ── Cálculo do IP ──────────────────────────────────────────
+  html += '<div style="margin-bottom:16px">';
+  html +=   '<div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">🔢 CÁLCULO DO IP</div>';
+  html +=   '<table style="width:100%;border-collapse:collapse">';
+  html +=     '<thead><tr>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Componente</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:center">Valor</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:center">Peso</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Parcela</th>';
+  html +=     '</tr></thead>';
+  html +=     '<tbody>';
+  var tdS = 'style="padding:7px 12px;font-size:12px;border-bottom:1px solid #e0f0e8"';
+  var tdR = 'style="padding:7px 12px;font-size:12px;font-family:DM Mono,monospace;border-bottom:1px solid #e0f0e8;text-align:right;font-weight:700;color:#07583C"';
+  html += '<tr><td '+tdS+'>Pontuação Gerência</td><td '+tdS+' style="text-align:center;font-family:DM Mono,monospace">'+pg.toFixed(1)+'</td><td '+tdS+' style="text-align:center;font-family:DM Mono,monospace">×'+wPG+'</td><td '+tdR+'>'+( pg*wPG).toFixed(1)+'</td></tr>';
+  html += '<tr><td '+tdS+'>Média da Diretoria</td><td '+tdS+' style="text-align:center;font-family:DM Mono,monospace">'+(md!=null?md.toFixed(1):'—')+'</td><td '+tdS+' style="text-align:center;font-family:DM Mono,monospace">×'+wMD+'</td><td '+tdR+'>'+(mdVal*wMD).toFixed(1)+'</td></tr>';
+  html += '<tr><td '+tdS+'>Nota Auditoria</td><td '+tdS+' style="text-align:center;font-family:DM Mono,monospace">'+aud.toFixed(1)+'</td><td '+tdS+' style="text-align:center;font-family:DM Mono,monospace">×'+wAUD+'</td><td '+tdR+'>'+(aud*wAUD).toFixed(1)+'</td></tr>';
+  html += '<tr style="background:#e8f5ee"><td colspan="3" style="padding:7px 12px;font-size:12px;font-weight:700;color:#07583C">Base (antes do ajuste)</td><td style="padding:7px 12px;font-size:13px;font-weight:800;font-family:DM Mono,monospace;text-align:right;color:#07583C">'+base.toFixed(1)+'</td></tr>';
+  var ajCor = aj>=0?'#07583C':'#d93025';
+  html += '<tr><td colspan="3" style="padding:7px 12px;font-size:12px;color:#888">Ajuste (acidentes/bônus)</td><td style="padding:7px 12px;font-size:13px;font-weight:700;font-family:DM Mono,monospace;text-align:right;color:'+ajCor+'">'+(aj>0?'+':'')+aj+'</td></tr>';
+  html += '<tr style="background:#07583C"><td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:700;color:#fff">IP FINAL</td><td style="padding:8px 12px;font-size:18px;font-weight:800;font-family:DM Mono,monospace;text-align:right;color:#B3DD64">'+ip.toFixed(1)+'</td></tr>';
+  html +=     '</tbody></table>';
+  html += '</div>';
+
+  // ── Deflatores & Bônus ─────────────────────────────────────
+  html += '<div style="margin-bottom:16px">';
+  html +=   '<div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">🚨 DEFLATORES & BÔNUS</div>';
+  html +=   '<table style="width:100%;border-collapse:collapse">';
+  html +=     '<thead><tr>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Evento</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:center">Tipo</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Impacto</th>';
+  html +=     '</tr></thead><tbody>';
+  if(eventos.length===0){
+    html += '<tr><td style="padding:8px 12px;font-size:13px">✅ Sem acidente/incidente</td><td style="padding:8px 12px;text-align:center">—</td><td style="padding:8px 12px;font-weight:700;color:#07583C;text-align:right">+5 pts</td></tr>';
   } else {
-    defRows=eventos.map(ev=>{
-      const val=pValor[ev.classe]||0;
-      return '<tr><td style="padding:7px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">'+(ev.tipo==='incidente'?'⚠️ Incidente':'🔴 Acidente')+' — '+(pLabel[ev.classe]||ev.classe)+'</td>'
-        +'<td style="padding:7px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;text-align:center;color:var(--muted)">'+(ev.tipo==='incidente'?'Incidente':'Acidente')+'</td>'
-        +'<td style="padding:7px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:#d93025">'+val+' pts</td></tr>';
-    }).join('');
+    for(var i=0;i<eventos.length;i++){
+      var ev=eventos[i];
+      var evVal=pValor[ev.classe]||0;
+      var evLabel=(pLabel[ev.classe]||ev.classe);
+      var evTipo=(ev.tipo==='incidente'?'⚠️ Incidente':'🔴 Acidente');
+      html += '<tr><td style="padding:8px 12px;font-size:13px">'+evTipo+' — '+evLabel+'</td>';
+      html +=      '<td style="padding:8px 12px;font-size:12px;color:#888;text-align:center">'+(ev.tipo==='incidente'?'Incidente':'Acidente')+'</td>';
+      html +=      '<td style="padding:8px 12px;font-weight:700;color:#d93025;text-align:right">'+evVal+' pts</td></tr>';
+    }
   }
   if(regras>0){
-    defRows+='<tr><td style="padding:7px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">🛡️ Regras que Salvam Vidas</td>'
-      +'<td style="padding:7px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;text-align:center;color:var(--muted)">'+regras+' regra(s)</td>'
-      +'<td style="padding:7px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:#07583C">+'+bonusRegras+' pts</td></tr>';
+    html += '<tr><td style="padding:8px 12px;font-size:13px">🛡️ Regras que Salvam Vidas</td><td style="padding:8px 12px;text-align:center;color:#888">'+regras+' regra(s)</td><td style="padding:8px 12px;font-weight:700;color:#07583C;text-align:right">+'+Math.min(regras,5)+' pts</td></tr>';
   }
-  // Linha de total do ajuste
-  defRows+='<tr style="background:#f0f9f0"><td colspan="2" style="padding:8px 12px;font-size:13px;font-weight:700;color:#07583C">Total Ajuste</td>'
-    +'<td style="padding:8px 12px;font-size:15px;font-weight:800;text-align:right;color:'+(ajuste>=0?'#07583C':'#d93025')+'">'+(ajuste>0?'+':'')+ajuste+' pts</td></tr>';
-  // Cálculo do IP
-  const pg=lanc.pontuacao_gerencia||0;
-  const md=lanc.media_diretoria;
-  const aud=lanc.nota_auditoria||0;
-  const wPG=Number(config?.peso_gerencia)||0.5;
-  const wMD=Number(config?.peso_diretoria)||0.3;
-  const wAUD=Number(config?.peso_auditoria)||0.2;
-  const baseCalc=pg*wPG+(md!=null?md:pg)*wMD+aud*wAUD;
-  const ipFinal=Math.max(0,Math.min(100,baseCalc+ajuste));
-  const calcRow=(label,val,peso,parcela)=>'<tr><td style="padding:6px 12px;font-size:12px;border-bottom:1px solid #e0f0e8">'+label+'</td>'
-    +'<td style="padding:6px 12px;font-size:12px;font-family:DM Mono,monospace;border-bottom:1px solid #e0f0e8;text-align:center">'+val+'</td>'
-    +'<td style="padding:6px 12px;font-size:12px;font-family:DM Mono,monospace;border-bottom:1px solid #e0f0e8;text-align:center">×'+peso+'</td>'
-    +'<td style="padding:6px 12px;font-size:12px;font-weight:700;font-family:DM Mono,monospace;border-bottom:1px solid #e0f0e8;text-align:right;color:#07583C">'+parcela+'</td></tr>';
-  const calcRows=calcRow('Pontuação Gerência',pg.toFixed(1),wPG,(pg*wPG).toFixed(1))
-    +calcRow('Média Diretoria',md!=null?md.toFixed(1):'—',wMD,((md!=null?md:pg)*wMD).toFixed(1))
-    +calcRow('Auditoria',aud.toFixed(1),wAUD,(aud*wAUD).toFixed(1));
-  return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">'
-    +'<div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">GERÊNCIA</div><div style="font-size:16px;font-weight:800;color:#07583C">'+(lanc.gerencias?.nome||'—')+'</div><div style="font-size:12px;color:#5a7a5a">'+(lanc.gerencias?.diretorias?.nome||'')+' · '+(lanc.gerencias?.unidades?.nome||'')+'</div></div>'
-    +'<div style="background:#f0f9f0;border-radius:10px;padding:14px;border-left:4px solid #07583C"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">PERÍODO</div><div style="font-size:16px;font-weight:800;color:#07583C">'+(lanc.mes||lanc.periodo||'—')+'</div><div style="font-size:12px;color:#5a7a5a">'+(lanc.safras?.nome||'')+'</div></div>'
-    +'<div style="background:'+cor+'18;border-radius:10px;padding:14px;border-left:4px solid '+cor+'"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:4px">ÍNDICE DE PREVENÇÃO</div><div style="font-size:32px;font-weight:800;color:'+cor+'">'+(lanc.indice_prevencao||0).toFixed(1)+'</div><div style="font-size:12px;font-weight:700;color:'+cor+'">'+st.label+'</div></div>'
-    +'</div>'
-    // Componentes do IP
-    +'<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">🔢 CÁLCULO DO IP</div>'
-    +'<table style="width:100%;border-collapse:collapse"><thead><tr><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Componente</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:center">Valor</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:center">Peso</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Parcela</th></tr></thead><tbody>'
-    +calcRows
-    +'<tr style="background:#e8f5ee"><td colspan="3" style="padding:7px 12px;font-size:12px;font-weight:700;color:#07583C">Base (antes do ajuste)</td><td style="padding:7px 12px;font-size:13px;font-weight:800;font-family:DM Mono,monospace;text-align:right;color:#07583C">'+baseCalc.toFixed(1)+'</td></tr>'
-    +'<tr><td colspan="3" style="padding:7px 12px;font-size:12px;color:var(--muted)">Ajuste (acidentes/bônus)</td><td style="padding:7px 12px;font-size:13px;font-weight:700;font-family:DM Mono,monospace;text-align:right;color:'+(ajuste>=0?'#07583C':'#d93025')+'">'+(ajuste>0?'+':'')+ajuste+'</td></tr>'
-    +'<tr style="background:#07583C"><td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:700;color:#fff">IP FINAL</td><td style="padding:8px 12px;font-size:18px;font-weight:800;font-family:DM Mono,monospace;text-align:right;color:#B3DD64">'+ipFinal.toFixed(1)+'</td></tr>'
-    +'</tbody></table></div>'
-    // Deflatores
-    +'<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">🚨 DEFLATORES & BÔNUS</div>'
-    +'<table style="width:100%;border-collapse:collapse"><thead><tr><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Evento</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:center">Tipo</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Impacto</th></tr></thead><tbody>'
-    +defRows
-    +'</tbody></table></div>'
-    // Indicadores
-    +'<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">📌 INDICADORES</div><table style="width:100%;border-collapse:collapse"><thead><tr><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Indicador</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Valores</th><th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Pontuação</th></tr></thead><tbody>'+indRows+'</tbody></table></div>'
-    // Rodapé
-    +'<div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a">'
-    +'<b>IP Acumulado:</b> '+(lanc.acumulado_gerencia!=null?lanc.acumulado_gerencia.toFixed(1):'—')
-    +(extrairObs(lanc.obs_auditoria)?'&nbsp;|&nbsp;<b>Obs:</b> '+extrairObs(lanc.obs_auditoria):'')
-    +'</div>';
+  html += '<tr style="background:#f0f9f0"><td colspan="2" style="padding:8px 12px;font-size:13px;font-weight:700;color:#07583C">Total Ajuste</td><td style="padding:8px 12px;font-size:15px;font-weight:800;text-align:right;color:'+ajCor+'">'+(aj>0?'+':'')+aj+' pts</td></tr>';
+  html +=   '</tbody></table>';
+  html += '</div>';
+
+  // ── Indicadores ────────────────────────────────────────────
+  html += '<div style="margin-bottom:16px">';
+  html +=   '<div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #B3DD64">📌 INDICADORES</div>';
+  html +=   '<table style="width:100%;border-collapse:collapse">';
+  html +=     '<thead><tr>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Indicador</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:left">Valores</th>';
+  html +=       '<th style="background:#e8f5ee;padding:8px 12px;font-size:11px;color:#07583C;text-align:right">Pontuação</th>';
+  html +=     '</tr></thead><tbody>';
+  if(!itens||!itens.length){
+    html += '<tr><td colspan="3" style="padding:16px;text-align:center;color:#c47d0e">⚠️ Nenhum indicador registrado.</td></tr>';
+  } else {
+    for(var j=0;j<itens.length;j++){
+      var item=itens[j];
+      var tipo2=item.indicadores&&item.indicadores.tipo;
+      var v='—';
+      if(tipo2==='previsto_realizado') v='Prev: '+(item.previsto||0)+' / Real: '+(item.realizado||0);
+      else if(tipo2==='nota') v='Nota: '+(item.nota||0);
+      else if(tipo2==='binario') v=item.sim_nao?'✓ Sim':'✗ Não';
+      var pts=Number(item.pontuacao)||0;
+      var corP=pts>=90?'#07583C':pts>=70?'#c47d0e':'#d93025';
+      var comt=item.comentario?'<div style="font-size:11px;color:#c47d0e;margin-top:2px">💬 '+item.comentario+'</div>':'';
+      html += '<tr>';
+      html +=   '<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">'+((item.indicadores&&item.indicadores.nome)||'—')+comt+'</td>';
+      html +=   '<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">'+v+'</td>';
+      html +=   '<td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:'+corP+'">'+pts.toFixed(1)+'</td>';
+      html += '</tr>';
+    }
+  }
+  html +=   '</tbody></table>';
+  html += '</div>';
+
+  // ── Rodapé ─────────────────────────────────────────────────
+  var obsLimpa = extrairObs(lanc.obs_auditoria);
+  html += '<div style="background:#f4f6f4;border-radius:8px;padding:12px;font-size:13px;color:#5a7a5a">';
+  html +=   '<b>IP Acumulado:</b> '+(lanc.acumulado_gerencia!=null?Number(lanc.acumulado_gerencia).toFixed(1):'—');
+  if(obsLimpa) html += '&nbsp;|&nbsp;<b>Obs:</b> '+obsLimpa;
+  html += '</div>';
+
+  return html;
 }
-function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTML||'';fecharModal('modal-detalhe');overlay.style.display='block';}
+
+function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTMLAtual||'';fecharModal('modal-detalhe');overlay.style.display='block';}
 async function abrirImpressao(){
   if(!dashData?.length){alert('Carregue o Dashboard primeiro.');return;}
   const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');

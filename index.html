@@ -2,6 +2,9 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sistema IP — VIDAS Usina Santa Adélia</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -1168,9 +1171,9 @@ function renderDashTable(){
   const tw=document.getElementById('dash-table-wrap');
   if(!lista.length){if(tw)tw.innerHTML='<div class="loading">Nenhum lançamento encontrado para este período.</div>';return;}
 
-  const wPG=(typeof config!=='undefined'&&config.peso_gerencia)||0.5;
-  const wMD=(typeof config!=='undefined'&&config.peso_diretoria)||0.3;
-  const wAUD=(typeof config!=='undefined'&&config.peso_auditoria)||0.2;
+  const wPG=Number(config?.peso_gerencia)||0.5;
+  const wMD=Number(config?.peso_diretoria)||0.3;
+  const wAUD=Number(config?.peso_auditoria)||0.2;
 
   const rows=lista.map(l=>{
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
@@ -1646,7 +1649,9 @@ async function editarLancamento(lancId) {
 
   // 3. Preenche Safra
   const ss=document.getElementById('sel-safra');
-  if(ss&&lanc.safra_id) ss.value=lanc.safra_id;
+  // safra_id pode vir direto ou pelo join com safras
+  const safraIdLancEdit = lanc.safra_id || lanc.safras?.id || 0;
+  if(ss && safraIdLancEdit) ss.value = safraIdLancEdit;
 
   // 4. Preenche Diretoria e filtra gerências
   const sd=document.getElementById('sel-diretoria');
@@ -1660,7 +1665,7 @@ async function editarLancamento(lancId) {
 
   // 6. Carrega indicadores UMA SÓ VEZ e atualiza cache
   window._uniIdAtual=lanc.gerencias.unidade_id||0;
-  const safraId=lanc.safra_id||parseInt(document.getElementById('sel-safra')?.value)||0;
+  const safraId=safraIdLancEdit||parseInt(document.getElementById('sel-safra')?.value)||0;
   const gerId=lanc.gerencias.id;
   const tw=document.getElementById('ind-table-wrap');
   if(tw) tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando indicadores...</div>';
@@ -2006,8 +2011,10 @@ async function exportarBackupCompleto(){
 
 // ── IMPRESSÃO E DETALHE ───────────────────────────────────────
 async function verDetalheGerencia(lancId){
-  document.getElementById('modal-detalhe').classList.add('show');
+  const modalEl=document.getElementById('modal-detalhe');
   const content=document.getElementById('modal-detalhe-content');
+  if(!modalEl||!content){console.error('Modal detalhe não encontrado no DOM');return;}
+  modalEl.classList.add('show');
   content.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
   try {
     const{data:lanc,error:eLanc}=await sb.from('lancamentos')
@@ -2089,9 +2096,9 @@ function gerarDetalheHTML(lanc,itens){
   const pg=lanc.pontuacao_gerencia||0;
   const md=lanc.media_diretoria;
   const aud=lanc.nota_auditoria||0;
-  const wPG=(typeof config!=='undefined'&&config.peso_gerencia)||0.5;
-  const wMD=(typeof config!=='undefined'&&config.peso_diretoria)||0.3;
-  const wAUD=(typeof config!=='undefined'&&config.peso_auditoria)||0.2;
+  const wPG=Number(config?.peso_gerencia)||0.5;
+  const wMD=Number(config?.peso_diretoria)||0.3;
+  const wAUD=Number(config?.peso_auditoria)||0.2;
   const baseCalc=pg*wPG+(md!=null?md:pg)*wMD+aud*wAUD;
   const ipFinal=Math.max(0,Math.min(100,baseCalc+ajuste));
   const calcRow=(label,val,peso,parcela)=>'<tr><td style="padding:6px 12px;font-size:12px;border-bottom:1px solid #e0f0e8">'+label+'</td>'

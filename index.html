@@ -1304,7 +1304,6 @@ async function salvarLancamento(){
   const obs=document.getElementById('obs-auditoria')?.value||'';
   const aj=calcAjuste(_eventos,regras);
   const eventosJSON=JSON.stringify(_eventos);
-  const eventosJSON=JSON.stringify(_eventos);
   // Para compatibilidade com constraint do banco: salva o pior evento como tipo_acidente
   const _piorOrdem=['fatalidade','aca','asa','iap'];
   let _tipoAcidente='nenhum';

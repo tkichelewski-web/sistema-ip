@@ -515,7 +515,8 @@ const { createClient } = supabase;
 const sb = createClient(
   'https://umpctnchhmyvpjwxllaj.supabase.co',
   'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ',
-  { auth: { persistSession:true, storageKey:'sistema-ip-auth', flowType:'implicit' } }
+  { auth: { persistSession:true, storageKey:'sistema-ip-auth', flowType:'implicit',
+            autoRefreshToken:true, detectSessionInUrl:true } }
 );
 
 let usuario=null, dashData=null;
@@ -590,6 +591,8 @@ async function mostrarApp() {
   if(perfil==='gerencia'&&usuario.gerencias) preencherGerencia();
   preencherHistoricoFiltros();
   showTab('dashboard');
+  // Garante que o campo período está preenchido antes de carregar
+  await new Promise(r=>setTimeout(r,50));
   carregarDashboard();
 }
 
@@ -970,6 +973,9 @@ async function onGerenciaChange(){
 
 // ── GESTÃO DE EVENTOS (ACIDENTES/INCIDENTES) ──────────────────
 let _eventos = []; // [{id, tipo:'acidente'|'incidente', classe:'iap'|'asa'|'aca'|'fatalidade'}]
+let _cachedIndsGer = []; // cache dos indicadores carregados para evitar queries a cada keypress
+let _cachedGerId = null;
+let _cachedSafraId = null;
 
 
 function formatEventos(tipoAcidente) {
@@ -1113,8 +1119,14 @@ function getColor(v){
 
 // ── DASHBOARD ─────────────────────────────────────────────────
 async function carregarDashboard(){
-  const periodo=document.getElementById('dash-periodo')?.value;
-  if(!periodo)return;
+  let periodo=document.getElementById('dash-periodo')?.value;
+  // Se vazio, usa mês atual automaticamente
+  if(!periodo){
+    const now=new Date();
+    periodo=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const dpEl=document.getElementById('dash-periodo');
+    if(dpEl) dpEl.value=periodo;
+  }
   const tw=document.getElementById('dash-table-wrap');
   if(tw)tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
   const{data:lancs}=await sb.from('lancamentos')
@@ -1196,7 +1208,11 @@ async function renderIndTable(){
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const tw=document.getElementById('ind-table-wrap');
   if(!gerId){if(tw)tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p>';return;}
+  // Limpa cache para forçar nova busca ao trocar de gerência/safra
+  _cachedGerId=null; _cachedSafraId=null; _cachedIndsGer=[];
   const indsGer=await getIndsGerencia(gerId, safraId);
+  // Atualiza cache
+  _cachedIndsGer=indsGer; _cachedGerId=gerId; _cachedSafraId=safraId;
   if(!indsGer.length){
     if(tw)tw.innerHTML='<div class="alert alert-warn">⚠️ Nenhum indicador configurado para esta gerência nesta safra. Vá em <b>Gerências → ⚙️ Indicadores</b> para configurar.</div>';
     return;
@@ -1222,7 +1238,12 @@ async function calcPreview(){
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
   if(!gerId)return;
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
-  const indsGer=await getIndsGerencia(gerId, safraId);
+  // Usa cache para não fazer query a cada keypress
+  let indsGer=_cachedIndsGer;
+  if(!indsGer.length || _cachedGerId!==gerId || _cachedSafraId!==safraId){
+    indsGer=await getIndsGerencia(gerId, safraId);
+    _cachedIndsGer=indsGer; _cachedGerId=gerId; _cachedSafraId=safraId;
+  }
   // Mostra preview mesmo sem indicadores configurados
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id};
@@ -1283,8 +1304,10 @@ async function salvarLancamento(){
   }
   if(btn)btn.textContent='Salvando...';
 
-  // Busca indicadores configurados
-  const indsGer=await getIndsGerencia(gerId,safraIdLanc);
+  // Usa indicadores do cache (já carregados ao renderizar a tabela)
+  const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
+    ? _cachedIndsGer
+    : await getIndsGerencia(gerId,safraIdLanc);
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id,peso:ind.peso};
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
@@ -1425,11 +1448,15 @@ async function salvarLancamento(){
   alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+( mediaDir!=null?mediaDir.toFixed(1):'—'));
   if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
   window._editandoLancamento=false;
+  // Atualiza o dashboard para o mesmo período que foi lançado
+  const dpEl2=document.getElementById('dash-periodo');
+  if(dpEl2&&mesLancar) dpEl2.value=mesLancar;
   dashData=null;carregarDashboard();
 }
 
 function limparForm(){
   window._editandoLancamento = false;
+  _cachedGerId=null; _cachedSafraId=null; _cachedIndsGer=[];
   if(usuario.perfil!=='gerencia'){const sd=document.getElementById('sel-diretoria');if(sd)sd.value='';const sg=document.getElementById('sel-gerencia');if(sg)sg.innerHTML='<option value="">— Selecione —</option>';}
   ['nota-auditoria','obs-auditoria'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   _eventos=[]; renderEventos();
@@ -2070,8 +2097,13 @@ function filtrarNaoAtingidos(){
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
 
-// Ping automático para evitar pausa do Supabase (a cada 5 minutos)
-setInterval(async()=>{try{await sb.from('config').select('chave').limit(1);}catch(e){}},5*60*1000);
+// Ping automático a cada 3 minutos para manter sessão e conexão vivas
+setInterval(async()=>{
+  try{
+    await sb.auth.getSession(); // refresh do token se necessário
+    await sb.from('config').select('chave').limit(1);
+  }catch(e){console.warn('Ping falhou:',e);}
+},3*60*1000);
 </script>
 
 <!-- PÁGINA DE IMPRESSÃO -->

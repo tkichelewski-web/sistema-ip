@@ -1582,6 +1582,21 @@ async function salvarLancamento(){
   const btn=document.getElementById('btn-salvar');
   if(btn){btn.disabled=true;btn.textContent='Verificando...';}
 
+  // Garante sessão válida antes de qualquer query (evita falha silenciosa por token expirado)
+  try {
+    const { data:{ session }, error:se } = await sb.auth.getSession();
+    if(se || !session) {
+      // Tenta refresh
+      const { error:re } = await sb.auth.refreshSession();
+      if(re) {
+        alert('⚠️ Sua sessão expirou. Faça login novamente.');
+        if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
+        sair();
+        return;
+      }
+    }
+  } catch(e) { console.warn('Erro ao verificar sessão:', e); }
+
   // Trava: verifica se já existe lançamento para esta gerência/mês
   const{data:existing}=await sb.from('lancamentos')
     .select('id').eq('gerencia_id',gerId)
@@ -2498,13 +2513,60 @@ function filtrarNaoAtingidos(){
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
 
-// Ping automático a cada 3 minutos para manter sessão e conexão vivas
+// Ping a cada 90s: mantém token e conexão vivos
 setInterval(async()=>{
   try{
-    await sb.auth.getSession(); // refresh do token se necessário
+    const { data:{ session } } = await sb.auth.getSession();
+    // Se token expira em menos de 5 minutos, faz refresh preventivo
+    if(session){
+      const expiresAt = session.expires_at * 1000;
+      const diffMs = expiresAt - Date.now();
+      if(diffMs < 5 * 60 * 1000) {
+        console.log('Token expirando em breve, renovando...');
+        await sb.auth.refreshSession();
+      }
+    }
     await sb.from('config').select('chave').limit(1);
   }catch(e){console.warn('Ping falhou:',e);}
-},3*60*1000);
+},90*1000);
+
+// ── Wrapper seguro para queries Supabase com retry de sessão ──
+async function sbSafe(queryFn) {
+  try {
+    const result = await queryFn();
+    // Se erro de autenticação, tenta refresh e repete uma vez
+    if(result.error && (result.error.message?.includes('JWT') || result.error.message?.includes('token') || result.error.status === 401)) {
+      console.warn('Token expirado, tentando refresh...');
+      await sb.auth.refreshSession();
+      return await queryFn();
+    }
+    return result;
+  } catch(e) {
+    console.error('Erro na query:', e);
+    return { data: null, error: e };
+  }
+}
+
+// ── Wake Lock: impede a tela de apagar/bloquear ───────────────
+let _wakeLock = null;
+async function ativarWakeLock() {
+  if(!('wakeLock' in navigator)) return; // browser não suporta
+  try {
+    _wakeLock = await navigator.wakeLock.request('screen');
+    console.log('Wake Lock ativo');
+    _wakeLock.addEventListener('release', () => {
+      console.log('Wake Lock liberado — tentando reativar...');
+      setTimeout(ativarWakeLock, 2000);
+    });
+  } catch(e) {
+    console.warn('Wake Lock falhou:', e.message);
+  }
+}
+// Reativa quando a aba voltar ao foco (ex: após alt+tab)
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') ativarWakeLock();
+});
+ativarWakeLock();
 </script>
 
 <!-- PÁGINA DE IMPRESSÃO -->

@@ -1137,9 +1137,6 @@ let _eventos = []; // [{id, tipo:'acidente'|'incidente', classe:'iap'|'asa'|'aca
 let _cachedIndsGer = []; // cache dos indicadores carregados para evitar queries a cada keypress
 let _cachedGerId = null;
 let _cachedSafraId = null;
-let _cachedIndsGer = []; // cache dos indicadores carregados para evitar queries a cada keypress
-let _cachedGerId = null;
-let _cachedSafraId = null;
 
 
 function formatEventos(tipoAcidente) {
@@ -1743,8 +1740,6 @@ async function salvarLancamento(){
   const dpEl2=document.getElementById('dash-periodo');
   if(dpEl2&&mesLancar) dpEl2.value=mesLancar;
   // Atualiza o dashboard para o mesmo período que foi lançado
-  const dpEl2=document.getElementById('dash-periodo');
-  if(dpEl2&&mesLancar) dpEl2.value=mesLancar;
   dashData=null;carregarDashboard();
 }
 
@@ -2521,6 +2516,8 @@ async function ativarWakeLock(){
 }
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();});
 ativarWakeLock();
+
+</script>
 
 <!-- PÁGINA DE IMPRESSÃO -->
 <div id="print-overlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:500;overflow-y:auto;padding:30px">

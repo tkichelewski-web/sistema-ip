@@ -764,7 +764,6 @@ async function carregarAcumulado() {
     adEl.innerHTML = '<option value="">Todas as Diretorias</option>' + dirs.map(([id,n]) => `<option value="${id}">${n}</option>`).join('');
   }
   renderAcumTable();
-  renderAcumDirTbl();
   setTimeout(()=>{renderAcumChart();renderAcumChartMensal();},300);
 }
 
@@ -1733,22 +1732,29 @@ async function salvarLancamento(){
   const setBtn=(txt,dis=true)=>{if(btn){btn.textContent=txt;btn.disabled=dis;}};
   setBtn('Salvando...');
 
-  // Refresh obrigatório antes de salvar — garante token válido mesmo após 30min
-  try{
-    const {data:rData, error:rErr} = await sb.auth.refreshSession();
-    if(rErr){
-      console.warn('refreshSession falhou:', rErr.message);
-      // Se refresh falhou, verifica se ainda tem sessão válida
-      const {data:{session}} = await sb.auth.getSession();
-      if(!session){
-        alert('⚠️ Sua sessão expirou. Salve os dados em outro lugar e faça login novamente.');
-        setBtn('✓ Salvar Lançamento', false);
-        return;
-      }
-    }
-  }catch(e){console.warn('Erro no refresh:', e);}
-
   try { // try principal — garante que o botão sempre é liberado
+
+  // ── PASSO 1: garantir sessão válida ─────────────────────────
+  setBtn('Renovando sessão...');
+  let sessionOk = false;
+  try {
+    const {data:rd, error:re} = await sb.auth.refreshSession();
+    if(!re && rd?.session) {
+      sessionOk = true;
+      console.log('✅ Token renovado, expira em:', new Date(rd.session.expires_at*1000).toLocaleTimeString());
+    } else {
+      console.warn('refreshSession retornou erro:', re?.message);
+      // Tenta ler sessão atual mesmo assim
+      const {data:{session:s}} = await sb.auth.getSession();
+      if(s) { sessionOk = true; console.log('Sessão atual ainda válida'); }
+    }
+  } catch(e) { console.warn('Erro no refresh:', e); }
+
+  if(!sessionOk) {
+    alert('⚠️ Sua sessão expirou após inatividade.\n\nAnote os valores lançados, recarregue a página, faça login novamente e relance.');
+    return;
+  }
+  setBtn('Salvando...');
 
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
@@ -1828,18 +1834,21 @@ async function salvarLancamento(){
     lancado_por:usuario.id, atualizado_em:new Date().toISOString()
   };
 
-  // Tenta upsert sem select (mais confiável com RLS)
+  // Tenta upsert — com log detalhado para debug
+  console.log('📤 Enviando payload:', JSON.stringify({gerencia_id:payload.gerencia_id, mes:payload.mes, pg:payload.pontuacao_gerencia}));
   const {error:errUp} = await sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,mes'});
   if(errUp) {
-    console.warn('upsert gerencia_id,mes falhou:', errUp.message, '— tentando gerencia_id,periodo');
+    console.warn('⚠️ upsert gerencia_id,mes falhou:', errUp.message, errUp.code);
+    setBtn('Tentando alternativa...');
     const {error:errUp2} = await sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,periodo'});
     if(errUp2) {
-      // Última tentativa: insert direto
-      console.warn('upsert gerencia_id,periodo falhou:', errUp2.message, '— tentando insert');
+      console.warn('⚠️ upsert gerencia_id,periodo falhou:', errUp2.message, errUp2.code);
+      setBtn('Inserindo...');
       const {error:errIns} = await sb.from('lancamentos').insert(payload);
-      if(errIns) throw new Error('Falha ao salvar lançamento: ' + errIns.message);
-    }
-  }
+      if(errIns) throw new Error('Erro ao salvar: ' + errIns.message + ' (código: ' + errIns.code + ')');
+      console.log('✅ insert direto funcionou');
+    } else { console.log('✅ upsert periodo funcionou'); }
+  } else { console.log('✅ upsert mes funcionou'); }
 
   // Busca o ID do lançamento (sempre via SELECT separado, sem depender do RETURNING)
   const {data:lancBusca} = await sb.from('lancamentos').select('id')
@@ -1893,8 +1902,8 @@ async function salvarLancamento(){
   alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+(mediaDir!=null?mediaDir.toFixed(1):'—'));
 
   } catch(e) {
-    console.error('Erro inesperado ao salvar:', e);
-    alert('❌ Erro ao salvar: ' + (e.message||'erro desconhecido') + '\n\nTente novamente.');
+    console.error('❌ Erro ao salvar:', e);
+    alert('❌ Erro ao salvar:\n' + (e.message||'erro desconhecido') + '\n\nAbra o Console (F12) para ver detalhes.\nTente recarregar a página e salvar novamente.');
   } finally {
     setBtn('✓ Salvar Lançamento', false);
     window._editandoLancamento = false;

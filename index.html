@@ -1734,26 +1734,8 @@ async function salvarLancamento(){
 
   try { // try principal — garante que o botão sempre é liberado
 
-  // ── PASSO 1: garantir sessão válida ─────────────────────────
-  setBtn('Renovando sessão...');
-  let sessionOk = false;
-  try {
-    const {data:rd, error:re} = await sb.auth.refreshSession();
-    if(!re && rd?.session) {
-      sessionOk = true;
-      console.log('✅ Token renovado, expira em:', new Date(rd.session.expires_at*1000).toLocaleTimeString());
-    } else {
-      console.warn('refreshSession retornou erro:', re?.message);
-      // Tenta ler sessão atual mesmo assim
-      const {data:{session:s}} = await sb.auth.getSession();
-      if(s) { sessionOk = true; console.log('Sessão atual ainda válida'); }
-    }
-  } catch(e) { console.warn('Erro no refresh:', e); }
-
-  if(!sessionOk) {
-    alert('⚠️ Sua sessão expirou após inatividade.\n\nAnote os valores lançados, recarregue a página, faça login novamente e relance.');
-    return;
-  }
+  // Tenta refresh silencioso (não bloqueia se falhar)
+  sb.auth.refreshSession().catch(e => console.warn('refresh silencioso falhou:', e));
   setBtn('Salvando...');
 
   // Usa indicadores do cache (já carregados ao renderizar a tabela)

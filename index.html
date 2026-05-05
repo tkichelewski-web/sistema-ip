@@ -1881,17 +1881,34 @@ async function salvarLancamento(){
   }
 
   const st=getStatus(indFinal);
+  // Sucesso — limpa erro se havia
+  const errBoxS = document.getElementById('result-box');
+  if(errBoxS) errBoxS.innerHTML = '';
   alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+(mediaDir!=null?mediaDir.toFixed(1):'—'));
 
   } catch(e) {
     console.error('❌ Erro ao salvar:', e);
-    alert('❌ Erro ao salvar:\n' + (e.message||'erro desconhecido') + '\n\nAbra o Console (F12) para ver detalhes.\nTente recarregar a página e salvar novamente.');
+    // Mostra erro visível na tela (não depende de F12)
+    const errBox = document.getElementById('result-box');
+    if(errBox) {
+      errBox.style.display = 'block';
+      errBox.innerHTML = '<div style="background:#fde;border:2px solid #d93025;border-radius:8px;padding:16px;color:#d93025">'
+        + '<b>❌ Erro ao salvar:</b><br>' + (e.message||'erro desconhecido')
+        + '<br><small>Tente clicar em Salvar novamente.</small></div>';
+    } else {
+      alert('❌ Erro: ' + (e.message||'erro desconhecido'));
+    }
   } finally {
+    // SEMPRE libera o botão primeiro
     setBtn('✓ Salvar Lançamento', false);
     window._editandoLancamento = false;
-    const dpEl2 = document.getElementById('dash-periodo');
-    if(dpEl2 && mesLancar) dpEl2.value = mesLancar;
-    dashData = null; carregarDashboard();
+    // Dashboard atualiza em background sem travar o finally
+    try {
+      const dpEl2 = document.getElementById('dash-periodo');
+      if(dpEl2 && mesLancar) dpEl2.value = mesLancar;
+      dashData = null;
+      setTimeout(() => carregarDashboard(), 100);
+    } catch(ef) { console.warn('Erro ao atualizar dashboard:', ef); }
   }
 }
 

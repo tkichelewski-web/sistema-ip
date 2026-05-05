@@ -1809,35 +1809,34 @@ async function salvarLancamento(){
     if(prev?.length){const soma=prev.reduce((s,l)=>s+(l.indice_prevencao||0),0)+indFinal;acumGer=soma/(prev.length+1);}
   }
 
-  // Salva o lançamento
-  const{data:lanc,error}=await sb.from('lancamentos').upsert({
-    gerencia_id:gerId,safra_id:safraIdLanc||null,mes:mesLancar,periodo:mesLancar,
-    nota_auditoria:aud,obs_auditoria:_obsCompleta,tipo_acidente:_tipoAcidente,regras_salvas:regras,
-    pontuacao_gerencia:pg,media_diretoria:mediaDir,indice_base:indBase,
-    ajuste_pontos:aj,indice_prevencao:indFinal,acumulado_gerencia:acumGer,
-    lancado_por:usuario.id,atualizado_em:new Date().toISOString()
-  },{onConflict:'gerencia_id,mes'}).select().single();
+  // Salva o lançamento — sem .select().single() para evitar erro PGRST116 de RLS
+  const payload = {
+    gerencia_id:gerId, safra_id:safraIdLanc||null, mes:mesLancar, periodo:mesLancar,
+    nota_auditoria:aud, obs_auditoria:_obsCompleta, tipo_acidente:_tipoAcidente, regras_salvas:regras,
+    pontuacao_gerencia:pg, media_diretoria:mediaDir, indice_base:indBase,
+    ajuste_pontos:aj, indice_prevencao:indFinal, acumulado_gerencia:acumGer,
+    lancado_por:usuario.id, atualizado_em:new Date().toISOString()
+  };
 
-  if(error){
-    // Tenta com periodo como conflito
-    const{data:lanc2,error:err2}=await sb.from('lancamentos').upsert({
-      gerencia_id:gerId,safra_id:safraIdLanc||null,mes:mesLancar,periodo:mesLancar,
-      nota_auditoria:aud,obs_auditoria:_obsCompleta,tipo_acidente:_tipoAcidente,regras_salvas:regras,
-      pontuacao_gerencia:pg,media_diretoria:mediaDir,indice_base:indBase,
-      ajuste_pontos:aj,indice_prevencao:indFinal,acumulado_gerencia:acumGer,
-      lancado_por:usuario.id,atualizado_em:new Date().toISOString()
-    },{onConflict:'gerencia_id,periodo'}).select().single();
-    if(err2){alert('Erro ao salvar: '+err2.message);setBtn('✓ Salvar Lançamento',false);return;}
+  // Tenta upsert sem select (mais confiável com RLS)
+  const {error:errUp} = await sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,mes'});
+  if(errUp) {
+    console.warn('upsert gerencia_id,mes falhou:', errUp.message, '— tentando gerencia_id,periodo');
+    const {error:errUp2} = await sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,periodo'});
+    if(errUp2) {
+      // Última tentativa: insert direto
+      console.warn('upsert gerencia_id,periodo falhou:', errUp2.message, '— tentando insert');
+      const {error:errIns} = await sb.from('lancamentos').insert(payload);
+      if(errIns) throw new Error('Falha ao salvar lançamento: ' + errIns.message);
+    }
   }
 
-  // Busca o ID do lançamento salvo (pode vir do upsert ou de busca direta)
-  let lancId=(lanc||{}).id;
-  if(!lancId) {
-    // Busca o lançamento que acabou de ser salvo
-    const{data:lancBusca}=await sb.from('lancamentos').select('id')
-      .eq('gerencia_id',gerId).or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`).single();
-    lancId=lancBusca?.id;
-  }
+  // Busca o ID do lançamento (sempre via SELECT separado, sem depender do RETURNING)
+  const {data:lancBusca} = await sb.from('lancamentos').select('id')
+    .eq('gerencia_id', gerId)
+    .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+    .limit(1);
+  let lancId = lancBusca?.[0]?.id;
   console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);
   if(lancId&&itens.length){
     await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);

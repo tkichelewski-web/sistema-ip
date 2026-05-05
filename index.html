@@ -767,6 +767,23 @@ async function carregarAcumulado() {
   setTimeout(()=>{renderAcumChart();renderAcumChartMensal();},300);
 }
 
+function uniCor(nome) {
+  // Retorna cor da unidade: JB = verde escuro, PB = verde lima, outros = cinza
+  if(!nome) return '#888';
+  const n = nome.toUpperCase();
+  if(n.includes('JB')) return '#07583C';
+  if(n.includes('PB')) return '#B3DD64';
+  return '#888';
+}
+
+function uniTag(nome) {
+  const cor   = uniCor(nome);
+  const texto = nome || '—';
+  // tag colorida com contraste adequado
+  const corTexto = nome && nome.toUpperCase().includes('PB') ? '#07583C' : '#fff';
+  return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:'+cor+';color:'+corTexto+'">'+texto+'</span>';
+}
+
 function renderAcumTable() {
   const safraId = document.getElementById('acum-safra')?.value;
   const safra   = safrasData.find(s => s.id == safraId);
@@ -775,10 +792,10 @@ function renderAcumTable() {
   const dtEl    = document.getElementById('acum-dir-tbl');
   if(!acumAllData.length) { if(gtEl) gtEl.innerHTML = '<div class="loading">Nenhum dado.</div>'; return; }
 
-  const meses  = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
-  const wPG    = Number(config?.peso_gerencia)  || 0.5;
-  const wMD    = Number(config?.peso_diretoria) || 0.2;
-  const wAUD   = Number(config?.peso_auditoria) || 0.3;
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const wPG   = Number(config?.peso_gerencia)  || 0.5;
+  const wMD   = Number(config?.peso_diretoria) || 0.2;
+  const wAUD  = Number(config?.peso_auditoria) || 0.3;
 
   function calcIP(l) {
     if(!l) return null;
@@ -789,8 +806,19 @@ function renderAcumTable() {
     return Math.max(0, Math.min(100, pg*wPG + md*wMD + aud*wAUD + aj));
   }
 
-  // ── Tabela gerências ─────────────────────────────────────────
-  // Agrupa por gerencia_id — garante que gerências homônimas de unidades diferentes ficam separadas
+  // ── Coleta unidades únicas para legenda ──────────────────────
+  const unisSet = new Set();
+  acumAllData.forEach(l => { if(l.gerencias?.unidades?.nome) unisSet.add(l.gerencias.unidades.nome); });
+  const unisLegenda = [...unisSet].sort();
+
+  const legendaHTML = unisLegenda.length > 1
+    ? '<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
+      + '<span style="font-size:11px;color:var(--muted);font-weight:600">LEGENDA:</span>'
+      + unisLegenda.map(u => uniTag(u)+' <span style="font-size:11px;color:var(--muted)">'+u+'</span>').join('')
+      + '</div>'
+    : '';
+
+  // ── Agrupa gerências por gerencia_id ──────────────────────────
   const gersMap = new Map();
   acumAllData
     .filter(l => !filtDir || l.gerencias?.diretoria_id === filtDir)
@@ -798,22 +826,23 @@ function renderAcumTable() {
       if(!gersMap.has(l.gerencia_id))
         gersMap.set(l.gerencia_id, {
           id:   l.gerencia_id,
-          nome: l.gerencias?.nome       || '—',
-          uni:  l.gerencias?.unidades?.nome   || '—',
-          dir:  l.gerencias?.diretorias?.nome || '—',
+          nome: l.gerencias?.nome               || '—',
+          uni:  l.gerencias?.unidades?.nome      || '—',
+          dir:  l.gerencias?.diretorias?.nome    || '—',
         });
     });
   const gers = [...gersMap.values()];
 
   const mesThsG = meses.map(m =>
-    '<th>'+m.nome+'</th><th style="background:#d4edda;color:#07583C;white-space:nowrap">Acum.</th>'
+    '<th style="white-space:nowrap">'+m.nome+'</th>'
+    +'<th style="background:#d4edda;color:#07583C;white-space:nowrap">Acum.</th>'
   ).join('');
 
   const gersRows = gers.map(g => {
     let soma = 0, count = 0;
     const cells = meses.map(m => {
-      const l    = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
-      const ip   = calcIP(l);
+      const l   = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
+      const ip  = calcIP(l);
       if(ip != null) { soma += ip; count++; }
       const acum = count > 0 ? soma/count : null;
       return '<td class="mono" style="color:'+(ip!=null?getColor(ip):'var(--muted)')+'">'+( ip!=null?ip.toFixed(1):'—')+'</td>'
@@ -821,13 +850,15 @@ function renderAcumTable() {
     }).join('');
     return '<tr>'
       + '<td><b>'+g.nome+'</b></td>'
-      + '<td style="font-size:11px;color:var(--blue)">'+g.uni+'</td>'
+      + '<td style="white-space:nowrap">'+uniTag(g.uni)+'</td>'
       + '<td style="font-size:11px;color:var(--muted)">'+g.dir+'</td>'
-      + cells + '</tr>';
+      + cells
+      + '</tr>';
   }).join('');
 
   if(gtEl) gtEl.innerHTML =
-    '<div style="overflow-x:auto"><table><thead><tr>'
+    legendaHTML
+    + '<div style="overflow-x:auto"><table><thead><tr>'
     + '<th>Gerência</th><th>Unidade</th><th>Diretoria</th>'
     + mesThsG
     + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';

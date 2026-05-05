@@ -1629,76 +1629,33 @@ async function renderIndTable(){
   const totalPeso=indsGer.reduce((s,i)=>s+(i.peso||0),0);
   const aviso=totalPeso!==100?'<div class="alert alert-warn">⚠️ Soma dos pesos: <b>'+totalPeso+'%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>':'';
 
-  // Blocos e ícones
-  const BLOCOS_ORD=['Ferramentas de Prevenção','Tratamento de Desvios, Incidentes e Ocorrências','Requisito Legal','Emergência','Comitês Operacionais','Inspeções e Auditorias','Meio Ambiente','Outros'];
-  const ICONS_IND={'Ferramentas de Prevenção':'🛡️','Tratamento de Desvios, Incidentes e Ocorrências':'⚠️','Requisito Legal':'⚖️','Emergência':'🚨','Comitês Operacionais':'👥','Inspeções e Auditorias':'🔍','Meio Ambiente':'🌿','Outros':'📋'};
-
-  // Agrupa indicadores por bloco
-  const grupos={};
-  indsGer.forEach(ind=>{const b=ind.bloco||'Outros';if(!grupos[b])grupos[b]=[];grupos[b].push(ind);});
-
-  function indRow(ind){
+  // Tabela simples sem agrupamento por blocos
+  const rows=indsGer.map(ind=>{
     const tipo=ind.tipo;
     const tipoTag=tipo==='previsto_realizado'
       ?'<span class="badge badge-blue" style="font-size:10px">Prev×Real</span>'
       :tipo==='nota'
       ?'<span class="badge badge-green" style="font-size:10px">Nota</span>'
       :'<span class="badge badge-yellow" style="font-size:10px">Sim/Não</span>';
-    const tdS='style="padding:8px 12px;border-bottom:1px solid #e0f0e8"';
     const valorCols=tipo==='previsto_realizado'
-      ?'<td '+tdS+'><input type="number" id="prev_'+ind.id+'" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
-       +'<td '+tdS+'><input type="number" id="real_'+ind.id+'" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+      ?'<td><input type="number" id="prev_'+ind.id+'" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+       +'<td><input type="number" id="real_'+ind.id+'" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
       :tipo==='nota'
-      ?'<td colspan="2" '+tdS+'><input type="number" id="nota_'+ind.id+'" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td>'
-      :'<td colspan="2" '+tdS+'><select id="bin_'+ind.id+'" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td>';
-    return '<tr style="border-bottom:1px solid #e0f0e8" data-ind-nome="'+ind.nome+'">'
-      +'<td '+tdS+'><b>'+ind.nome+'</b></td>'
-      +'<td '+tdS+'>'+tipoTag+'</td>'
-      +'<td '+tdS+' class="mono">'+ind.peso+'%</td>'
+      ?'<td colspan="2"><input type="number" id="nota_'+ind.id+'" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td>'
+      :'<td colspan="2"><select id="bin_'+ind.id+'" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td>';
+    return '<tr data-ind-nome="'+ind.nome+'">'
+      +'<td><b>'+ind.nome+'</b></td>'
+      +'<td>'+tipoTag+'</td>'
+      +'<td class="mono">'+ind.peso+'%</td>'
       +valorCols
-      +'<td id="pont_'+ind.id+'" class="mono" '+tdS+' style="padding:8px 12px;border-bottom:1px solid #e0f0e8;font-weight:700;color:var(--muted)">—</td>'
-      +'<td '+tdS+'><input type="text" id="coment_'+ind.id+'" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td>'
+      +'<td id="pont_'+ind.id+'" class="mono" style="color:var(--muted)">—</td>'
+      +'<td><input type="text" id="coment_'+ind.id+'" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td>'
       +'</tr>';
-  }
+  }).join('');
 
-  let html=aviso;
-  BLOCOS_ORD.forEach(bloco=>{
-    const inds=grupos[bloco];if(!inds||!inds.length)return;
-    const icon=ICONS_IND[bloco]||'📋';
-    const pesoBloco=inds.reduce((s,i)=>s+(i.peso||0),0);
-    html+='<div style="margin-bottom:20px">';
-    // Cabeçalho verde igual ao modal de indicadores
-    html+='<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:8px 8px 0 0">';
-    html+='<span style="font-size:16px">'+icon+'</span>';
-    html+='<span style="font-weight:700;color:#fff;font-size:13px;letter-spacing:.5px">'+bloco.toUpperCase()+'</span>';
-    html+='<span style="margin-left:auto;display:flex;gap:8px;align-items:center">';
-    html+='<span style="background:rgba(255,255,255,.18);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">Peso total: '+pesoBloco+'%</span>';
-    html+='<span style="background:rgba(255,255,255,.18);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">'+inds.length+' indicador'+(inds.length>1?'es':'')+'</span>';
-    html+='</span>';
-    html+='</div>';
-    html+='<table class="ind-table" style="width:100%;border-collapse:collapse;border:1px solid #e0f0e8;border-top:none;border-radius:0 0 8px 8px"><thead><tr>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Indicador</th>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Tipo</th>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Peso</th>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Previsto</th>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Realizado / Nota</th>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Pont.</th>';
-    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Comentário</th>';
-    html+='</tr></thead><tbody>';
-    html+=inds.map(indRow).join('');
-    html+='</tbody></table></div>';
-  });
-
-  // Indicadores sem bloco definido
-  const semBloco=indsGer.filter(ind=>!ind.bloco||!BLOCOS_ORD.includes(ind.bloco));
-  if(semBloco.length){
-    html+='<div style="margin-bottom:16px"><div style="padding:8px 14px;background:#888;border-radius:7px 7px 0 0"><span style="font-weight:700;color:#fff;font-size:12px">📋 SEM BLOCO</span></div>';
-    html+='<table class="ind-table" style="width:100%;border-collapse:collapse;border:1px solid #ddd;border-top:none"><tbody>';
-    html+=semBloco.map(indRow).join('');
-    html+='</tbody></table></div>';
-  }
-
-  if(tw)tw.innerHTML=html;
+  if(tw)tw.innerHTML=aviso+'<div style="overflow-x:auto"><table class="ind-table"><thead><tr>'
+    +'<th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th><th>Comentário</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
 
   // Popula filtro de indicador
   const filtroSel=document.getElementById('filtro-indicador');
@@ -1773,38 +1730,13 @@ async function salvarLancamento(){
 
   const btn=document.getElementById('btn-salvar');
   const setBtn=(txt,dis=true)=>{if(btn){btn.textContent=txt;btn.disabled=dis;}};
-  setBtn('Verificando...');
-
-  // Refresh de sessão antes de qualquer query
-  try{
-    const{data:{session},error:se}=await sb.auth.getSession();
-    if(se||!session){
-      const{error:re}=await sb.auth.refreshSession();
-      if(re){alert('⚠️ Sessão expirada. Faça login novamente.');setBtn('✓ Salvar Lançamento',false);sair();return;}
-    }
-  }catch(e){console.warn('Sessão:',e);}
-
-  // Verificação de duplicata — usa limit(1) em vez de maybeSingle para evitar erro PGRST116
-  try{
-    const timeoutP=new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),8000));
-    const checkP=sb.from('lancamentos').select('id').eq('gerencia_id',gerId)
-      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1);
-    const result=await Promise.race([checkP,timeoutP]);
-    const existing=result.data&&result.data.length>0?result.data[0]:null;
-    if(existing&&!window._editandoLancamento){
-      alert('⚠️ Já existe um lançamento para esta gerência em '+mesLancar+'.\n\nPara editar, use o botão "✏️ Editar" no Histórico.');
-      setBtn('✓ Salvar Lançamento',false);return;
-    }
-  }catch(e){
-    if(e.message==='timeout'){
-      const ok=confirm('⚠️ A verificação demorou muito.\nDeseja tentar salvar mesmo assim?');
-      if(!ok){setBtn('✓ Salvar Lançamento',false);return;}
-    }else{
-      console.warn('Erro na verificação:',e);
-      // Não bloqueia — continua tentando salvar
-    }
-  }
   setBtn('Salvando...');
+
+  // Refresh de sessão silencioso antes de salvar
+  try{
+    const{data:{session}}=await sb.auth.getSession();
+    if(!session) await sb.auth.refreshSession();
+  }catch(e){console.warn('Sessão:',e);}
 
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)

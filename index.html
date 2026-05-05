@@ -396,11 +396,15 @@ input[type=number]{font-family:'DM Mono',monospace;}
           </select></div>
           <div><label>Tipo</label><select id="ind-tipo"><option value="previsto_realizado">Previsto × Realizado</option><option value="nota">Nota direta (0–100)</option><option value="binario">Sim / Não</option></select></div>
           <div><label>Fonte dos Dados</label><input type="text" id="ind-fonte" placeholder="Ex: RH"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding-top:16px;">
+            <input type="checkbox" id="ind-base" checked style="width:auto;accent-color:#07583C;">
+            <label style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);margin:0;">Base (todas as gerências)</label>
+          </div>
           <div style="display:flex;align-items:flex-end;"><button class="btn btn-primary" onclick="salvarIndicador()" style="width:100%">+ Adicionar</button></div>
         </div>
       </div>
       <div class="table-wrap">
-        <div class="table-header"><span class="table-title">Indicadores Cadastrados</span><span style="font-size:12px;color:var(--muted)">Agrupados por bloco — clique em Editar para alterar</span></div>
+        <div class="table-header"><span class="table-title">Indicadores Cadastrados</span><span style="font-size:12px;color:var(--muted)">Clique em Editar para alterar peso ou nome</span></div>
         <div id="ind-lista"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
       </div>
     </div>
@@ -813,137 +817,115 @@ function renderAcumTable() {
   }).join('')}</tbody></table></div>`;
 }
 
-const VERDES = [
-  '#07583C','#0a7a54','#0d9c6c','#10be84','#14d99a',
-  '#1a8c5e','#238c6b','#2d6a4f','#40916c','#52b788',
-  '#74c69d','#95d5b2','#1b4332','#081c15','#166534',
-];
+const VERDES = ['#07583C','#0a7a54','#0d9c6c','#10be84','#14d99a','#1a8c5e','#238c6b','#2d6a4f','#40916c','#52b788','#74c69d','#95d5b2','#1b4332','#081c15','#166534'];
 
 const refLinesPlugin = {
-  id: 'refLines',
-  afterDraw(chart) {
-    const { ctx, chartArea: { left, right }, scales: { y } } = chart;
-    [[100,'#07583C','Máximo (100)'],[90,'#1a73e8','Meta (90)'],[82,'#c47d0e','Mínimo (82)']].forEach(([val,color,lbl]) => {
-      const yPx = y.getPixelForValue(val);
-      ctx.save();
-      ctx.setLineDash([6,4]); ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.globalAlpha=0.8;
-      ctx.beginPath(); ctx.moveTo(left,yPx); ctx.lineTo(right,yPx); ctx.stroke();
-      ctx.globalAlpha=1; ctx.setLineDash([]);
-      ctx.fillStyle=color; ctx.font='bold 10px DM Mono,monospace';
-      ctx.fillText(lbl, right-92, yPx-4);
-      ctx.restore();
+  id:'refLines',
+  afterDraw(chart){
+    const{ctx,chartArea:{left,right},scales:{y}}=chart;
+    [[100,'#07583C','Máximo (100)'],[90,'#1a73e8','Meta (90)'],[82,'#c47d0e','Mínimo (82)']].forEach(([val,color,lbl])=>{
+      const yPx=y.getPixelForValue(val);
+      ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.8;
+      ctx.beginPath();ctx.moveTo(left,yPx);ctx.lineTo(right,yPx);ctx.stroke();
+      ctx.globalAlpha=1;ctx.setLineDash([]);ctx.fillStyle=color;ctx.font='bold 10px DM Mono,monospace';
+      ctx.fillText(lbl,right-92,yPx-4);ctx.restore();
     });
   }
 };
 
 const dataLabelsPlugin = {
-  id: 'dataLabels',
-  afterDatasetsDraw(chart) {
-    const { ctx } = chart;
-    chart.data.datasets.forEach((ds, i) => {
-      const meta = chart.getDatasetMeta(i);
-      if(meta.hidden) return;
-      meta.data.forEach((bar, j) => {
-        const val = ds.data[j];
-        if(val == null) return;
-        const { x, y: barY, base } = bar;
-        const barH = Math.abs(base - barY);
-        if(barH < 20) return;
-        ctx.save();
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px Open Sans,sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(val.toFixed(1), x, (barY + base) / 2);
-        ctx.restore();
+  id:'dataLabels',
+  afterDatasetsDraw(chart){
+    const{ctx}=chart;
+    chart.data.datasets.forEach((ds,i)=>{
+      const meta=chart.getDatasetMeta(i);
+      if(meta.hidden)return;
+      meta.data.forEach((bar,j)=>{
+        const val=ds.data[j];if(val==null)return;
+        const{x,y:barY,base}=bar;
+        const barH=Math.abs(base-barY);if(barH<20)return;
+        ctx.save();ctx.fillStyle='#fff';ctx.font='bold 12px Open Sans,sans-serif';
+        ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText(val.toFixed(1),x,(barY+base)/2);ctx.restore();
       });
     });
   }
 };
 
-function buildAcumDatasets(meses, tipo, vizType, acumMode) {
-  const isBar = vizType === 'bar';
-  function mkDs(nome, pts, idx) {
-    const cor = VERDES[idx % VERDES.length];
-    return {
-      label: nome||'—', data: pts,
-      backgroundColor: isBar ? cor : cor+'22',
-      borderColor: cor,
-      borderWidth: isBar ? 0 : 2,
-      pointRadius: isBar ? 0 : 5,
-      pointHoverRadius: isBar ? 0 : 7,
-      borderRadius: isBar ? 5 : 0,
-      tension: 0.3, spanGaps: acumMode,
-    };
+function buildAcumDatasets(meses,tipo,vizType,acumMode){
+  const isBar=vizType==='bar';
+  function mkDs(nome,pts,idx){
+    const cor=VERDES[idx%VERDES.length];
+    return{label:nome||'—',data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,
+      borderWidth:isBar?0:2,pointRadius:isBar?0:5,pointHoverRadius:isBar?0:7,
+      borderRadius:isBar?5:0,tension:0.3,spanGaps:acumMode};
   }
-  if(tipo === 'gerencia') {
-    const gers = [...new Map(acumAllData.map(l=>[l.gerencia_id,{id:l.gerencia_id,nome:l.gerencias?.nome}])).values()];
-    return gers.map((g,idx) => {
+  if(tipo==='gerencia'){
+    const gers=[...new Map(acumAllData.map(l=>[l.gerencia_id,{id:l.gerencia_id,nome:l.gerencias?.nome}])).values()];
+    return gers.map((g,idx)=>{
       let soma=0,count=0;
-      const pts = meses.map(m => {
-        const l = acumAllData.find(x=>x.gerencia_id===g.id&&x.mes===m.val);
-        if(acumMode){ if(l){soma+=l.indice_prevencao||0;count++;} return count>0?parseFloat((soma/count).toFixed(2)):null; }
+      const pts=meses.map(m=>{
+        const l=acumAllData.find(x=>x.gerencia_id===g.id&&x.mes===m.val);
+        if(acumMode){if(l){soma+=l.indice_prevencao||0;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
         return l?parseFloat((l.indice_prevencao||0).toFixed(2)):null;
       });
-      return mkDs(g.nome, pts, idx);
+      return mkDs(g.nome,pts,idx);
     });
-  } else {
-    const dirs = [...new Map(acumAllData.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()].map(([id,n])=>({id,nome:n}));
-    return dirs.map((d,idx) => {
+  }else{
+    const dirs=[...new Map(acumAllData.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()].map(([id,n])=>({id,nome:n}));
+    return dirs.map((d,idx)=>{
       let soma=0,count=0;
-      const pts = meses.map(m => {
-        const ls = acumAllData.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
-        if(acumMode){ if(ls.length){soma+=ls.reduce((s,l)=>s+(l.indice_prevencao||0),0)/ls.length;count++;} return count>0?parseFloat((soma/count).toFixed(2)):null; }
+      const pts=meses.map(m=>{
+        const ls=acumAllData.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
+        if(acumMode){if(ls.length){soma+=ls.reduce((s,l)=>s+(l.indice_prevencao||0),0)/ls.length;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
         if(!ls.length)return null;
         return parseFloat((ls.reduce((s,l)=>s+(l.indice_prevencao||0),0)/ls.length).toFixed(2));
       });
-      return mkDs(d.nome, pts, idx);
+      return mkDs(d.nome,pts,idx);
     });
   }
 }
 
-const _refAcum=[null], _refMensal=[null];
+const _refAcum=[null],_refMensal=[null];
 
-function criarChart(canvasId, ref, tipo, vizType, acumMode) {
-  const canvas = document.getElementById(canvasId);
-  if(!canvas) return;
-  const safraId = document.getElementById('acum-safra')?.value;
-  const safra   = safrasData.find(s=>s.id==safraId);
-  if(!acumAllData.length||!safra) return;
-  const meses    = getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
-  const labels   = meses.map(m=>m.nome);
-  const datasets = buildAcumDatasets(meses, tipo, vizType, acumMode);
-  const isBar    = vizType==='bar';
+function criarChart(canvasId,ref,tipo,vizType,acumMode){
+  const canvas=document.getElementById(canvasId);if(!canvas)return;
+  const safraId=document.getElementById('acum-safra')?.value;
+  const safra=safrasData.find(s=>s.id==safraId);
+  if(!acumAllData.length||!safra)return;
+  const meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+  const labels=meses.map(m=>m.nome);
+  const datasets=buildAcumDatasets(meses,tipo,vizType,acumMode);
+  const isBar=vizType==='bar';
   if(ref[0]){ref[0].destroy();ref[0]=null;}
-  ref[0] = new Chart(canvas, {
-    type: vizType,
-    data: { labels, datasets },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      interaction:{ mode:'index', intersect:false },
+  ref[0]=new Chart(canvas,{
+    type:vizType,data:{labels,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
       plugins:{
-        legend:{ position:'bottom', labels:{font:{size:11},padding:14,usePointStyle:true,boxWidth:10} },
-        tooltip:{ callbacks:{ label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—') } }
+        legend:{position:'bottom',labels:{font:{size:11},padding:14,usePointStyle:true,boxWidth:10}},
+        tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
       },
       scales:{
-        x:{ grid:{color:'#e8f0e8'}, ticks:{font:{size:11}} },
-        y:{ min:0, max:100, grid:{color:'#e8f0e8'}, ticks:{font:{size:11},callback:v=>v.toFixed(0)} }
+        x:{grid:{color:'#e8f0e8'},ticks:{font:{size:11}}},
+        y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:11},callback:v=>v.toFixed(0)}}
       }
     },
-    plugins: isBar ? [refLinesPlugin, dataLabelsPlugin] : [refLinesPlugin]
+    plugins:isBar?[refLinesPlugin,dataLabelsPlugin]:[refLinesPlugin]
   });
 }
 
-function renderAcumChart() {
-  const tipo    = document.getElementById('acum-chart-tipo')?.value  || 'gerencia';
-  const vizType = document.getElementById('acum-chart-viz')?.value   || 'bar';
-  criarChart('acum-chart', _refAcum, tipo, vizType, true);
+function renderAcumChart(){
+  const tipo=document.getElementById('acum-chart-tipo')?.value||'gerencia';
+  const vizType=document.getElementById('acum-chart-viz')?.value||'bar';
+  criarChart('acum-chart',_refAcum,tipo,vizType,true);
 }
 
-function renderAcumChartMensal() {
-  const tipo    = document.getElementById('acum-chart-mes-tipo')?.value || 'gerencia';
-  const vizType = document.getElementById('acum-chart-mes-viz')?.value  || 'bar';
-  criarChart('acum-chart-mensal', _refMensal, tipo, vizType, false);
+function renderAcumChartMensal(){
+  const tipo=document.getElementById('acum-chart-mes-tipo')?.value||'gerencia';
+  const vizType=document.getElementById('acum-chart-mes-viz')?.value||'bar';
+  criarChart('acum-chart-mensal',_refMensal,tipo,vizType,false);
 }
 
 
@@ -1152,6 +1134,9 @@ async function onGerenciaChange(){
 
 // ── GESTÃO DE EVENTOS (ACIDENTES/INCIDENTES) ──────────────────
 let _eventos = []; // [{id, tipo:'acidente'|'incidente', classe:'iap'|'asa'|'aca'|'fatalidade'}]
+let _cachedIndsGer = []; // cache dos indicadores carregados para evitar queries a cada keypress
+let _cachedGerId = null;
+let _cachedSafraId = null;
 let _cachedIndsGer = []; // cache dos indicadores carregados para evitar queries a cada keypress
 let _cachedGerId = null;
 let _cachedSafraId = null;
@@ -1580,34 +1565,35 @@ async function salvarLancamento(){
   if(!gerId||!mesLancar||!uniId){alert('Preencha Safra, Mês e Gerência.');return;}
 
   const btn=document.getElementById('btn-salvar');
-  if(btn){btn.disabled=true;btn.textContent='Verificando...';}
+  const setBtn=(txt,dis=true)=>{if(btn){btn.textContent=txt;btn.disabled=dis;}};
+  setBtn('Verificando...');
 
-  // Garante sessão válida antes de qualquer query (evita falha silenciosa por token expirado)
-  try {
-    const { data:{ session }, error:se } = await sb.auth.getSession();
-    if(se || !session) {
-      // Tenta refresh
-      const { error:re } = await sb.auth.refreshSession();
-      if(re) {
-        alert('⚠️ Sua sessão expirou. Faça login novamente.');
-        if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
-        sair();
-        return;
-      }
+  // Refresh de sessão antes de qualquer query
+  try{
+    const{data:{session},error:se}=await sb.auth.getSession();
+    if(se||!session){
+      const{error:re}=await sb.auth.refreshSession();
+      if(re){alert('⚠️ Sessão expirada. Faça login novamente.');setBtn('✓ Salvar Lançamento',false);sair();return;}
     }
-  } catch(e) { console.warn('Erro ao verificar sessão:', e); }
+  }catch(e){console.warn('Sessão:',e);}
 
-  // Trava: verifica se já existe lançamento para esta gerência/mês
-  const{data:existing}=await sb.from('lancamentos')
-    .select('id').eq('gerencia_id',gerId)
-    .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
-    .maybeSingle();
-  if(existing && !window._editandoLancamento){
-    alert('⚠️ Já existe um lançamento para esta gerência em '+mesLancar+'.\n\nPara editar, use o botão "✏️ Editar" no Histórico.');
-    if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
-    return;
+  // Verificação de duplicata com timeout de 8s
+  try{
+    const checkP=sb.from('lancamentos').select('id').eq('gerencia_id',gerId)
+      .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`).maybeSingle();
+    const timeoutP=new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),8000));
+    const{data:existing}=await Promise.race([checkP,timeoutP]);
+    if(existing&&!window._editandoLancamento){
+      alert('⚠️ Já existe um lançamento para esta gerência em '+mesLancar+'.\n\nPara editar, use o botão "✏️ Editar" no Histórico.');
+      setBtn('✓ Salvar Lançamento',false);return;
+    }
+  }catch(e){
+    if(e.message==='timeout'){
+      const ok=confirm('⚠️ A verificação demorou muito (sessão pode ter expirado).\nDeseja tentar salvar mesmo assim?');
+      if(!ok){setBtn('✓ Salvar Lançamento',false);return;}
+    }else{console.warn('Erro na verificação:',e);}
   }
-  if(btn)btn.textContent='Salvando...';
+  setBtn('Salvando...');
 
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
@@ -1756,11 +1742,15 @@ async function salvarLancamento(){
   // Atualiza o dashboard para o mesmo período que foi lançado
   const dpEl2=document.getElementById('dash-periodo');
   if(dpEl2&&mesLancar) dpEl2.value=mesLancar;
+  // Atualiza o dashboard para o mesmo período que foi lançado
+  const dpEl2=document.getElementById('dash-periodo');
+  if(dpEl2&&mesLancar) dpEl2.value=mesLancar;
   dashData=null;carregarDashboard();
 }
 
 function limparForm(){
   window._editandoLancamento = false;
+  _cachedGerId=null; _cachedSafraId=null; _cachedIndsGer=[];
   _cachedGerId=null; _cachedSafraId=null; _cachedIndsGer=[];
   if(usuario.perfil!=='gerencia'){const sd=document.getElementById('sel-diretoria');if(sd)sd.value='';const sg=document.getElementById('sel-gerencia');if(sg)sg.innerHTML='<option value="">— Selecione —</option>';}
   ['nota-auditoria','obs-auditoria'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
@@ -1942,64 +1932,46 @@ async function renderIndicadores(){
   await carregarIndicadores();
   const el=document.getElementById('ind-lista');if(!el)return;
   const BLOCOS_ORD=['Ferramentas de Prevenção', 'Tratamento de Desvios, Incidentes e Ocorrências', 'Requisito Legal', 'Emergência', 'Comitês Operacionais', 'Inspeções e Auditorias', 'Meio Ambiente', 'Outros'];
-  const ICONS={'Ferramentas de Prevenção': '🛡️', 'Tratamento de Desvios, Incidentes e Ocorrências': '⚠️', 'Requisito Legal': '⚖️', 'Emergência': '🚨', 'Comitês Operacionais': '👥', 'Inspeções e Auditorias': '🔍', 'Meio Ambiente': '🌿', 'Outros': '📋'};
-  // Agrupar por bloco
+  const ICONS_RI={'Ferramentas de Prevenção': '🛡️', 'Tratamento de Desvios, Incidentes e Ocorrências': '⚠️', 'Requisito Legal': '⚖️', 'Emergência': '🚨', 'Comitês Operacionais': '👥', 'Inspeções e Auditorias': '🔍', 'Meio Ambiente': '🌿', 'Outros': '📋'};
   const grupos={};
-  indicadores.forEach(ind=>{
-    const b=ind.bloco||'Outros';
-    if(!grupos[b])grupos[b]=[];
-    grupos[b].push(ind);
-  });
+  indicadores.forEach(ind=>{const b=ind.bloco||'Outros';if(!grupos[b])grupos[b]=[];grupos[b].push(ind);});
   let html='';
   BLOCOS_ORD.forEach(bloco=>{
-    const inds=grupos[bloco];
-    if(!inds||!inds.length)return;
-    const icon=ICONS[bloco]||'📋';
-    html+=`<div style="margin-bottom:20px">`;
-    html+=`<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:8px 8px 0 0">`;
-    html+=`<span style="font-size:16px">${icon}</span>`;
-    html+=`<span style="font-weight:700;color:#fff;font-size:13px;letter-spacing:.5px">${bloco.toUpperCase()}</span>`;
-    html+=`<span style="margin-left:auto;background:rgba(255,255,255,.2);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">${inds.length} indicador${inds.length>1?'es':''}</span>`;
-    html+=`</div>`;
-    html+=`<table style="width:100%;border-collapse:collapse;border:1px solid #e0f0e8;border-top:none;border-radius:0 0 8px 8px;overflow:hidden"><thead><tr>`;
-    html+=`<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:'DM Mono',monospace;text-align:left">#</th>`;
-    html+=`<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:'DM Mono',monospace;text-align:left">Indicador</th>`;
-    html+=`<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:'DM Mono',monospace;text-align:left">Tipo</th>`;
-    html+=`<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:'DM Mono',monospace;text-align:left">Fonte</th>`;
-    html+=`<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:'DM Mono',monospace;text-align:left">Ações</th>`;
-    html+=`</tr></thead><tbody>`;
+    const inds=grupos[bloco];if(!inds||!inds.length)return;
+    const icon=ICONS_RI[bloco]||'📋';
+    html+='<div style="margin-bottom:20px">';
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:8px 8px 0 0">';
+    html+='<span style="font-size:16px">'+icon+'</span>';
+    html+='<span style="font-weight:700;color:#fff;font-size:13px;letter-spacing:.5px">'+bloco.toUpperCase()+'</span>';
+    html+='<span style="margin-left:auto;background:rgba(255,255,255,.2);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">'+inds.length+' indicador'+(inds.length>1?'es':'')+'</span>';
+    html+='</div>';
+    html+='<table style="width:100%;border-collapse:collapse;border:1px solid #e0f0e8;border-top:none"><thead><tr>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">#</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Indicador</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Tipo</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Fonte</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Ações</th>';
+    html+='</tr></thead><tbody>';
     inds.forEach((ind,i)=>{
       const tipo=ind.tipo==='previsto_realizado'?'Prev×Real':ind.tipo==='nota'?'Nota':'Sim/Não';
-      html+=`<tr style="border-bottom:1px solid #e0f0e8">`;
-      html+=`<td style="padding:8px 12px;font-size:12px;color:var(--muted);font-family:'DM Mono',monospace">${i+1}</td>`;
-      html+=`<td style="padding:8px 12px;font-size:13px"><b>${ind.nome}</b></td>`;
-      html+=`<td style="padding:8px 12px;font-size:12px;color:var(--muted)">${tipo}</td>`;
-      html+=`<td style="padding:8px 12px;font-size:12px;color:var(--muted)">${ind.fonte||'—'}</td>`;
-      html+=`<td style="padding:8px 12px"><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirEditInd(${ind.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarIndicador(${ind.id})">✕</button></div></td>`;
-      html+=`</tr>`;
+      html+='<tr style="border-bottom:1px solid #e0f0e8">';
+      html+='<td style="padding:8px 12px;font-size:12px;color:var(--muted);font-family:DM Mono,monospace">'+(i+1)+'</td>';
+      html+='<td style="padding:8px 12px;font-size:13px"><b>'+ind.nome+'</b></td>';
+      html+='<td style="padding:8px 12px;font-size:12px;color:var(--muted)">'+tipo+'</td>';
+      html+='<td style="padding:8px 12px;font-size:12px;color:var(--muted)">'+(ind.fonte||'—')+'</td>';
+      html+='<td style="padding:8px 12px"><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirEditInd('+ind.id+')">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarIndicador('+ind.id+')">✕</button></div></td>';
+      html+='</tr>';
     });
-    html+=`</tbody></table></div>`;
+    html+='</tbody></table></div>';
   });
-  // Indicadores sem bloco ou bloco não listado
-  const semBloco=indicadores.filter(ind=>!ind.bloco||!BLOCOS_ORD.includes(ind.bloco));
-  if(semBloco.length){
-    html+=`<div style="margin-bottom:20px"><div style="padding:10px 16px;background:#888;border-radius:8px 8px 0 0"><span style="font-weight:700;color:#fff;font-size:13px">📋 SEM BLOCO DEFINIDO</span></div>`;
-    html+=`<table style="width:100%;border-collapse:collapse;border:1px solid #e0e0e0"><tbody>`;
-    semBloco.forEach((ind,i)=>{
-      const tipo=ind.tipo==='previsto_realizado'?'Prev×Real':ind.tipo==='nota'?'Nota':'Sim/Não';
-      html+=`<tr style="border-bottom:1px solid #e0e0e0"><td style="padding:8px 12px;font-size:12px;color:var(--muted)">${i+1}</td><td style="padding:8px 12px"><b>${ind.nome}</b></td><td style="padding:8px 12px;font-size:12px;color:var(--muted)">${tipo}</td><td style="padding:8px 12px;font-size:12px;color:var(--muted)">${ind.fonte||'—'}</td><td style="padding:8px 12px"><div class="flex-row"><button class="btn btn-secondary btn-sm" onclick="abrirEditInd(${ind.id})">✏️ Editar</button><button class="btn btn-danger btn-sm" onclick="desativarIndicador(${ind.id})">✕</button></div></td></tr>`;
-    });
-    html+=`</tbody></table></div>`;
-  }
   if(!html)html='<div class="loading">Nenhum indicador cadastrado.</div>';
   el.innerHTML=html;
 }
 async function salvarIndicador(){
-  const nome=document.getElementById('ind-nome')?.value.trim();
-  const tipo=document.getElementById('ind-tipo')?.value;
+  const nome=document.getElementById('ind-nome')?.value.trim();const tipo=document.getElementById('ind-tipo')?.value;
   const fonte=document.getElementById('ind-fonte')?.value.trim()||'';
-  const bloco=document.getElementById('ind-bloco')?.value||'Outros';
   if(!nome){alert('Informe o nome do indicador.');return;}
+  const bloco=document.getElementById('ind-bloco')?.value||'Outros';
   const{error}=await sb.from('indicadores').insert({nome,tipo,fonte,bloco,peso:0});
   if(error){alert('Erro: '+error.message);return;}
   ['ind-nome','ind-fonte'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
@@ -2016,8 +1988,8 @@ async function atualizarIndicador(){
   const id=parseInt(document.getElementById('edit-ind-id').value);
   const nome=document.getElementById('edit-ind-nome').value.trim();const tipo=document.getElementById('edit-ind-tipo').value;
   const fonte=document.getElementById('edit-ind-fonte').value.trim();
-  const bloco=document.getElementById('edit-ind-bloco')?.value||'Outros';
-  const{error}=await sb.from('indicadores').update({nome,tipo,fonte,bloco}).eq('id',id);
+  const bloco2=document.getElementById('edit-ind-bloco')?.value||'Outros';
+  const{error}=await sb.from('indicadores').update({nome,tipo,fonte,bloco:bloco2}).eq('id',id);
   if(error){alert('Erro: '+error.message);return;}
   fecharModal('modal-ind');await carregarIndicadores();renderIndicadores();
 }
@@ -2055,16 +2027,16 @@ async function carregarModalIG(){
   BLOCOS_IG.forEach(bloco=>{
     const inds=grupos_ig[bloco];if(!inds||!inds.length)return;
     const icon=ICONS_IG[bloco]||'📋';
-    rows+=`<tr><td colspan="4" style="padding:8px 12px;background:#07583C"><span style="color:#B3DD64;font-weight:700;font-size:12px">${icon} ${bloco.toUpperCase()}</span></td></tr>`;
+    rows+='<tr><td colspan="4" style="padding:8px 12px;background:#07583C"><span style="color:#B3DD64;font-weight:700;font-size:12px">'+icon+' '+bloco.toUpperCase()+'</span></td></tr>';
     inds.forEach(ind=>{
-      const c=cfgMap[ind.id]||{peso:ind.peso||0,ativo:false};
+      const cfg=cfgMap[ind.id]||{peso:ind.peso||0,ativo:false};
       const tipoLabel=ind.tipo==='previsto_realizado'?'Prev×Real':ind.tipo==='nota'?'Nota':'Sim/Não';
-      rows+=`<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:8px 12px;text-align:center"><input type="checkbox" id="ig-ck-${ind.id}" ${c.ativo?'checked':''} style="width:auto;accent-color:#07583C" onchange="calcSomaIG()"></td>
-        <td style="padding:8px 12px;font-size:13px"><b>${ind.nome}</b></td>
-        <td style="padding:8px 12px;font-size:12px;color:var(--muted)">${tipoLabel}</td>
-        <td style="padding:8px 12px"><input type="number" id="ig-peso-${ind.id}" value="${c.peso||0}" min="0" max="100" step="1" oninput="calcSomaIG()" style="width:70px;padding:4px 7px;font-size:12px"> <span style="font-size:11px;color:var(--muted)">%</span></td>
-      </tr>`;
+      rows+='<tr style="border-bottom:1px solid var(--border)">';
+      rows+='<td style="padding:8px 12px;text-align:center"><input type="checkbox" id="ig-ck-'+ind.id+'" '+(cfg.ativo?'checked':'')+' style="width:auto;accent-color:#07583C" onchange="calcSomaIG()"></td>';
+      rows+='<td style="padding:8px 12px;font-size:13px"><b>'+ind.nome+'</b></td>';
+      rows+='<td style="padding:8px 12px;font-size:12px;color:var(--muted)">'+tipoLabel+'</td>';
+      rows+='<td style="padding:8px 12px"><input type="number" id="ig-peso-'+ind.id+'" value="'+(cfg.peso||0)+'" min="0" max="100" step="1" oninput="calcSomaIG()" style="width:70px;padding:4px 7px;font-size:12px"> <span style="font-size:11px;color:var(--muted)">%</span></td>';
+      rows+='</tr>';
     });
   });
   if(lista)lista.innerHTML=`<table style="width:100%;border-collapse:collapse">
@@ -2516,58 +2488,39 @@ document.addEventListener('DOMContentLoaded',init);
 // Ping a cada 90s: mantém token e conexão vivos
 setInterval(async()=>{
   try{
-    const { data:{ session } } = await sb.auth.getSession();
-    // Se token expira em menos de 5 minutos, faz refresh preventivo
+    const{data:{session}}=await sb.auth.getSession();
     if(session){
-      const expiresAt = session.expires_at * 1000;
-      const diffMs = expiresAt - Date.now();
-      if(diffMs < 5 * 60 * 1000) {
-        console.log('Token expirando em breve, renovando...');
-        await sb.auth.refreshSession();
-      }
+      const diffMs=(session.expires_at*1000)-Date.now();
+      if(diffMs<5*60*1000){console.log('Token expirando, renovando...');await sb.auth.refreshSession();}
     }
     await sb.from('config').select('chave').limit(1);
   }catch(e){console.warn('Ping falhou:',e);}
 },90*1000);
 
-// ── Wrapper seguro para queries Supabase com retry de sessão ──
-async function sbSafe(queryFn) {
-  try {
-    const result = await queryFn();
-    // Se erro de autenticação, tenta refresh e repete uma vez
-    if(result.error && (result.error.message?.includes('JWT') || result.error.message?.includes('token') || result.error.status === 401)) {
-      console.warn('Token expirado, tentando refresh...');
+// Wrapper com retry de sessão
+async function sbSafe(queryFn){
+  try{
+    const result=await queryFn();
+    if(result.error&&(result.error.message?.includes('JWT')||result.error.message?.includes('token')||result.error.status===401)){
+      console.warn('Token expirado, renovando...');
       await sb.auth.refreshSession();
       return await queryFn();
     }
     return result;
-  } catch(e) {
-    console.error('Erro na query:', e);
-    return { data: null, error: e };
-  }
+  }catch(e){console.error('Erro na query:',e);return{data:null,error:e};}
 }
 
-// ── Wake Lock: impede a tela de apagar/bloquear ───────────────
-let _wakeLock = null;
-async function ativarWakeLock() {
-  if(!('wakeLock' in navigator)) return; // browser não suporta
-  try {
-    _wakeLock = await navigator.wakeLock.request('screen');
-    console.log('Wake Lock ativo');
-    _wakeLock.addEventListener('release', () => {
-      console.log('Wake Lock liberado — tentando reativar...');
-      setTimeout(ativarWakeLock, 2000);
-    });
-  } catch(e) {
-    console.warn('Wake Lock falhou:', e.message);
-  }
+// Wake Lock: impede tela de apagar
+let _wakeLock=null;
+async function ativarWakeLock(){
+  if(!('wakeLock' in navigator))return;
+  try{
+    _wakeLock=await navigator.wakeLock.request('screen');
+    _wakeLock.addEventListener('release',()=>setTimeout(ativarWakeLock,2000));
+  }catch(e){console.warn('Wake Lock:',e.message);}
 }
-// Reativa quando a aba voltar ao foco (ex: após alt+tab)
-document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState === 'visible') ativarWakeLock();
-});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();});
 ativarWakeLock();
-</script>
 
 <!-- PÁGINA DE IMPRESSÃO -->
 <div id="print-overlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:500;overflow-y:auto;padding:30px">

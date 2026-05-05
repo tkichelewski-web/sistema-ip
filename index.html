@@ -920,11 +920,12 @@ const dataLabelsPlugin = {
     chart.data.datasets.forEach((ds,i)=>{
       const meta=chart.getDatasetMeta(i);
       if(meta.hidden)return;
+      const corTexto=ds._corTexto||'#fff';
       meta.data.forEach((bar,j)=>{
         const val=ds.data[j];if(val==null)return;
         const{x,y:barY,base}=bar;
         const barH=Math.abs(base-barY);if(barH<20)return;
-        ctx.save();ctx.fillStyle='#fff';ctx.font='bold 12px Open Sans,sans-serif';
+        ctx.save();ctx.fillStyle=corTexto;ctx.font='bold 12px Open Sans,sans-serif';
         ctx.textAlign='center';ctx.textBaseline='middle';
         ctx.fillText(val.toFixed(1),x,(barY+base)/2);ctx.restore();
       });
@@ -932,36 +933,95 @@ const dataLabelsPlugin = {
   }
 };
 
+function uniCorChart(uniNome) {
+  // Cor da barra baseada na unidade
+  if(!uniNome) return '#07583C';
+  const n = uniNome.toUpperCase();
+  if(n.includes('JB')) return '#07583C';
+  if(n.includes('PB')) return '#B3DD64';
+  // outras unidades: usa VERDES sequencial
+  return VERDES[2];
+}
+
+function uniLabelTexto(uniNome) {
+  // Cor do texto do rótulo — PB tem fundo claro, texto escuro
+  if(!uniNome) return '#fff';
+  return uniNome.toUpperCase().includes('PB') ? '#07583C' : '#fff';
+}
+
+function calcIPLanc(l) {
+  if(!l) return null;
+  const wPG  = Number(config?.peso_gerencia)  || 0.5;
+  const wMD  = Number(config?.peso_diretoria) || 0.2;
+  const wAUD = Number(config?.peso_auditoria) || 0.3;
+  const pg   = l.pontuacao_gerencia || 0;
+  const md   = l.media_diretoria != null ? l.media_diretoria : pg;
+  const aud  = l.nota_auditoria   || 0;
+  const aj   = l.ajuste_pontos    || 0;
+  return Math.max(0, Math.min(100, pg*wPG + md*wMD + aud*wAUD + aj));
+}
+
 function buildAcumDatasets(meses,tipo,vizType,acumMode){
   const isBar=vizType==='bar';
-  function mkDs(nome,pts,idx){
-    const cor=VERDES[idx%VERDES.length];
-    return{label:nome||'—',data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,
-      borderWidth:isBar?0:2,pointRadius:isBar?0:5,pointHoverRadius:isBar?0:7,
-      borderRadius:isBar?5:0,tension:0.3,spanGaps:acumMode};
+
+  function mkDs(label, pts, cor, corTexto){
+    return {
+      label: label||'—',
+      data: pts,
+      backgroundColor: isBar ? cor : cor+'22',
+      borderColor: cor,
+      borderWidth: isBar ? 0 : 2,
+      pointRadius: isBar ? 0 : 5,
+      pointHoverRadius: isBar ? 0 : 7,
+      borderRadius: isBar ? 5 : 0,
+      tension: 0.3,
+      spanGaps: acumMode,
+      _corTexto: corTexto || '#fff',  // usado pelo plugin de rótulos
+    };
   }
+
   if(tipo==='gerencia'){
-    const gers=[...new Map(acumAllData.map(l=>[l.gerencia_id,{id:l.gerencia_id,nome:l.gerencias?.nome}])).values()];
-    return gers.map((g,idx)=>{
+    // Agrupa por gerencia_id para separar homônimas de unidades diferentes
+    const gersMap=new Map();
+    acumAllData.forEach(l=>{
+      if(!gersMap.has(l.gerencia_id))
+        gersMap.set(l.gerencia_id,{
+          id:   l.gerencia_id,
+          nome: l.gerencias?.nome             || '—',
+          uni:  l.gerencias?.unidades?.nome   || '',
+        });
+    });
+    const gers=[...gersMap.values()];
+
+    return gers.map(g=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
         const l=acumAllData.find(x=>x.gerencia_id===g.id&&x.mes===m.val);
-        if(acumMode){if(l){soma+=l.indice_prevencao||0;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
-        return l?parseFloat((l.indice_prevencao||0).toFixed(2)):null;
+        const ip=calcIPLanc(l);
+        if(acumMode){if(ip!=null){soma+=ip;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
+        return ip!=null?parseFloat(ip.toFixed(2)):null;
       });
-      return mkDs(g.nome,pts,idx);
+      // Label com unidade: "Suprimentos JB" ou "Suprimentos PB"
+      const label = g.uni ? g.nome+' '+g.uni : g.nome;
+      const cor   = uniCorChart(g.uni);
+      const corTx = uniLabelTexto(g.uni);
+      return mkDs(label, pts, cor, corTx);
     });
+
   }else{
     const dirs=[...new Map(acumAllData.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()].map(([id,n])=>({id,nome:n}));
     return dirs.map((d,idx)=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
         const ls=acumAllData.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
-        if(acumMode){if(ls.length){soma+=ls.reduce((s,l)=>s+(l.indice_prevencao||0),0)/ls.length;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
-        if(!ls.length)return null;
-        return parseFloat((ls.reduce((s,l)=>s+(l.indice_prevencao||0),0)/ls.length).toFixed(2));
+        if(!ls.length) return null;
+        const ips=ls.map(l=>calcIPLanc(l)).filter(v=>v!=null);
+        const media=ips.length?ips.reduce((s,v)=>s+v,0)/ips.length:null;
+        if(acumMode){if(media!=null){soma+=media;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
+        return media!=null?parseFloat(media.toFixed(2)):null;
       });
-      return mkDs(d.nome,pts,idx);
+      const cor=VERDES[idx%VERDES.length];
+      return mkDs(d.nome, pts, cor, '#fff');
     });
   }
 }

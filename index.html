@@ -1776,28 +1776,31 @@ async function salvarLancamento(){
   const ger=estrutura.gerencias.find(g=>g.id===gerId);
 
   // ── MÉDIA DA DIRETORIA ──────────────────────────────────────
-  // Usa TODAS as gerências da diretoria (inclusive as que não lançaram = 0)
+  // Tenta buscar — se falhar, salva sem média (será recalculada depois)
   let mediaDir=null;
   if(ger){
     const gersDir=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id);
-    const totalGers=gersDir.length; // denominador fixo = total de gerências
+    const totalGers=gersDir.length;
     const gersIds=gersDir.map(g=>g.id);
-    // Busca lançamentos existentes
-    setBtn('Calculando média...');
-    const{data:lancsDir}=await withTimeout(
-      sb.from('lancamentos').select('pontuacao_gerencia,gerencia_id')
-        .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-        .in('gerencia_id',gersIds),
-      10000,'media_diretoria'
-    );
+    try {
+      setBtn('Calculando média...');
+      const{data:lancsDir}=await withTimeout(
+        sb.from('lancamentos').select('pontuacao_gerencia,gerencia_id')
+          .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+          .in('gerencia_id',gersIds),
+        12000,'media_diretoria'
+      );
+      const pontMap={};
+      gersDir.forEach(g=>{ pontMap[g.id]=0; });
+      (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
+      pontMap[gerId]=pg;
+      mediaDir=Object.values(pontMap).reduce((s,v)=>s+v,0)/totalGers;
+    } catch(em) {
+      // Timeout ou erro — usa só a pontuação atual como fallback
+      console.warn('Média da diretoria falhou, usando pontuação individual:', em.message);
+      mediaDir=pg; // fallback: considera só esta gerência
+    }
     setBtn('Salvando...');
-    // Monta mapa: gerencia_id → pontuacao (0 para quem não lançou)
-    const pontMap={};
-    gersDir.forEach(g=>{ pontMap[g.id]=0; }); // inicializa todas com 0
-    (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
-    pontMap[gerId]=pg; // sobrescreve com a pontuação atual
-    const soma=Object.values(pontMap).reduce((s,v)=>s+v,0);
-    mediaDir=soma/totalGers;
   }
 
   const indBase=calcIndice(pg,mediaDir,aud,0);
@@ -1878,28 +1881,33 @@ async function salvarLancamento(){
     else console.log('Itens salvos com sucesso:', itens.length);
   }
 
-  // ── RECALCULA TODAS AS GERÊNCIAS DA DIRETORIA COM A MESMA MÉDIA ──
-  if(ger&&mediaDir!=null){
-    const gersDir2=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id&&g.id!==gerId).map(g=>g.id);
-    if(gersDir2.length){
-      const{data:outrasLancs}=await sb.from('lancamentos').select('*')
-        .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
-        .in('gerencia_id',gersDir2);
-      for(const ol of (outrasLancs||[])){
-        // Recalcula IP com nova média e acumulado
-        const novoIP=calcIndice(ol.pontuacao_gerencia,mediaDir,ol.nota_auditoria||aud,ol.ajuste_pontos||0);
-        // Recalcula acumulado desta gerência
-        let novoAcum=novoIP;
-        if(mesesAnt.length){
-          const{data:prevOl}=await sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',ol.gerencia_id).eq('safra_id',safraIdLanc).in('mes',mesesAnt);
-          if(prevOl?.length){const soma=prevOl.reduce((s,l)=>s+(l.indice_prevencao||0),0)+novoIP;novoAcum=soma/(prevOl.length+1);}
+  // ── RECALCULA OUTRAS GERÊNCIAS (em background, não bloqueia o save) ──
+  try {
+    if(ger&&mediaDir!=null){
+      const gersDir2=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id&&g.id!==gerId).map(g=>g.id);
+      if(gersDir2.length){
+        const {data:outrasLancs}=await withTimeout(
+          sb.from('lancamentos').select('*').or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).in('gerencia_id',gersDir2),
+          10000,'outras_gerencias'
+        );
+        for(const ol of (outrasLancs||[])){
+          const novoIP=calcIndice(ol.pontuacao_gerencia,mediaDir,ol.nota_auditoria||aud,ol.ajuste_pontos||0);
+          let novoAcum=novoIP;
+          if(mesesAnt.length){
+            const{data:prevOl}=await withTimeout(
+              sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',ol.gerencia_id).eq('safra_id',safraIdLanc).in('mes',mesesAnt),
+              8000,'acum_outra'
+            );
+            if(prevOl?.length){const soma=prevOl.reduce((s,l)=>s+(l.indice_prevencao||0),0)+novoIP;novoAcum=soma/(prevOl.length+1);}
+          }
+          await withTimeout(
+            sb.from('lancamentos').update({media_diretoria:mediaDir,indice_prevencao:novoIP,acumulado_gerencia:novoAcum}).eq('id',ol.id),
+            8000,'update_outra'
+          );
         }
-        await sb.from('lancamentos').update({
-          media_diretoria:mediaDir,indice_prevencao:novoIP,acumulado_gerencia:novoAcum
-        }).eq('id',ol.id);
       }
     }
-  }
+  } catch(er){console.warn('Recálculo outras gerências falhou (não crítico):', er.message);}
 
   const st=getStatus(indFinal);
   // Sucesso — limpa erro se havia

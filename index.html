@@ -563,7 +563,8 @@ const sb = createClient(
   'https://umpctnchhmyvpjwxllaj.supabase.co',
   'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ',
   { auth: { persistSession:true, storageKey:'sistema-ip-auth', flowType:'implicit',
-            autoRefreshToken:true, detectSessionInUrl:true } }
+            autoRefreshToken:true, detectSessionInUrl:true,
+            storage: window.localStorage } }
 );
 
 let usuario=null, dashData=null;
@@ -1732,11 +1733,20 @@ async function salvarLancamento(){
   const setBtn=(txt,dis=true)=>{if(btn){btn.textContent=txt;btn.disabled=dis;}};
   setBtn('Salvando...');
 
-  // Refresh de sessão silencioso antes de salvar
+  // Refresh obrigatório antes de salvar — garante token válido mesmo após 30min
   try{
-    const{data:{session}}=await sb.auth.getSession();
-    if(!session) await sb.auth.refreshSession();
-  }catch(e){console.warn('Sessão:',e);}
+    const {data:rData, error:rErr} = await sb.auth.refreshSession();
+    if(rErr){
+      console.warn('refreshSession falhou:', rErr.message);
+      // Se refresh falhou, verifica se ainda tem sessão válida
+      const {data:{session}} = await sb.auth.getSession();
+      if(!session){
+        alert('⚠️ Sua sessão expirou. Salve os dados em outro lugar e faça login novamente.');
+        setBtn('✓ Salvar Lançamento', false);
+        return;
+      }
+    }
+  }catch(e){console.warn('Erro no refresh:', e);}
 
   try { // try principal — garante que o botão sempre é liberado
 
@@ -1809,7 +1819,7 @@ async function salvarLancamento(){
     if(prev?.length){const soma=prev.reduce((s,l)=>s+(l.indice_prevencao||0),0)+indFinal;acumGer=soma/(prev.length+1);}
   }
 
-  // Salva o lançamento — sem .select().single() para evitar erro PGRST116 de RLS
+  // Salva o lançamento — token renovado acima, usa upsert direto
   const payload = {
     gerencia_id:gerId, safra_id:safraIdLanc||null, mes:mesLancar, periodo:mesLancar,
     nota_auditoria:aud, obs_auditoria:_obsCompleta, tipo_acidente:_tipoAcidente, regras_salvas:regras,
@@ -2638,17 +2648,16 @@ function filtrarNaoAtingidos(){
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
 
-// Ping a cada 90s: mantém token e conexão vivos
+// Ping a cada 4 minutos: renova token proativamente sempre
 setInterval(async()=>{
   try{
-    const{data:{session}}=await sb.auth.getSession();
-    if(session){
-      const diffMs=(session.expires_at*1000)-Date.now();
-      if(diffMs<5*60*1000){console.log('Token expirando, renovando...');await sb.auth.refreshSession();}
-    }
+    // Sempre tenta refresh para garantir token válido em sessões longas
+    const {data, error} = await sb.auth.refreshSession();
+    if(error) console.warn('Refresh ping falhou:', error.message);
+    else console.log('Token renovado pelo ping');
     await sb.from('config').select('chave').limit(1);
   }catch(e){console.warn('Ping falhou:',e);}
-},90*1000);
+},4*60*1000);
 
 // Wrapper com retry de sessão
 async function sbSafe(queryFn){

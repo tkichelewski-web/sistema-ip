@@ -1738,6 +1738,8 @@ async function salvarLancamento(){
     if(!session) await sb.auth.refreshSession();
   }catch(e){console.warn('Sessão:',e);}
 
+  try { // try principal — garante que o botão sempre é liberado
+
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
     ? _cachedIndsGer
@@ -1825,7 +1827,7 @@ async function salvarLancamento(){
       ajuste_pontos:aj,indice_prevencao:indFinal,acumulado_gerencia:acumGer,
       lancado_por:usuario.id,atualizado_em:new Date().toISOString()
     },{onConflict:'gerencia_id,periodo'}).select().single();
-    if(err2){alert('Erro ao salvar: '+err2.message);if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}return;}
+    if(err2){alert('Erro ao salvar: '+err2.message);setBtn('✓ Salvar Lançamento',false);return;}
   }
 
   // Busca o ID do lançamento salvo (pode vir do upsert ou de busca direta)
@@ -1879,14 +1881,18 @@ async function salvarLancamento(){
   }
 
   const st=getStatus(indFinal);
-  alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+( mediaDir!=null?mediaDir.toFixed(1):'—'));
-  setBtn('✓ Salvar Lançamento',false);
-  window._editandoLancamento=false;
-  // Atualiza o dashboard para o mesmo período que foi lançado
-  const dpEl2=document.getElementById('dash-periodo');
-  if(dpEl2&&mesLancar) dpEl2.value=mesLancar;
-  // Atualiza o dashboard para o mesmo período que foi lançado
-  dashData=null;carregarDashboard();
+  alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+(mediaDir!=null?mediaDir.toFixed(1):'—'));
+
+  } catch(e) {
+    console.error('Erro inesperado ao salvar:', e);
+    alert('❌ Erro ao salvar: ' + (e.message||'erro desconhecido') + '\n\nTente novamente.');
+  } finally {
+    setBtn('✓ Salvar Lançamento', false);
+    window._editandoLancamento = false;
+    const dpEl2 = document.getElementById('dash-periodo');
+    if(dpEl2 && mesLancar) dpEl2.value = mesLancar;
+    dashData = null; carregarDashboard();
+  }
 }
 
 function limparForm(){

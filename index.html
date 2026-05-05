@@ -1613,29 +1613,84 @@ async function renderIndTable(){
   const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
   const tw=document.getElementById('ind-table-wrap');
   if(!gerId){if(tw)tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p>';return;}
-  // Limpa cache para forçar nova busca ao trocar de gerência/safra
-  _cachedGerId=null; _cachedSafraId=null; _cachedIndsGer=[];
-  const indsGer=await getIndsGerencia(gerId, safraId);
-  // Atualiza cache
-  _cachedIndsGer=indsGer; _cachedGerId=gerId; _cachedSafraId=safraId;
+  _cachedGerId=null;_cachedSafraId=null;_cachedIndsGer=[];
+  const indsGer=await getIndsGerencia(gerId,safraId);
+  _cachedIndsGer=indsGer;_cachedGerId=gerId;_cachedSafraId=safraId;
   if(!indsGer.length){
     if(tw)tw.innerHTML='<div class="alert alert-warn">⚠️ Nenhum indicador configurado para esta gerência nesta safra. Vá em <b>Gerências → ⚙️ Indicadores</b> para configurar.</div>';
     return;
   }
   const totalPeso=indsGer.reduce((s,i)=>s+(i.peso||0),0);
-  const aviso=totalPeso!==100?`<div class="alert alert-warn">⚠️ Soma dos pesos: <b>${totalPeso}%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>`:'';
-  if(tw)tw.innerHTML=aviso+`<div style="overflow-x:auto"><table class="ind-table"><thead><tr><th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th><th>Comentário</th></tr></thead><tbody>
-  ${indsGer.map(ind=>{
-    if(ind.tipo==='previsto_realizado')return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-blue" style="font-size:10px">Prev×Real</span></td><td class="mono">${ind.peso}%</td><td><input type="number" id="prev_${ind.id}" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td><input type="number" id="real_${ind.id}" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
-    if(ind.tipo==='nota')return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-green" style="font-size:10px">Nota</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><input type="number" id="nota_${ind.id}" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
-    return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-yellow" style="font-size:10px">Sim/Não</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><select id="bin_${ind.id}" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td></tr>`;
-  }).join('')}</tbody></table></div>`;
-  // Popula o select de filtro por indicador
+  const aviso=totalPeso!==100?'<div class="alert alert-warn">⚠️ Soma dos pesos: <b>'+totalPeso+'%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>':'';
+
+  // Blocos e ícones
+  const BLOCOS_ORD=['Ferramentas de Prevenção','Tratamento de Desvios, Incidentes e Ocorrências','Requisito Legal','Emergência','Comitês Operacionais','Inspeções e Auditorias','Meio Ambiente','Outros'];
+  const ICONS_IND={'Ferramentas de Prevenção':'🛡️','Tratamento de Desvios, Incidentes e Ocorrências':'⚠️','Requisito Legal':'⚖️','Emergência':'🚨','Comitês Operacionais':'👥','Inspeções e Auditorias':'🔍','Meio Ambiente':'🌿','Outros':'📋'};
+
+  // Agrupa indicadores por bloco
+  const grupos={};
+  indsGer.forEach(ind=>{const b=ind.bloco||'Outros';if(!grupos[b])grupos[b]=[];grupos[b].push(ind);});
+
+  function indRow(ind){
+    const tipo=ind.tipo;
+    const tipoTag=tipo==='previsto_realizado'?'<span class="badge badge-blue" style="font-size:10px">Prev×Real</span>':tipo==='nota'?'<span class="badge badge-green" style="font-size:10px">Nota</span>':'<span class="badge badge-yellow" style="font-size:10px">Sim/Não</span>';
+    const valorCols=tipo==='previsto_realizado'
+      ?'<td><input type="number" id="prev_'+ind.id+'" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+       +'<td><input type="number" id="real_'+ind.id+'" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+      :tipo==='nota'
+      ?'<td colspan="2"><input type="number" id="nota_'+ind.id+'" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td>'
+      :'<td colspan="2"><select id="bin_'+ind.id+'" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td>';
+    return '<tr data-ind-nome="'+ind.nome+'">'
+      +'<td style="padding:8px 12px"><b>'+ind.nome+'</b></td>'
+      +'<td style="padding:8px 12px">'+tipoTag+'</td>'
+      +'<td style="padding:8px 12px" class="mono">'+ind.peso+'%</td>'
+      +valorCols
+      +'<td id="pont_'+ind.id+'" class="mono" style="padding:8px 12px;color:var(--muted)">—</td>'
+      +'<td style="padding:8px 12px"><input type="text" id="coment_'+ind.id+'" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td>'
+      +'</tr>';
+  }
+
+  let html=aviso;
+  BLOCOS_ORD.forEach(bloco=>{
+    const inds=grupos[bloco];if(!inds||!inds.length)return;
+    const icon=ICONS_IND[bloco]||'📋';
+    const pesoBloco=inds.reduce((s,i)=>s+(i.peso||0),0);
+    html+='<div style="margin-bottom:16px">';
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:7px 7px 0 0">';
+    html+='<span style="font-size:14px">'+icon+'</span>';
+    html+='<span style="font-weight:700;color:#fff;font-size:12px;letter-spacing:.5px">'+bloco.toUpperCase()+'</span>';
+    html+='<span style="margin-left:auto;background:rgba(255,255,255,.18);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">'+pesoBloco+'%</span>';
+    html+='</div>';
+    html+='<table class="ind-table" style="width:100%;border-collapse:collapse;border:1px solid #e0f0e8;border-top:none"><thead><tr>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Indicador</th>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Tipo</th>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Peso</th>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Previsto</th>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Realizado/Nota</th>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Pont.</th>';
+    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Comentário</th>';
+    html+='</tr></thead><tbody>';
+    html+=inds.map(indRow).join('');
+    html+='</tbody></table></div>';
+  });
+
+  // Indicadores sem bloco definido
+  const semBloco=indsGer.filter(ind=>!ind.bloco||!BLOCOS_ORD.includes(ind.bloco));
+  if(semBloco.length){
+    html+='<div style="margin-bottom:16px"><div style="padding:8px 14px;background:#888;border-radius:7px 7px 0 0"><span style="font-weight:700;color:#fff;font-size:12px">📋 SEM BLOCO</span></div>';
+    html+='<table class="ind-table" style="width:100%;border-collapse:collapse;border:1px solid #ddd;border-top:none"><tbody>';
+    html+=semBloco.map(indRow).join('');
+    html+='</tbody></table></div>';
+  }
+
+  if(tw)tw.innerHTML=html;
+
+  // Popula filtro de indicador
   const filtroSel=document.getElementById('filtro-indicador');
   if(filtroSel){
-    const valorAtual=filtroSel.value;
-    filtroSel.innerHTML='<option value="">Todos os indicadores</option>'+indsGer.map(ind=>`<option value="${ind.nome}">${ind.nome}</option>`).join('');
-    if(valorAtual&&filtroSel.querySelector(`option[value="${valorAtual}"]`))filtroSel.value=valorAtual;
+    const va=filtroSel.value;
+    filtroSel.innerHTML='<option value="">Todos os indicadores</option>'+indsGer.map(ind=>'<option value="'+ind.nome+'">'+ind.nome+'</option>').join('');
+    if(va&&filtroSel.querySelector('option[value="'+va+'"]'))filtroSel.value=va;
   }
 }
 
@@ -1714,21 +1769,25 @@ async function salvarLancamento(){
     }
   }catch(e){console.warn('Sessão:',e);}
 
-  // Verificação de duplicata com timeout de 8s
+  // Verificação de duplicata — usa limit(1) em vez de maybeSingle para evitar erro PGRST116
   try{
-    const checkP=sb.from('lancamentos').select('id').eq('gerencia_id',gerId)
-      .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`).maybeSingle();
     const timeoutP=new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),8000));
-    const{data:existing}=await Promise.race([checkP,timeoutP]);
+    const checkP=sb.from('lancamentos').select('id').eq('gerencia_id',gerId)
+      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1);
+    const result=await Promise.race([checkP,timeoutP]);
+    const existing=result.data&&result.data.length>0?result.data[0]:null;
     if(existing&&!window._editandoLancamento){
       alert('⚠️ Já existe um lançamento para esta gerência em '+mesLancar+'.\n\nPara editar, use o botão "✏️ Editar" no Histórico.');
       setBtn('✓ Salvar Lançamento',false);return;
     }
   }catch(e){
     if(e.message==='timeout'){
-      const ok=confirm('⚠️ A verificação demorou muito (sessão pode ter expirado).\nDeseja tentar salvar mesmo assim?');
+      const ok=confirm('⚠️ A verificação demorou muito.\nDeseja tentar salvar mesmo assim?');
       if(!ok){setBtn('✓ Salvar Lançamento',false);return;}
-    }else{console.warn('Erro na verificação:',e);}
+    }else{
+      console.warn('Erro na verificação:',e);
+      // Não bloqueia — continua tentando salvar
+    }
   }
   setBtn('Salvando...');
 
@@ -1874,7 +1933,7 @@ async function salvarLancamento(){
 
   const st=getStatus(indFinal);
   alert('✅ Salvo!\n'+(ger?.nome||'')+': IP='+indFinal.toFixed(1)+' — '+st.label+'\nMédia Diretoria: '+( mediaDir!=null?mediaDir.toFixed(1):'—'));
-  if(btn){btn.disabled=false;btn.textContent='✓ Salvar Lançamento';}
+  setBtn('✓ Salvar Lançamento',false);
   window._editandoLancamento=false;
   // Atualiza o dashboard para o mesmo período que foi lançado
   const dpEl2=document.getElementById('dash-periodo');
@@ -2114,17 +2173,24 @@ async function salvarIndicador(){
 }
 function abrirEditInd(id){
   const ind=indicadores.find(i=>i.id===id);if(!ind)return;
-  document.getElementById('edit-ind-id').value=id;document.getElementById('edit-ind-nome').value=ind.nome;
-  document.getElementById('edit-ind-tipo').value=ind.tipo;document.getElementById('edit-ind-fonte').value=ind.fonte||'';
+  document.getElementById('edit-ind-id').value=id;
+  document.getElementById('edit-ind-nome').value=ind.nome;
+  document.getElementById('edit-ind-tipo').value=ind.tipo;
+  document.getElementById('edit-ind-fonte').value=ind.fonte||'';
+  const ep=document.getElementById('edit-ind-peso');if(ep)ep.value=ind.peso||0;
+  const ebase=document.getElementById('edit-ind-base');if(ebase)ebase.checked=ind.base!==false;
   const eb=document.getElementById('edit-ind-bloco');if(eb)eb.value=ind.bloco||'Outros';
   document.getElementById('modal-ind').classList.add('show');
 }
 async function atualizarIndicador(){
   const id=parseInt(document.getElementById('edit-ind-id').value);
-  const nome=document.getElementById('edit-ind-nome').value.trim();const tipo=document.getElementById('edit-ind-tipo').value;
+  const nome=document.getElementById('edit-ind-nome').value.trim();
+  const tipo=document.getElementById('edit-ind-tipo').value;
   const fonte=document.getElementById('edit-ind-fonte').value.trim();
   const bloco2=document.getElementById('edit-ind-bloco')?.value||'Outros';
-  const{error}=await sb.from('indicadores').update({nome,tipo,fonte,bloco:bloco2}).eq('id',id);
+  const peso=parseInt(document.getElementById('edit-ind-peso')?.value)||0;
+  const base=document.getElementById('edit-ind-base')?.checked!==false;
+  const{error}=await sb.from('indicadores').update({nome,tipo,fonte,bloco:bloco2,peso,base}).eq('id',id);
   if(error){alert('Erro: '+error.message);return;}
   fecharModal('modal-ind');await carregarIndicadores();renderIndicadores();
 }

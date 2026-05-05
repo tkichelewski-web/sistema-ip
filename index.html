@@ -222,7 +222,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <select id="acum-safra" onchange="carregarAcumulado()" style="width:auto;padding:6px 10px;font-size:13px">
             <option value="">— Selecione a safra —</option>
           </select>
-          <select id="acum-dir" onchange="renderAcumTable()" style="width:auto;padding:6px 10px;font-size:12px">
+          <select id="acum-dir" onchange="renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
             <option value="">Todas as Diretorias</option>
           </select>
         </div>
@@ -982,15 +982,18 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode){
 
   if(tipo==='gerencia'){
     // Agrupa por gerencia_id para separar homônimas de unidades diferentes
+    const filtDirChart=parseInt(document.getElementById('acum-dir')?.value)||0;
     const gersMap=new Map();
-    acumAllData.forEach(l=>{
-      if(!gersMap.has(l.gerencia_id))
-        gersMap.set(l.gerencia_id,{
-          id:   l.gerencia_id,
-          nome: l.gerencias?.nome             || '—',
-          uni:  l.gerencias?.unidades?.nome   || '',
-        });
-    });
+    acumAllData
+      .filter(l=>!filtDirChart||l.gerencias?.diretoria_id===filtDirChart)
+      .forEach(l=>{
+        if(!gersMap.has(l.gerencia_id))
+          gersMap.set(l.gerencia_id,{
+            id:   l.gerencia_id,
+            nome: l.gerencias?.nome             || '—',
+            uni:  l.gerencias?.unidades?.nome   || '',
+          });
+      });
     const gers=[...gersMap.values()];
 
     return gers.map(g=>{
@@ -1009,11 +1012,13 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode){
     });
 
   }else{
-    const dirs=[...new Map(acumAllData.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()].map(([id,n])=>({id,nome:n}));
+    const filtDirChart2=parseInt(document.getElementById('acum-dir')?.value)||0;
+    const dirsFiltered=filtDirChart2?acumAllData.filter(l=>l.gerencias?.diretoria_id===filtDirChart2):acumAllData;
+    const dirs=[...new Map(dirsFiltered.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()].map(([id,n])=>({id,nome:n}));
     return dirs.map((d,idx)=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
-        const ls=acumAllData.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
+        const ls=dirsFiltered.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
         if(!ls.length) return null;
         const ips=ls.map(l=>calcIPLanc(l)).filter(v=>v!=null);
         const media=ips.length?ips.reduce((s,v)=>s+v,0)/ips.length:null;
@@ -1573,6 +1578,7 @@ function renderDashTable(){
       <td class="mono" style="color:${ajCor};font-weight:700">${aj>=0?'+':''}${aj}</td>
       <td class="mono" style="font-weight:800;font-size:15px;color:${cor}">${idx.toFixed(1)}</td>
       <td><span class="badge ${st.cls}">${st.label}</span></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})" title="Editar lançamento" style="padding:3px 8px;font-size:11px">✏️ Editar</button></td>
     </tr>`;
 
     return mainRow+calcRow;
@@ -1581,7 +1587,7 @@ function renderDashTable(){
   if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table style="min-width:700px"><thead><tr>
     <th>Gerência</th><th>Unidade</th><th>Diretoria</th>
     <th>Pont. Ger.</th><th>Méd. Dir.</th><th>Auditoria</th>
-    <th>Ajuste</th><th>IP Final</th><th>Status</th>
+    <th>Ajuste</th><th>IP Final</th><th>Status</th><th></th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -1633,20 +1639,25 @@ async function renderIndTable(){
 
   function indRow(ind){
     const tipo=ind.tipo;
-    const tipoTag=tipo==='previsto_realizado'?'<span class="badge badge-blue" style="font-size:10px">Prev×Real</span>':tipo==='nota'?'<span class="badge badge-green" style="font-size:10px">Nota</span>':'<span class="badge badge-yellow" style="font-size:10px">Sim/Não</span>';
-    const valorCols=tipo==='previsto_realizado'
-      ?'<td><input type="number" id="prev_'+ind.id+'" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
-       +'<td><input type="number" id="real_'+ind.id+'" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+    const tipoTag=tipo==='previsto_realizado'
+      ?'<span class="badge badge-blue" style="font-size:10px">Prev×Real</span>'
       :tipo==='nota'
-      ?'<td colspan="2"><input type="number" id="nota_'+ind.id+'" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td>'
-      :'<td colspan="2"><select id="bin_'+ind.id+'" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td>';
-    return '<tr data-ind-nome="'+ind.nome+'">'
-      +'<td style="padding:8px 12px"><b>'+ind.nome+'</b></td>'
-      +'<td style="padding:8px 12px">'+tipoTag+'</td>'
-      +'<td style="padding:8px 12px" class="mono">'+ind.peso+'%</td>'
+      ?'<span class="badge badge-green" style="font-size:10px">Nota</span>'
+      :'<span class="badge badge-yellow" style="font-size:10px">Sim/Não</span>';
+    const tdS='style="padding:8px 12px;border-bottom:1px solid #e0f0e8"';
+    const valorCols=tipo==='previsto_realizado'
+      ?'<td '+tdS+'><input type="number" id="prev_'+ind.id+'" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+       +'<td '+tdS+'><input type="number" id="real_'+ind.id+'" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td>'
+      :tipo==='nota'
+      ?'<td colspan="2" '+tdS+'><input type="number" id="nota_'+ind.id+'" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td>'
+      :'<td colspan="2" '+tdS+'><select id="bin_'+ind.id+'" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td>';
+    return '<tr style="border-bottom:1px solid #e0f0e8" data-ind-nome="'+ind.nome+'">'
+      +'<td '+tdS+'><b>'+ind.nome+'</b></td>'
+      +'<td '+tdS+'>'+tipoTag+'</td>'
+      +'<td '+tdS+' class="mono">'+ind.peso+'%</td>'
       +valorCols
-      +'<td id="pont_'+ind.id+'" class="mono" style="padding:8px 12px;color:var(--muted)">—</td>'
-      +'<td style="padding:8px 12px"><input type="text" id="coment_'+ind.id+'" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td>'
+      +'<td id="pont_'+ind.id+'" class="mono" '+tdS+' style="padding:8px 12px;border-bottom:1px solid #e0f0e8;font-weight:700;color:var(--muted)">—</td>'
+      +'<td '+tdS+'><input type="text" id="coment_'+ind.id+'" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td>'
       +'</tr>';
   }
 
@@ -1655,20 +1666,24 @@ async function renderIndTable(){
     const inds=grupos[bloco];if(!inds||!inds.length)return;
     const icon=ICONS_IND[bloco]||'📋';
     const pesoBloco=inds.reduce((s,i)=>s+(i.peso||0),0);
-    html+='<div style="margin-bottom:16px">';
-    html+='<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:7px 7px 0 0">';
-    html+='<span style="font-size:14px">'+icon+'</span>';
-    html+='<span style="font-weight:700;color:#fff;font-size:12px;letter-spacing:.5px">'+bloco.toUpperCase()+'</span>';
-    html+='<span style="margin-left:auto;background:rgba(255,255,255,.18);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">'+pesoBloco+'%</span>';
+    html+='<div style="margin-bottom:20px">';
+    // Cabeçalho verde igual ao modal de indicadores
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:8px 8px 0 0">';
+    html+='<span style="font-size:16px">'+icon+'</span>';
+    html+='<span style="font-weight:700;color:#fff;font-size:13px;letter-spacing:.5px">'+bloco.toUpperCase()+'</span>';
+    html+='<span style="margin-left:auto;display:flex;gap:8px;align-items:center">';
+    html+='<span style="background:rgba(255,255,255,.18);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">Peso total: '+pesoBloco+'%</span>';
+    html+='<span style="background:rgba(255,255,255,.18);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">'+inds.length+' indicador'+(inds.length>1?'es':'')+'</span>';
+    html+='</span>';
     html+='</div>';
-    html+='<table class="ind-table" style="width:100%;border-collapse:collapse;border:1px solid #e0f0e8;border-top:none"><thead><tr>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Indicador</th>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Tipo</th>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Peso</th>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Previsto</th>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Realizado/Nota</th>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Pont.</th>';
-    html+='<th style="background:#f0f9f0;padding:7px 12px;font-size:11px;color:#07583C">Comentário</th>';
+    html+='<table class="ind-table" style="width:100%;border-collapse:collapse;border:1px solid #e0f0e8;border-top:none;border-radius:0 0 8px 8px"><thead><tr>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Indicador</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Tipo</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Peso</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Previsto</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Realizado / Nota</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Pont.</th>';
+    html+='<th style="background:#f0f9f0;padding:8px 12px;font-size:11px;color:#07583C;font-family:DM Mono,monospace;text-align:left">Comentário</th>';
     html+='</tr></thead><tbody>';
     html+=inds.map(indRow).join('');
     html+='</tbody></table></div>';

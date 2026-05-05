@@ -719,7 +719,7 @@ async function carregarAcumulado() {
   }
   renderAcumTable();
   renderAcumDirTbl();
-  setTimeout(renderAcumChart, 100);
+  setTimeout(renderAcumChart, 300);
 }
 
 function renderAcumTable() {
@@ -856,12 +856,16 @@ function renderAcumChart() {
   // Destroy previous chart instance
   if(_acumChartInstance) { _acumChartInstance.destroy(); _acumChartInstance = null; }
 
+  // Garantir que o canvas tem altura explícita (necessário quando estava escondido)
+  canvas.style.height = '320px';
+  canvas.height = 320;
+
   _acumChartInstance = new Chart(canvas, {
     type: 'line',
     data: { labels, datasets },
     options: {
       responsive: true,
-      maintainAspectRatio: true,
+      maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
@@ -1037,6 +1041,8 @@ function showTab(id) {
   if(id==='usuarios') renderUsuarios();
   if(id==='historico') carregarHistorico();
   if(id==='config') carregarConfigForm();
+  // Gráfico precisa do canvas visível para calcular dimensões
+  if(id==='acum') setTimeout(renderAcumChart, 80);
 }
 
 // ── CONFIG & DADOS ────────────────────────────────────────────

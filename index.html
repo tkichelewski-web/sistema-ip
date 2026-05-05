@@ -1739,9 +1739,11 @@ async function salvarLancamento(){
   setBtn('Salvando...');
 
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
+  setBtn('Buscando indicadores...');
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
     ? _cachedIndsGer
-    : await getIndsGerencia(gerId,safraIdLanc);
+    : await withTimeout(getIndsGerencia(gerId,safraIdLanc), 15000, 'indicadores');
+  setBtn('Salvando...');
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id,peso:ind.peso};
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
@@ -1755,7 +1757,7 @@ async function salvarLancamento(){
   // Auditoria: busca nota da unidade ou usa campo manual
   const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
   let aud=audManual;
-  if(uniId&&safraIdLanc){const nu=await getNotaAuditoria(uniId,safraIdLanc);if(nu!=null)aud=nu;}
+  if(uniId&&safraIdLanc){try{const nu=await withTimeout(getNotaAuditoria(uniId,safraIdLanc),10000,'auditoria');if(nu!=null)aud=nu;}catch(te){console.warn('Timeout auditoria, usando manual:',aud);}}
 
   const regras=parseInt(document.getElementById('regras-salvas')?.value)||0;
   const obs=document.getElementById('obs-auditoria')?.value||'';
@@ -1781,10 +1783,14 @@ async function salvarLancamento(){
     const totalGers=gersDir.length; // denominador fixo = total de gerências
     const gersIds=gersDir.map(g=>g.id);
     // Busca lançamentos existentes
-    const{data:lancsDir}=await sb.from('lancamentos')
-      .select('pontuacao_gerencia,gerencia_id')
-      .or(`mes.eq.${mesLancar},periodo.eq.${mesLancar}`)
-      .in('gerencia_id',gersIds);
+    setBtn('Calculando média...');
+    const{data:lancsDir}=await withTimeout(
+      sb.from('lancamentos').select('pontuacao_gerencia,gerencia_id')
+        .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+        .in('gerencia_id',gersIds),
+      10000,'media_diretoria'
+    );
+    setBtn('Salvando...');
     // Monta mapa: gerencia_id → pontuacao (0 para quem não lançou)
     const pontMap={};
     gersDir.forEach(g=>{ pontMap[g.id]=0; }); // inicializa todas com 0
@@ -1803,7 +1809,10 @@ async function salvarLancamento(){
   const mesesAnt=mesesOrdem.filter(m=>m<mesLancar);
   let acumGer=indFinal;
   if(mesesAnt.length){
-    const{data:prev}=await sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',gerId).eq('safra_id',safraIdLanc).in('mes',mesesAnt);
+    const{data:prev}=await withTimeout(
+      sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',gerId).eq('safra_id',safraIdLanc).in('mes',mesesAnt),
+      10000,'acumulado'
+    );
     if(prev?.length){const soma=prev.reduce((s,l)=>s+(l.indice_prevencao||0),0)+indFinal;acumGer=soma/(prev.length+1);}
   }
 
@@ -1817,26 +1826,38 @@ async function salvarLancamento(){
   };
 
   // Tenta upsert — com log detalhado para debug
+  setBtn('Gravando...');
   console.log('📤 Enviando payload:', JSON.stringify({gerencia_id:payload.gerencia_id, mes:payload.mes, pg:payload.pontuacao_gerencia}));
-  const {error:errUp} = await sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,mes'});
+  const {error:errUp} = await withTimeout(
+    sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,mes'}),
+    20000, 'upsert_principal'
+  );
   if(errUp) {
     console.warn('⚠️ upsert gerencia_id,mes falhou:', errUp.message, errUp.code);
     setBtn('Tentando alternativa...');
-    const {error:errUp2} = await sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,periodo'});
+    const {error:errUp2} = await withTimeout(
+      sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,periodo'}),
+      20000, 'upsert_alt'
+    );
     if(errUp2) {
       console.warn('⚠️ upsert gerencia_id,periodo falhou:', errUp2.message, errUp2.code);
       setBtn('Inserindo...');
-      const {error:errIns} = await sb.from('lancamentos').insert(payload);
+      const {error:errIns} = await withTimeout(
+        sb.from('lancamentos').insert(payload),
+        20000, 'insert_direto'
+      );
       if(errIns) throw new Error('Erro ao salvar: ' + errIns.message + ' (código: ' + errIns.code + ')');
       console.log('✅ insert direto funcionou');
     } else { console.log('✅ upsert periodo funcionou'); }
   } else { console.log('✅ upsert mes funcionou'); }
 
   // Busca o ID do lançamento (sempre via SELECT separado, sem depender do RETURNING)
-  const {data:lancBusca} = await sb.from('lancamentos').select('id')
-    .eq('gerencia_id', gerId)
-    .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-    .limit(1);
+  setBtn('Salvando itens...');
+  const {data:lancBusca} = await withTimeout(
+    sb.from('lancamentos').select('id').eq('gerencia_id', gerId)
+      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1),
+    10000, 'busca_id'
+  );
   let lancId = lancBusca?.[0]?.id;
   console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);
   if(lancId&&itens.length){
@@ -2666,6 +2687,14 @@ setInterval(async()=>{
     await sb.from('config').select('chave').limit(1);
   }catch(e){console.warn('Ping falhou:',e);}
 },4*60*1000);
+
+// Wrapper com timeout para queries (evita travamento infinito)
+function withTimeout(promise, ms=15000, label='query') {
+  const timeout = new Promise((_,rej) =>
+    setTimeout(() => rej(new Error('Timeout em '+label+' ('+ms/1000+'s)')), ms)
+  );
+  return Promise.race([promise, timeout]);
+}
 
 // Wrapper com retry de sessão
 async function sbSafe(queryFn){

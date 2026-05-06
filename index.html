@@ -1739,15 +1739,6 @@ async function salvarLancamento(){
   sb.auth.refreshSession().catch(e => console.warn('refresh silencioso falhou:', e));
   setBtn('Salvando...');
 
-  // Headers para REST API — definido aqui para estar disponível em todo o bloco
-  const {data:{session:_sess}} = await sb.auth.getSession().catch(()=>({data:{session:null}}));
-  const SB_HEADERS = {
-    'apikey': SB_KEY,
-    'Authorization': 'Bearer ' + (_sess?.access_token || SB_KEY),
-    'Content-Type': 'application/json',
-    'Prefer': 'return=representation'
-  };
-
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
   setBtn('Buscando indicadores...');
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
@@ -1793,19 +1784,15 @@ async function salvarLancamento(){
     const gersIds=gersDir.map(g=>g.id);
     try {
       setBtn('Calculando média...');
-      const idsParam=gersIds.join(',');
-      const rDir = await withTimeout(
-        fetch(SB_URL+'/rest/v1/lancamentos?select=pontuacao_gerencia,gerencia_id&gerencia_id=in.('+idsParam+')&or=(mes.eq.'+mesLancar+',periodo.eq.'+mesLancar+')', {headers:SB_HEADERS}),
-        12000,'media_diretoria'
-      );
-      if(rDir.ok){
-        const lancsDir=await rDir.json();
-        const pontMap={};
-        gersDir.forEach(g=>{ pontMap[g.id]=0; });
-        (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
-        pontMap[gerId]=pg;
-        mediaDir=Object.values(pontMap).reduce((s,v)=>s+v,0)/totalGers;
-      } else { mediaDir=pg; }
+      const {data:lancsDir} = await sb.from('lancamentos')
+        .select('pontuacao_gerencia,gerencia_id')
+        .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+        .in('gerencia_id',gersIds);
+      const pontMap={};
+      gersDir.forEach(g=>{ pontMap[g.id]=0; });
+      (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
+      pontMap[gerId]=pg;
+      mediaDir=Object.values(pontMap).reduce((s,v)=>s+v,0)/totalGers;
     } catch(em) {
       console.warn('Média da diretoria falhou, usando pontuação individual:', em.message);
       mediaDir=pg;
@@ -1838,71 +1825,41 @@ async function salvarLancamento(){
     lancado_por:usuario.id, atualizado_em:new Date().toISOString()
   };
 
-  setBtn('Gravando...');
+  setBtn('Salvando...');
 
-  // Busca se já existe
-  console.log('🔍 Buscando lançamento existente...');
-  const r1 = await withTimeout(
-    fetch(SB_URL+'/rest/v1/lancamentos?gerencia_id=eq.'+gerId+'&mes=eq.'+mesLancar+'&select=id&limit=1', {headers:SB_HEADERS}),
-    10000, 'busca_existente'
-  );
-  const existing = await r1.json();
-  let lancId = existing?.[0]?.id || null;
-  console.log('lancId encontrado:', lancId);
+  // Salva lançamento com upsert simples (como era originalmente)
+  const {data:lancSaved, error:errSave} = await sb.from('lancamentos')
+    .upsert(payload, {onConflict:'gerencia_id,mes', ignoreDuplicates:false})
+    .select('id');
 
-  if(lancId) {
-    // UPDATE via REST
-    console.log('📝 Atualizando id:', lancId);
-    const r2 = await withTimeout(
-      fetch(SB_URL+'/rest/v1/lancamentos?id=eq.'+lancId, {
-        method:'PATCH', headers:SB_HEADERS, body:JSON.stringify(payload)
-      }),
-      15000, 'update'
-    );
-    if(!r2.ok) throw new Error('Erro no UPDATE: '+r2.status+' '+await r2.text());
-    console.log('✅ UPDATE ok');
-  } else {
-    // INSERT via REST
-    console.log('➕ Inserindo novo lançamento...');
-    const r3 = await withTimeout(
-      fetch(SB_URL+'/rest/v1/lancamentos', {
-        method:'POST', headers:{...SB_HEADERS,'Prefer':'return=representation'},
-        body:JSON.stringify(payload)
-      }),
-      15000, 'insert'
-    );
-    const ins = await r3.json();
-    if(!r3.ok) throw new Error('Erro no INSERT: '+r3.status+' '+JSON.stringify(ins));
-    lancId = ins?.[0]?.id || null;
-    console.log('✅ INSERT ok, id:', lancId);
+  let lancId = lancSaved?.[0]?.id;
+
+  // Se upsert falhou ou não retornou id, busca o id manualmente
+  if(errSave || !lancId) {
+    if(errSave) console.warn('upsert error:', errSave.message, '— buscando id...');
+    const {data:lb} = await sb.from('lancamentos')
+      .select('id').eq('gerencia_id', gerId)
+      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1);
+    lancId = lb?.[0]?.id;
+    if(!lancId) throw new Error('Não foi possível salvar o lançamento: ' + (errSave?.message||'id não encontrado'));
   }
-  console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);
-  if(lancId&&itens.length){
-    // Delete e insert via fetch REST direto
-    await withTimeout(
-      fetch(SB_URL+'/rest/v1/lancamento_itens?lancamento_id=eq.'+lancId, {method:'DELETE', headers:SB_HEADERS}),
-      10000, 'delete_itens'
+
+  console.log('✅ Lançamento salvo, id:', lancId);
+
+  // Salva itens
+  if(lancId && itens.length){
+    await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId);
+    const {error:errIt} = await sb.from('lancamento_itens').insert(
+      itens.map(item=>({
+        lancamento_id:lancId, indicador_id:item.indicador_id,
+        previsto:item.previsto||null, realizado:item.realizado||null,
+        nota:item.nota||null, sim_nao:item.sim_nao??null,
+        pontuacao:item.pontuacao||0, comentario:item.comentario||null
+      }))
     );
-    const itensPayload = itens.map(item=>({
-      lancamento_id:lancId,
-      indicador_id:item.indicador_id,
-      previsto:item.previsto||null,
-      realizado:item.realizado||null,
-      nota:item.nota||null,
-      sim_nao:item.sim_nao??null,
-      pontuacao:item.pontuacao||0,
-      comentario:item.comentario||null
-    }));
-    const rItens = await withTimeout(
-      fetch(SB_URL+'/rest/v1/lancamento_itens', {
-        method:'POST', headers:SB_HEADERS, body:JSON.stringify(itensPayload)
-      }),
-      15000, 'insert_itens'
-    );
-    if(!rItens.ok) console.error('Erro ao salvar itens:', rItens.status, await rItens.text());
+    if(errIt) console.error('Erro itens:', errIt.message);
     else console.log('✅ Itens salvos:', itens.length);
   }
-
   // ── RECALCULA OUTRAS GERÊNCIAS (em background, não bloqueia o save) ──
   try {
     if(ger&&mediaDir!=null){
@@ -1922,13 +1879,9 @@ async function salvarLancamento(){
             );
             if(prevOl?.length){const soma=prevOl.reduce((s,l)=>s+(l.indice_prevencao||0),0)+novoIP;novoAcum=soma/(prevOl.length+1);}
           }
-          await withTimeout(
-            fetch(SB_URL+'/rest/v1/lancamentos?id=eq.'+ol.id,{
-              method:'PATCH',headers:SB_HEADERS,
-              body:JSON.stringify({media_diretoria:mediaDir,indice_prevencao:novoIP,acumulado_gerencia:novoAcum})
-            }),
-            8000,'update_outra'
-          );
+          await sb.from('lancamentos').update({
+            media_diretoria:mediaDir, indice_prevencao:novoIP, acumulado_gerencia:novoAcum
+          }).eq('id',ol.id);
         }
       }
     }

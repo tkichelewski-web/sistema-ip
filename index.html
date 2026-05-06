@@ -567,23 +567,13 @@ const SB_OPTS = { auth: { persistSession:true, storageKey:'sistema-ip-auth', flo
 let sb = createClient(SB_URL, SB_KEY, SB_OPTS);
 
 // Recria o cliente para forçar reconexão (resolve travamento após inatividade)
-async function reconnectSb() {
+// O Supabase lê a sessão do localStorage automaticamente ao criar novo cliente
+function reconnectSb() {
   try {
-    // Pega a sessão atual antes de recriar
-    const { data: { session } } = await sb.auth.getSession();
     sb = createClient(SB_URL, SB_KEY, SB_OPTS);
-    // Restaura a sessão no novo cliente se existia
-    if (session) {
-      await sb.auth.setSession({
-        access_token: session.access_token,
-        refresh_token: session.refresh_token
-      });
-    }
-    console.log('✅ Reconexão Supabase OK');
-    return true;
+    console.log('✅ Cliente Supabase recriado');
   } catch(e) {
     console.warn('Reconexão falhou:', e.message);
-    return false;
   }
 }
 
@@ -1849,9 +1839,8 @@ async function salvarLancamento(){
   };
 
   // Tenta upsert — com log detalhado para debug
-  // Reconecta o Supabase antes de salvar (resolve travamento por inatividade)
-  setBtn('Reconectando...');
-  await reconnectSb();
+  // Recria cliente Supabase instantaneamente (resolve conexão morta por inatividade)
+  reconnectSb();
   setBtn('Gravando...');
   console.log('📤 Enviando payload:', JSON.stringify({gerencia_id:payload.gerencia_id, mes:payload.mes, pg:payload.pontuacao_gerencia}));
   const {error:errUp} = await withTimeout(

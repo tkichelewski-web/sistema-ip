@@ -1739,6 +1739,15 @@ async function salvarLancamento(){
   sb.auth.refreshSession().catch(e => console.warn('refresh silencioso falhou:', e));
   setBtn('Salvando...');
 
+  // Headers para REST API — definido aqui para estar disponível em todo o bloco
+  const {data:{session:_sess}} = await sb.auth.getSession().catch(()=>({data:{session:null}}));
+  const SB_HEADERS = {
+    'apikey': SB_KEY,
+    'Authorization': 'Bearer ' + (_sess?.access_token || SB_KEY),
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
   setBtn('Buscando indicadores...');
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
@@ -1830,14 +1839,6 @@ async function salvarLancamento(){
   };
 
   setBtn('Gravando...');
-
-  // Usa fetch direto na REST API do Supabase — contorna problemas do SDK após inatividade
-  const SB_HEADERS = {
-    'apikey': SB_KEY,
-    'Authorization': 'Bearer ' + ((await sb.auth.getSession()).data.session?.access_token || SB_KEY),
-    'Content-Type': 'application/json',
-    'Prefer': 'return=representation'
-  };
 
   // Busca se já existe
   console.log('🔍 Buscando lançamento existente...');

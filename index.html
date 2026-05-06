@@ -1845,19 +1845,23 @@ async function salvarLancamento(){
     console.log('STEP 9 final lancId:', lancId);
     if(!lancId) throw new Error('Lançamento salvo mas ID não encontrado.');
 
-    // 10. Salva itens
-    console.log('STEP 10: salvando '+itens.length+' itens...');
+    // 10. Salva itens em lotes de 10 para não travar
+    console.log('STEP 10: salvando '+itens.length+' itens em lotes...');
     await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
     if(itens.length){
-      const {error:eIt} = await sb.from('lancamento_itens').insert(
-        itens.map(it=>({
-          lancamento_id:lancId, indicador_id:it.indicador_id,
-          previsto:it.previsto||null, realizado:it.realizado||null,
-          nota:it.nota||null, sim_nao:it.sim_nao??null,
-          pontuacao:it.pontuacao||0, comentario:it.comentario||null
-        }))
-      );
-      if(eIt) console.error('Erro ao salvar itens:', eIt.message);
+      const rows = itens.map(it=>({
+        lancamento_id:lancId, indicador_id:it.indicador_id,
+        previsto:it.previsto||null, realizado:it.realizado||null,
+        nota:it.nota||null, sim_nao:it.sim_nao??null,
+        pontuacao:it.pontuacao||0, comentario:it.comentario||null
+      }));
+      for(let i=0; i<rows.length; i+=10){
+        const lote=rows.slice(i,i+10);
+        console.log('Lote '+(Math.floor(i/10)+1)+' de '+Math.ceil(rows.length/10));
+        const{error:eIt}=await sb.from('lancamento_itens').insert(lote);
+        if(eIt){console.error('Erro lote:',eIt.message);break;}
+      }
+      console.log('STEP 10: OK');
     }
 
     // 11. Recalcula outras gerências da diretoria (em background)

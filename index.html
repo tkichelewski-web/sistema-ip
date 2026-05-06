@@ -1267,7 +1267,7 @@ async function onGerenciaChange(){
   const infoEl=document.getElementById('aud-info-lancar');
   const audEl=document.getElementById('nota-auditoria');
   if(window._uniIdAtual&&safraId){
-    const nota=await getNotaAuditoria(window._uniIdAtual,safraId);
+    let nota=null; try{nota=await getNotaAuditoria(window._uniIdAtual,safraId);}catch(_){}
     if(nota!=null){
       if(audEl){audEl.value=nota;audEl.style.background='#f0f9f0';}
       if(infoEl)infoEl.innerHTML='✅ Nota de auditoria: <b>'+nota+'</b>';
@@ -1735,16 +1735,14 @@ async function salvarLancamento(){
 
   try { // try principal — garante que o botão sempre é liberado
 
-  // Tenta refresh silencioso (não bloqueia se falhar)
-  sb.auth.refreshSession().catch(e => console.warn('refresh silencioso falhou:', e));
   setBtn('Salvando...');
+  // Refresh silencioso em background — fire and forget, sem loop
+  try { sb.auth.refreshSession(); } catch(_) {}
 
   // Usa indicadores do cache (já carregados ao renderizar a tabela)
-  setBtn('Buscando indicadores...');
   const indsGer=(_cachedGerId===gerId&&_cachedSafraId===safraIdLanc&&_cachedIndsGer.length)
     ? _cachedIndsGer
-    : await withTimeout(getIndsGerencia(gerId,safraIdLanc), 15000, 'indicadores');
-  setBtn('Salvando...');
+    : await getIndsGerencia(gerId,safraIdLanc);
   const itens=indsGer.map(ind=>{
     const item={indicador_id:ind.id,peso:ind.peso};
     if(ind.tipo==='previsto_realizado'){item.previsto=parseFloat(document.getElementById('prev_'+ind.id)?.value)||0;item.realizado=parseFloat(document.getElementById('real_'+ind.id)?.value)||0;}
@@ -1758,7 +1756,7 @@ async function salvarLancamento(){
   // Auditoria: busca nota da unidade ou usa campo manual
   const audManual=parseFloat(document.getElementById('nota-auditoria')?.value)||0;
   let aud=audManual;
-  if(uniId&&safraIdLanc){try{const nu=await withTimeout(getNotaAuditoria(uniId,safraIdLanc),10000,'auditoria');if(nu!=null)aud=nu;}catch(te){console.warn('Timeout auditoria, usando manual:',aud);}}
+  if(uniId&&safraIdLanc){try{const nu=await getNotaAuditoria(uniId,safraIdLanc);if(nu!=null)aud=nu;}catch(te){console.warn('getNotaAuditoria falhou, usando manual:',aud);}}
 
   const regras=parseInt(document.getElementById('regras-salvas')?.value)||0;
   const obs=document.getElementById('obs-auditoria')?.value||'';
@@ -1809,10 +1807,7 @@ async function salvarLancamento(){
   const mesesAnt=mesesOrdem.filter(m=>m<mesLancar);
   let acumGer=indFinal;
   if(mesesAnt.length){
-    const{data:prev}=await withTimeout(
-      sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',gerId).eq('safra_id',safraIdLanc).in('mes',mesesAnt),
-      10000,'acumulado'
-    );
+    const{data:prev}=await sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',gerId).eq('safra_id',safraIdLanc).in('mes',mesesAnt);
     if(prev?.length){const soma=prev.reduce((s,l)=>s+(l.indice_prevencao||0),0)+indFinal;acumGer=soma/(prev.length+1);}
   }
 
@@ -1827,23 +1822,27 @@ async function salvarLancamento(){
 
   setBtn('Salvando...');
 
-  // Salva lançamento com upsert simples (como era originalmente)
-  const {data:lancSaved, error:errSave} = await sb.from('lancamentos')
-    .upsert(payload, {onConflict:'gerencia_id,mes', ignoreDuplicates:false})
-    .select('id');
+  // Busca se já existe lançamento para esta gerência/mês
+  const {data:lancExist} = await sb.from('lancamentos')
+    .select('id').eq('gerencia_id',gerId)
+    .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1);
+  let lancId = lancExist?.[0]?.id || null;
 
-  let lancId = lancSaved?.[0]?.id;
-
-  // Se upsert falhou ou não retornou id, busca o id manualmente
-  if(errSave || !lancId) {
-    if(errSave) console.warn('upsert error:', errSave.message, '— buscando id...');
+  if(lancId) {
+    // UPDATE — lançamento já existe
+    const {error:errUpd} = await sb.from('lancamentos').update(payload).eq('id',lancId);
+    if(errUpd) throw new Error('Erro ao atualizar: ' + errUpd.message);
+  } else {
+    // INSERT — novo lançamento
+    const {error:errIns} = await sb.from('lancamentos').insert(payload);
+    if(errIns) throw new Error('Erro ao inserir: ' + errIns.message);
+    // Busca o id após inserir
     const {data:lb} = await sb.from('lancamentos')
-      .select('id').eq('gerencia_id', gerId)
+      .select('id').eq('gerencia_id',gerId)
       .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1);
     lancId = lb?.[0]?.id;
-    if(!lancId) throw new Error('Não foi possível salvar o lançamento: ' + (errSave?.message||'id não encontrado'));
   }
-
+  if(!lancId) throw new Error('Lançamento salvo mas ID não encontrado.');
   console.log('✅ Lançamento salvo, id:', lancId);
 
   // Salva itens
@@ -1865,18 +1864,12 @@ async function salvarLancamento(){
     if(ger&&mediaDir!=null){
       const gersDir2=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id&&g.id!==gerId).map(g=>g.id);
       if(gersDir2.length){
-        const {data:outrasLancs}=await withTimeout(
-          sb.from('lancamentos').select('*').or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).in('gerencia_id',gersDir2),
-          10000,'outras_gerencias'
-        );
+        const {data:outrasLancs}=await sb.from('lancamentos').select('*').or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).in('gerencia_id',gersDir2);
         for(const ol of (outrasLancs||[])){
           const novoIP=calcIndice(ol.pontuacao_gerencia,mediaDir,ol.nota_auditoria||aud,ol.ajuste_pontos||0);
           let novoAcum=novoIP;
           if(mesesAnt.length){
-            const{data:prevOl}=await withTimeout(
-              sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',ol.gerencia_id).eq('safra_id',safraIdLanc).in('mes',mesesAnt),
-              8000,'acum_outra'
-            );
+            const{data:prevOl}=await sb.from('lancamentos').select('indice_prevencao,mes').eq('gerencia_id',ol.gerencia_id).eq('safra_id',safraIdLanc).in('mes',mesesAnt);
             if(prevOl?.length){const soma=prevOl.reduce((s,l)=>s+(l.indice_prevencao||0),0)+novoIP;novoAcum=soma/(prevOl.length+1);}
           }
           await sb.from('lancamentos').update({
@@ -2325,7 +2318,7 @@ async function salvarSafra(){const nome=document.getElementById('sf-nome')?.valu
 async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
 async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}
 async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}alert('✅ Notas de auditoria salvas!');carregarAuditorias();}
-async function getNotaAuditoria(unidadeId,safraId){if(!unidadeId||!safraId)return null;const{data}=await sb.from('auditoria_unidade').select('nota').eq('unidade_id',unidadeId).eq('safra_id',safraId).single();return data?.nota??null;}
+async function getNotaAuditoria(unidadeId,safraId){if(!unidadeId||!safraId)return null;const{data}=await sb.from('auditoria_unidade').select('nota').eq('unidade_id',unidadeId).eq('safra_id',safraId).limit(1);return data?.[0]?.nota??null;}
 
 // ── EXPORTAR ──────────────────────────────────────────────────
 function exportarExcel(){

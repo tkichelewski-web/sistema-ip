@@ -1838,42 +1838,52 @@ async function salvarLancamento(){
     lancado_por:usuario.id, atualizado_em:new Date().toISOString()
   };
 
-  // Tenta upsert — com log detalhado para debug
-  // Recria cliente Supabase instantaneamente (resolve conexão morta por inatividade)
   reconnectSb();
   setBtn('Gravando...');
-  console.log('📤 Enviando payload:', JSON.stringify({gerencia_id:payload.gerencia_id, mes:payload.mes, pg:payload.pontuacao_gerencia}));
-  const {error:errUp} = await withTimeout(
-    sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,mes'}),
-    25000, 'upsert_principal'
-  );
-  if(errUp) {
-    console.warn('⚠️ upsert gerencia_id,mes falhou:', errUp.message, errUp.code);
-    setBtn('Tentando alternativa...');
-    const {error:errUp2} = await withTimeout(
-      sb.from('lancamentos').upsert(payload, {onConflict:'gerencia_id,periodo'}),
-      20000, 'upsert_alt'
-    );
-    if(errUp2) {
-      console.warn('⚠️ upsert gerencia_id,periodo falhou:', errUp2.message, errUp2.code);
-      setBtn('Inserindo...');
-      const {error:errIns} = await withTimeout(
-        sb.from('lancamentos').insert(payload),
-        20000, 'insert_direto'
-      );
-      if(errIns) throw new Error('Erro ao salvar: ' + errIns.message + ' (código: ' + errIns.code + ')');
-      console.log('✅ insert direto funcionou');
-    } else { console.log('✅ upsert periodo funcionou'); }
-  } else { console.log('✅ upsert mes funcionou'); }
 
-  // Busca o ID do lançamento (sempre via SELECT separado, sem depender do RETURNING)
-  setBtn('Salvando itens...');
-  const {data:lancBusca} = await withTimeout(
-    sb.from('lancamentos').select('id').eq('gerencia_id', gerId)
-      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).limit(1),
-    10000, 'busca_id'
+  // Estratégia: SELECT → UPDATE ou INSERT (mais confiável que upsert com RLS)
+  const {data:lancExist} = await withTimeout(
+    sb.from('lancamentos').select('id')
+      .eq('gerencia_id', gerId)
+      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+      .limit(1),
+    10000, 'busca_existente'
   );
-  let lancId = lancBusca?.[0]?.id;
+
+  let lancId = lancExist?.[0]?.id || null;
+
+  if(lancId) {
+    // Já existe — UPDATE
+    console.log('📝 Atualizando lançamento id:', lancId);
+    const {error:errUpd} = await withTimeout(
+      sb.from('lancamentos').update(payload).eq('id', lancId),
+      15000, 'update'
+    );
+    if(errUpd) throw new Error('Erro ao atualizar: ' + errUpd.message);
+    console.log('✅ UPDATE ok');
+  } else {
+    // Não existe — INSERT
+    console.log('➕ Inserindo novo lançamento');
+    const {data:lancIns, error:errIns} = await withTimeout(
+      sb.from('lancamentos').insert(payload).select('id').single(),
+      15000, 'insert'
+    );
+    if(errIns) {
+      // single() pode falhar por RLS mesmo com insert ok — tenta buscar o id
+      console.warn('insert single falhou:', errIns.message, '— buscando id...');
+      const {data:lb} = await withTimeout(
+        sb.from('lancamentos').select('id')
+          .eq('gerencia_id', gerId)
+          .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+          .limit(1),
+        8000, 'busca_apos_insert'
+      );
+      lancId = lb?.[0]?.id || null;
+    } else {
+      lancId = lancIns?.id || null;
+    }
+    console.log('✅ INSERT ok, id:', lancId);
+  }
   console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);
   if(lancId&&itens.length){
     await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);

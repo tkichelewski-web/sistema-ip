@@ -564,18 +564,9 @@ const SB_KEY = 'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ';
 const SB_OPTS = { auth: { persistSession:true, storageKey:'sistema-ip-auth', flowType:'implicit',
                           autoRefreshToken:true, detectSessionInUrl:true,
                           storage: window.localStorage } };
-let sb = createClient(SB_URL, SB_KEY, SB_OPTS);
+const sb = createClient(SB_URL, SB_KEY, SB_OPTS);
 
-// Recria o cliente para forçar reconexão (resolve travamento após inatividade)
-// O Supabase lê a sessão do localStorage automaticamente ao criar novo cliente
-function reconnectSb() {
-  try {
-    sb = createClient(SB_URL, SB_KEY, SB_OPTS);
-    console.log('✅ Cliente Supabase recriado');
-  } catch(e) {
-    console.warn('Reconexão falhou:', e.message);
-  }
-}
+// reconnectSb removido — causava múltiplas instâncias
 
 let usuario=null, dashData=null;
 let estrutura={diretorias:[],gerencias:[],unidades:[]};
@@ -1838,50 +1829,50 @@ async function salvarLancamento(){
     lancado_por:usuario.id, atualizado_em:new Date().toISOString()
   };
 
-  reconnectSb();
   setBtn('Gravando...');
 
-  // Estratégia: SELECT → UPDATE ou INSERT (mais confiável que upsert com RLS)
-  const {data:lancExist} = await withTimeout(
-    sb.from('lancamentos').select('id')
-      .eq('gerencia_id', gerId)
-      .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-      .limit(1),
+  // Usa fetch direto na REST API do Supabase — contorna problemas do SDK após inatividade
+  const SB_HEADERS = {
+    'apikey': SB_KEY,
+    'Authorization': 'Bearer ' + ((await sb.auth.getSession()).data.session?.access_token || SB_KEY),
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+
+  // Busca se já existe
+  console.log('🔍 Buscando lançamento existente...');
+  const r1 = await withTimeout(
+    fetch(SB_URL+'/rest/v1/lancamentos?gerencia_id=eq.'+gerId+'&mes=eq.'+mesLancar+'&select=id&limit=1', {headers:SB_HEADERS}),
     10000, 'busca_existente'
   );
-
-  let lancId = lancExist?.[0]?.id || null;
+  const existing = await r1.json();
+  let lancId = existing?.[0]?.id || null;
+  console.log('lancId encontrado:', lancId);
 
   if(lancId) {
-    // Já existe — UPDATE
-    console.log('📝 Atualizando lançamento id:', lancId);
-    const {error:errUpd} = await withTimeout(
-      sb.from('lancamentos').update(payload).eq('id', lancId),
+    // UPDATE via REST
+    console.log('📝 Atualizando id:', lancId);
+    const r2 = await withTimeout(
+      fetch(SB_URL+'/rest/v1/lancamentos?id=eq.'+lancId, {
+        method:'PATCH', headers:SB_HEADERS, body:JSON.stringify(payload)
+      }),
       15000, 'update'
     );
-    if(errUpd) throw new Error('Erro ao atualizar: ' + errUpd.message);
+    if(!r2.ok) throw new Error('Erro no UPDATE: '+r2.status+' '+await r2.text());
     console.log('✅ UPDATE ok');
   } else {
-    // Não existe — INSERT
-    console.log('➕ Inserindo novo lançamento');
-    const {data:lancIns, error:errIns} = await withTimeout(
-      sb.from('lancamentos').insert(payload).select('id').single(),
+    // INSERT via REST
+    console.log('➕ Inserindo novo lançamento...');
+    const r3 = await withTimeout(
+      fetch(SB_URL+'/rest/v1/lancamentos', {
+        method:'POST', headers:{...SB_HEADERS,'Prefer':'return=representation'},
+        body:JSON.stringify(payload)
+      }),
       15000, 'insert'
     );
-    if(errIns) {
-      // single() pode falhar por RLS mesmo com insert ok — tenta buscar o id
-      console.warn('insert single falhou:', errIns.message, '— buscando id...');
-      const {data:lb} = await withTimeout(
-        sb.from('lancamentos').select('id')
-          .eq('gerencia_id', gerId)
-          .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-          .limit(1),
-        8000, 'busca_apos_insert'
-      );
-      lancId = lb?.[0]?.id || null;
-    } else {
-      lancId = lancIns?.id || null;
-    }
+    const ins = await r3.json();
+    if(!r3.ok) throw new Error('Erro no INSERT: '+r3.status+' '+JSON.stringify(ins));
+    lancId = ins?.[0]?.id || null;
     console.log('✅ INSERT ok, id:', lancId);
   }
   console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);

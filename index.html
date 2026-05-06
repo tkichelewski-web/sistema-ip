@@ -1776,8 +1776,7 @@ async function salvarLancamento(){
   const _obsCompleta=(obs?obs+' ':'')+'[ev:'+eventosJSON+']';
   const ger=estrutura.gerencias.find(g=>g.id===gerId);
 
-  // ── MÉDIA DA DIRETORIA ──────────────────────────────────────
-  // Tenta buscar — se falhar, salva sem média (será recalculada depois)
+  // ── MÉDIA DA DIRETORIA via fetch REST (não usa SDK) ─────────
   let mediaDir=null;
   if(ger){
     const gersDir=estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id);
@@ -1785,21 +1784,22 @@ async function salvarLancamento(){
     const gersIds=gersDir.map(g=>g.id);
     try {
       setBtn('Calculando média...');
-      const{data:lancsDir}=await withTimeout(
-        sb.from('lancamentos').select('pontuacao_gerencia,gerencia_id')
-          .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-          .in('gerencia_id',gersIds),
+      const idsParam=gersIds.join(',');
+      const rDir = await withTimeout(
+        fetch(SB_URL+'/rest/v1/lancamentos?select=pontuacao_gerencia,gerencia_id&gerencia_id=in.('+idsParam+')&or=(mes.eq.'+mesLancar+',periodo.eq.'+mesLancar+')', {headers:SB_HEADERS}),
         12000,'media_diretoria'
       );
-      const pontMap={};
-      gersDir.forEach(g=>{ pontMap[g.id]=0; });
-      (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
-      pontMap[gerId]=pg;
-      mediaDir=Object.values(pontMap).reduce((s,v)=>s+v,0)/totalGers;
+      if(rDir.ok){
+        const lancsDir=await rDir.json();
+        const pontMap={};
+        gersDir.forEach(g=>{ pontMap[g.id]=0; });
+        (lancsDir||[]).forEach(l=>{ pontMap[l.gerencia_id]=l.pontuacao_gerencia||0; });
+        pontMap[gerId]=pg;
+        mediaDir=Object.values(pontMap).reduce((s,v)=>s+v,0)/totalGers;
+      } else { mediaDir=pg; }
     } catch(em) {
-      // Timeout ou erro — usa só a pontuação atual como fallback
       console.warn('Média da diretoria falhou, usando pontuação individual:', em.message);
-      mediaDir=pg; // fallback: considera só esta gerência
+      mediaDir=pg;
     }
     setBtn('Salvando...');
   }
@@ -1877,21 +1877,29 @@ async function salvarLancamento(){
   }
   console.log('lancId para salvar itens:', lancId, '| itens:', itens.length);
   if(lancId&&itens.length){
-    await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
-    const{error:errItens}=await sb.from('lancamento_itens').insert(
-      itens.map(item=>({
-        lancamento_id:lancId,
-        indicador_id:item.indicador_id,
-        previsto:item.previsto||null,
-        realizado:item.realizado||null,
-        nota:item.nota||null,
-        sim_nao:item.sim_nao??null,
-        pontuacao:item.pontuacao||0,
-        comentario:item.comentario||null
-      }))
+    // Delete e insert via fetch REST direto
+    await withTimeout(
+      fetch(SB_URL+'/rest/v1/lancamento_itens?lancamento_id=eq.'+lancId, {method:'DELETE', headers:SB_HEADERS}),
+      10000, 'delete_itens'
     );
-    if(errItens) console.error('Erro ao salvar itens:', errItens.message);
-    else console.log('Itens salvos com sucesso:', itens.length);
+    const itensPayload = itens.map(item=>({
+      lancamento_id:lancId,
+      indicador_id:item.indicador_id,
+      previsto:item.previsto||null,
+      realizado:item.realizado||null,
+      nota:item.nota||null,
+      sim_nao:item.sim_nao??null,
+      pontuacao:item.pontuacao||0,
+      comentario:item.comentario||null
+    }));
+    const rItens = await withTimeout(
+      fetch(SB_URL+'/rest/v1/lancamento_itens', {
+        method:'POST', headers:SB_HEADERS, body:JSON.stringify(itensPayload)
+      }),
+      15000, 'insert_itens'
+    );
+    if(!rItens.ok) console.error('Erro ao salvar itens:', rItens.status, await rItens.text());
+    else console.log('✅ Itens salvos:', itens.length);
   }
 
   // ── RECALCULA OUTRAS GERÊNCIAS (em background, não bloqueia o save) ──
@@ -1914,7 +1922,10 @@ async function salvarLancamento(){
             if(prevOl?.length){const soma=prevOl.reduce((s,l)=>s+(l.indice_prevencao||0),0)+novoIP;novoAcum=soma/(prevOl.length+1);}
           }
           await withTimeout(
-            sb.from('lancamentos').update({media_diretoria:mediaDir,indice_prevencao:novoIP,acumulado_gerencia:novoAcum}).eq('id',ol.id),
+            fetch(SB_URL+'/rest/v1/lancamentos?id=eq.'+ol.id,{
+              method:'PATCH',headers:SB_HEADERS,
+              body:JSON.stringify({media_diretoria:mediaDir,indice_prevencao:novoIP,acumulado_gerencia:novoAcum})
+            }),
             8000,'update_outra'
           );
         }

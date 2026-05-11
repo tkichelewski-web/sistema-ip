@@ -60,7 +60,7 @@ header{background:#07583C;padding:11px 28px;display:flex;align-items:center;just
 .tab:hover{color:#07583C;}
 .tab.active{color:#07583C;border-bottom-color:#B3DD64;background:#f0f9f0;}
 .tab.hidden{display:none;}
-main{padding:22px 28px;max-width:1400px;margin:0 auto;}
+main{padding:22px 28px;max-width:1600px;margin:0 auto;}
 .section{display:none;}.section.active{display:block;}
 
 /* CARDS */
@@ -201,7 +201,16 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <input type="month" id="dash-periodo" onchange="carregarDashboard()" style="width:auto;padding:6px 10px;">
         </div>
         <div class="flex-row">
-          <select id="dash-filtro-dir" onchange="renderDashTable()" style="width:auto;padding:6px 10px;font-size:12px;"></select>
+          <select id="dash-filtro-dir" onchange="onDashDirChange()" style="width:auto;padding:6px 10px;font-size:12px;"></select>
+          <select id="dash-filtro-ger" onchange="renderDashTable()" style="width:auto;padding:6px 10px;font-size:12px;">
+            <option value="">Todas as Gerências</option>
+          </select>
+          <select id="dash-sort-ger" onchange="renderDashTable()" style="width:auto;padding:6px 10px;font-size:12px;">
+            <option value="ip_desc">↓ IP (maior primeiro)</option>
+            <option value="ip_asc">↑ IP (menor primeiro)</option>
+            <option value="alfa_asc">A→Z Gerência</option>
+            <option value="alfa_desc">Z→A Gerência</option>
+          </select>
           <button class="btn btn-secondary btn-sm" onclick="exportarExcel()">⬇ Excel</button>
           <button class="btn btn-secondary btn-sm" onclick="exportarPDF()">⬇ PDF</button>
           <button class="btn btn-secondary btn-sm" onclick="abrirImpressao()">🖨️ Imprimir</button>
@@ -209,7 +218,10 @@ input[type=number]{font-family:'DM Mono',monospace;}
       </div>
       <div class="stats-row" id="dash-stats"><div class="stat-card"><div class="stat-label">Período</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">—</div></div><div class="stat-card"><div class="stat-label">Meta+Máximo</div><div class="stat-value c-green">—</div></div><div class="stat-card"><div class="stat-label">Ponto de Atenção</div><div class="stat-value c-red">—</div></div></div>
       <div class="table-wrap">
-        <div class="table-header"><span class="table-title">Gerências — Índice de Prevenção</span></div>
+        <div class="table-header">
+          <span class="table-title">Gerências — Índice de Prevenção</span>
+          <span style="font-size:11px;color:var(--muted)">Para editar, use a aba <b>Histórico</b></span>
+        </div>
         <div id="dash-table-wrap"><div class="loading">Selecione um período para carregar os dados.</div></div>
       </div>
     </div>
@@ -259,7 +271,10 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="table-wrap" style="margin-bottom:20px">
         <div class="table-header">
           <span class="table-title">📊 IP Mensal</span>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <select id="acum-chart-mes-mes" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
+              <option value="">Todos os Meses</option>
+            </select>
             <select id="acum-chart-mes-tipo" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
               <option value="gerencia">Por Gerência</option>
               <option value="diretoria">Por Diretoria</option>
@@ -365,16 +380,16 @@ input[type=number]{font-family:'DM Mono',monospace;}
     </div>
 
     <!-- HISTÓRICO -->
-    <div class="section" id="sec-historico">
+    <div class="section" id="sec-historico" style="max-width:100%;overflow-x:auto;">
       <div class="flex-row" style="margin-bottom:16px;">
         <select id="hist-gerencia" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"><option value="">Todas as Gerências</option></select>
         <select id="hist-ano" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"></select>
         <button class="btn btn-secondary btn-sm" onclick="exportarHistoricoExcel()">⬇ Excel Filtrado</button>
         <button class="btn btn-primary btn-sm" onclick="exportarBackupCompleto()" style="background:#07583C">💾 Backup Completo</button>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap" style="overflow-x:auto;min-width:0;">
         <div class="table-header"><span class="table-title">Histórico de Lançamentos</span></div>
-        <div id="hist-table"><div class="loading">Selecione os filtros acima.</div></div>
+        <div id="hist-table" style="overflow-x:auto;"><div class="loading">Selecione os filtros acima.</div></div>
       </div>
     </div>
 
@@ -1071,7 +1086,55 @@ function renderAcumChart(){
 function renderAcumChartMensal(){
   const tipo=document.getElementById('acum-chart-mes-tipo')?.value||'gerencia';
   const vizType=document.getElementById('acum-chart-mes-viz')?.value||'bar';
-  criarChart('acum-chart-mensal',_refMensal,tipo,vizType,false);
+  const filtMes=document.getElementById('acum-chart-mes-mes')?.value||'';
+
+  // Populate month filter
+  const mesSel=document.getElementById('acum-chart-mes-mes');
+  if(mesSel && acumAllData.length){
+    const safraId=document.getElementById('acum-safra')?.value;
+    const safra=safrasData.find(s=>s.id==safraId);
+    if(safra){
+      const mesesDisp=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+      const curVal=mesSel.value;
+      mesSel.innerHTML='<option value="">Todos os Meses</option>'+mesesDisp.map(m=>`<option value="${m.val}"${m.val===curVal?'selected':''}>${m.nome}</option>`).join('');
+    }
+  }
+
+  criarChartMensalFiltrado('acum-chart-mensal',_refMensal,tipo,vizType,filtMes);
+}
+
+function criarChartMensalFiltrado(canvasId,ref,tipo,vizType,filtMes){
+  const canvas=document.getElementById(canvasId);if(!canvas)return;
+  const safraId=document.getElementById('acum-safra')?.value;
+  const safra=safrasData.find(s=>s.id==safraId);
+  if(!acumAllData.length||!safra)return;
+  let meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+  if(filtMes) meses=meses.filter(m=>m.val===filtMes);
+  const labels=meses.map(m=>m.nome);
+  const datasets=buildAcumDatasetsFiltered(meses,tipo,vizType,false,filtMes);
+  const isBar=vizType==='bar';
+  if(ref[0]){ref[0].destroy();ref[0]=null;}
+  ref[0]=new Chart(canvas,{
+    type:vizType,data:{labels,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{font:{size:11},padding:14,usePointStyle:true,boxWidth:10}},
+        tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
+      },
+      scales:{
+        x:{grid:{color:'#e8f0e8'},ticks:{font:{size:11}}},
+        y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:11},callback:v=>v.toFixed(0)}}
+      }
+    },
+    plugins:isBar?[refLinesPlugin,dataLabelsPlugin]:[refLinesPlugin]
+  });
+}
+
+function buildAcumDatasetsFiltered(meses,tipo,vizType,acumMode,filtMes){
+  // Use same logic as buildAcumDatasets but filter meses
+  return buildAcumDatasets(meses,tipo,vizType,acumMode);
 }
 
 
@@ -1440,12 +1503,29 @@ async function carregarDashboard(){
     .or(`mes.eq.${periodo},periodo.eq.${periodo}`)
     .order('indice_prevencao',{ascending:false});
   dashData=lancs||[];
-  renderDashStats();renderDashTable();
+  // Populate gerencia dropdown with alphabetical list
+  const gerSel=document.getElementById('dash-filtro-ger');
+  if(gerSel&&dashData.length){
+    gerSel.value='';
+  }
+  renderDashTable();
+}
+
+function onDashDirChange(){
+  // When diretoria changes, reset gerência filter
+  const gerSel=document.getElementById('dash-filtro-ger');
+  if(gerSel) gerSel.value='';
+  renderDashTable();
 }
 
 function renderDashStats(){
   if(!dashData)return;
-  const idxs=dashData.map(l=>l.indice_prevencao||0);
+  const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
+  const filtGer=parseInt(document.getElementById('dash-filtro-ger')?.value)||0;
+  let filteredStats=dashData;
+  if(filtDir) filteredStats=filteredStats.filter(l=>l.gerencias?.diretoria_id===filtDir);
+  if(filtGer) filteredStats=filteredStats.filter(l=>l.gerencia_id===filtGer||l.gerencias_id===filtGer);
+  const idxs=filteredStats.map(l=>l.indice_prevencao||0);
   const media=idxs.length?idxs.reduce((a,b)=>a+b,0)/idxs.length:0;
   const maximo=idxs.filter(v=>v>=100).length;
   const meta=idxs.filter(v=>v>=(config.faixa_meta||90)&&v<100).length;
@@ -1453,7 +1533,7 @@ function renderDashStats(){
   const el=document.getElementById('dash-stats');
   if(el)el.innerHTML=`
     <div class="stat-card"><div class="stat-label">Média Geral</div><div class="stat-value" style="color:${getColor(media)}">${media.toFixed(1)}</div></div>
-    <div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">${idxs.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Gerências</div><div class="stat-value c-blue">${filteredStats.length}</div></div>
     <div class="stat-card"><div class="stat-label">Meta + Máximo</div><div class="stat-value c-green">${maximo+meta}</div></div>
     <div class="stat-card"><div class="stat-label">Ponto de Atenção</div><div class="stat-value c-red">${critico}</div></div>`;
 }
@@ -1470,7 +1550,33 @@ function toggleCalculo(id){
 function renderDashTable(){
   if(!dashData)return;
   const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
-  let lista=filtDir?dashData.filter(l=>l.gerencias?.diretoria_id===filtDir):dashData;
+  const filtGer=parseInt(document.getElementById('dash-filtro-ger')?.value)||0;
+  const sortMode=document.getElementById('dash-sort-ger')?.value||'ip_desc';
+
+  // Populate gerência dropdown (filtered by diretoria)
+  const gerSel=document.getElementById('dash-filtro-ger');
+  if(gerSel){
+    const gersVisiveis=filtDir?dashData.filter(l=>l.gerencias?.diretoria_id===filtDir):dashData;
+    const gerMap=new Map();
+    gersVisiveis.forEach(l=>{ if(l.gerencias?.id||l.gerencia_id) gerMap.set(l.gerencia_id||l.gerencias?.id, l.gerencias?.nome||'—'); });
+    const optsAlfa=[...gerMap.entries()].sort((a,b)=>a[1].localeCompare(b[1],'pt'));
+    const curVal=gerSel.value;
+    gerSel.innerHTML='<option value="">Todas as Gerências</option>'+optsAlfa.map(([id,n])=>`<option value="${id}"${String(id)===curVal?'selected':''}>${n}</option>`).join('');
+  }
+
+  let lista=dashData;
+  if(filtDir) lista=lista.filter(l=>l.gerencias?.diretoria_id===filtDir);
+  if(filtGer) lista=lista.filter(l=>(l.gerencia_id||l.gerencias?.id)===filtGer);
+
+  // Apply sort
+  if(sortMode==='alfa_asc') lista=[...lista].sort((a,b)=>(a.gerencias?.nome||'').localeCompare(b.gerencias?.nome||'','pt'));
+  else if(sortMode==='alfa_desc') lista=[...lista].sort((a,b)=>(b.gerencias?.nome||'').localeCompare(a.gerencias?.nome||'','pt'));
+  else if(sortMode==='ip_asc') lista=[...lista].sort((a,b)=>(a.indice_prevencao||0)-(b.indice_prevencao||0));
+  else lista=[...lista].sort((a,b)=>(b.indice_prevencao||0)-(a.indice_prevencao||0));
+
+  // Update stats with current filter
+  renderDashStats();
+
   const tw=document.getElementById('dash-table-wrap');
   if(!lista.length){if(tw)tw.innerHTML='<div class="loading">Nenhum lançamento encontrado para este período.</div>';return;}
 
@@ -1579,7 +1685,6 @@ function renderDashTable(){
       <td class="mono" style="color:${ajCor};font-weight:700">${aj>=0?'+':''}${aj}</td>
       <td class="mono" style="font-weight:800;font-size:15px;color:${cor}">${idx.toFixed(1)}</td>
       <td><span class="badge ${st.cls}">${st.label}</span></td>
-      <td><button class="btn btn-secondary btn-sm" onclick="editarLancamento(${l.id})" title="Editar lançamento" style="padding:3px 8px;font-size:11px">✏️ Editar</button></td>
     </tr>`;
 
     return mainRow+calcRow;
@@ -1588,7 +1693,7 @@ function renderDashTable(){
   if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table style="min-width:700px"><thead><tr>
     <th>Gerência</th><th>Unidade</th><th>Diretoria</th>
     <th>Pont. Ger.</th><th>Méd. Dir.</th><th>Auditoria</th>
-    <th>Ajuste</th><th>IP Final</th><th>Status</th><th></th>
+    <th>Ajuste</th><th>IP Final</th><th>Status</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -1938,7 +2043,7 @@ async function carregarHistorico(){
   const{data,error}=await q.limit(300);
   if(error||!data?.length){if(tw)tw.innerHTML='<div class="loading">Nenhum registro encontrado.</div>';return;}
   const acid={nenhum:'✅ Nenhum',iap:'⚠️ IAP',asa:'🟠 ASA',aca:'🔴 ACA',fatalidade:'💀 Fatalidade'};
-  if(tw)tw.innerHTML=`<div style="overflow-x:auto"><table><thead><tr>
+  if(tw)tw.innerHTML=`<div style="overflow-x:auto;width:100%;"><table style="min-width:1100px;"><thead><tr>
     <th>Safra</th><th>Mês</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th>
     <th>Pont. Ger.</th><th>Auditoria</th><th>Acidente</th><th>Ajuste</th>
     <th>Índice</th><th>Status</th><th>Atualizado em</th><th>Por</th><th>Ações</th>
@@ -2573,14 +2678,151 @@ function gerarDetalheHTML(lanc, itens){
 function imprimirDetalhe(){const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');if(subtitle)subtitle.textContent=document.getElementById('modal-detalhe-title')?.textContent||'';if(content)content.innerHTML=window._detalheHTMLAtual||'';fecharModal('modal-detalhe');overlay.style.display='block';}
 async function abrirImpressao(){
   if(!dashData?.length){alert('Carregue o Dashboard primeiro.');return;}
-  const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');
+  const overlay=document.getElementById('print-overlay');
   const periodo=document.getElementById('dash-periodo')?.value||'';
-  if(subtitle)subtitle.textContent='Período: '+periodo+' · Exportado em '+new Date().toLocaleDateString('pt-BR');
-  const rows=dashData.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);return`<tr><td style="padding:10px 14px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.nota_auditoria||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td style="padding:10px 14px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td><td style="padding:10px 14px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td></tr>`;}).join('');
-  const media=dashData.reduce((s,l)=>s+(l.indice_prevencao||0),0)/dashData.length;
-  content.innerHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px"><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">MÉDIA GERAL</div><div style="font-size:30px;font-weight:800;color:${getColor(media)}">${media.toFixed(1)}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">GERÊNCIAS</div><div style="font-size:30px;font-weight:800;color:#1a73e8">${dashData.length}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">META + MÁXIMO</div><div style="font-size:30px;font-weight:800;color:#07583C">${dashData.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length}</div></div><div style="background:#fef3e0;border-radius:10px;padding:16px;border-top:3px solid #c47d0e"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">PONTO DE ATENÇÃO</div><div style="font-size:30px;font-weight:800;color:#c47d0e">${dashData.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#07583C"><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">UNIDADE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AJUSTE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">STATUS</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  // Populate filter dropdowns
+  const pDir=document.getElementById('print-filtro-dir');
+  const pGer=document.getElementById('print-filtro-ger');
+  if(pDir){
+    const dirs=[...new Map(dashData.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()];
+    pDir.innerHTML='<option value="">Todas as Diretorias</option>'+dirs.sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).map(([id,n])=>`<option value="${id}">${n}</option>`).join('');
+  }
+  if(pGer){
+    const gers=[...new Map(dashData.map(l=>[l.gerencia_id||l.gerencias?.id,l.gerencias?.nome])).entries()];
+    pGer.innerHTML='<option value="">Todas as Gerências</option>'+gers.sort((a,b)=>(a[1]||'').localeCompare(b[1]||'')).map(([id,n])=>`<option value="${id}">${n}</option>`).join('');
+  }
+
+  renderPrintContent();
   overlay.style.display='block';
 }
+
+function renderPrintContent(){
+  const content=document.getElementById('print-content');
+  if(!content||!dashData?.length)return;
+  const periodo=document.getElementById('dash-periodo')?.value||'';
+  const layout=document.getElementById('print-layout')?.value||'tabela';
+  const filtDir=parseInt(document.getElementById('print-filtro-dir')?.value)||0;
+  const filtGer=parseInt(document.getElementById('print-filtro-ger')?.value)||0;
+
+  let lista=dashData;
+  if(filtDir) lista=lista.filter(l=>l.gerencias?.diretoria_id===filtDir);
+  if(filtGer) lista=lista.filter(l=>(l.gerencia_id||l.gerencias?.id)===filtGer);
+  lista=[...lista].sort((a,b)=>(b.indice_prevencao||0)-(a.indice_prevencao||0));
+
+  const media=lista.length?lista.reduce((s,l)=>s+(l.indice_prevencao||0),0)/lista.length:0;
+  const metaMax=lista.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length;
+  const pontAtencao=lista.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length;
+
+  const headerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;border-bottom:3px solid #07583C;padding-bottom:14px;">
+    <div>
+      <div style="font-size:22px;font-weight:800;color:#07583C">Índice de Prevenção — VIDAS</div>
+      <div style="font-size:13px;color:#5a7a5a;margin-top:4px">Período: ${periodo} · Gerado em ${new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+    </div>
+  </div>`;
+
+  const statsHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+    <div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">MÉDIA GERAL</div>
+      <div style="font-size:30px;font-weight:800;color:${getColor(media)}">${media.toFixed(1)}</div>
+    </div>
+    <div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">GERÊNCIAS</div>
+      <div style="font-size:30px;font-weight:800;color:#1a73e8">${lista.length}</div>
+    </div>
+    <div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">META + MÁXIMO</div>
+      <div style="font-size:30px;font-weight:800;color:#07583C">${metaMax}</div>
+    </div>
+    <div style="background:#fef3e0;border-radius:10px;padding:16px;border-top:3px solid #c47d0e">
+      <div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">PONTO DE ATENÇÃO</div>
+      <div style="font-size:30px;font-weight:800;color:#c47d0e">${pontAtencao}</div>
+    </div>
+  </div>`;
+
+  let mainHTML='';
+
+  if(layout==='tabela'){
+    const rows=lista.map(l=>{
+      const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
+      return`<tr>
+        <td style="padding:9px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td>
+        <td style="padding:9px 12px;font-size:11px;color:#1a73e8;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td>
+        <td style="padding:9px 12px;font-size:11px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td>
+        <td style="padding:9px 12px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.pontuacao_gerencia||0).toFixed(1)}</td>
+        <td style="padding:9px 12px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td>
+        <td style="padding:9px 12px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.nota_auditoria||0).toFixed(1)}</td>
+        <td style="padding:9px 12px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td>
+        <td style="padding:9px 12px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td>
+        <td style="padding:9px 12px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td>
+      </tr>`;
+    }).join('');
+    mainHTML=`<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#07583C">
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">UNIDADE</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">AJUSTE</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th>
+        <th style="padding:10px 12px;color:#fff;text-align:left;font-size:11px">STATUS</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  } else if(layout==='cards'){
+    const cards=lista.map(l=>{
+      const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
+      const barW=Math.min(100,idx)+'%';
+      return`<div style="background:#fff;border:1px solid #e0f0e8;border-radius:12px;padding:18px;border-left:5px solid ${cor};">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+          <div>
+            <div style="font-size:14px;font-weight:700;color:#1a2e1a">${l.gerencias?.nome||'—'}</div>
+            <div style="font-size:11px;color:#5a7a5a;margin-top:2px">${l.gerencias?.diretorias?.nome||'—'} · ${l.gerencias?.unidades?.nome||'—'}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:32px;font-weight:800;color:${cor};font-family:monospace;">${idx.toFixed(1)}</div>
+            <div style="background:${cor}22;color:${cor};padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;display:inline-block">${st.label}</div>
+          </div>
+        </div>
+        <div style="background:#f0f0f0;border-radius:4px;height:6px;margin-top:8px;">
+          <div style="background:${cor};width:${barW};height:6px;border-radius:4px;"></div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:#5a7a5a;font-family:monospace;">
+          <span>Ger: <b>${(l.pontuacao_gerencia||0).toFixed(1)}</b></span>
+          <span>Dir: <b>${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</b></span>
+          <span>Aud: <b>${(l.nota_auditoria||0).toFixed(1)}</b></span>
+          <span>Ajuste: <b style="color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'}">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</b></span>
+        </div>
+      </div>`;
+    }).join('');
+    mainHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;">${cards}</div>`;
+
+  } else if(layout==='resumo'){
+    // Resumo executivo - agrupado por status
+    const groups=[
+      {label:'🏆 Máximo (100)', items:lista.filter(l=>(l.indice_prevencao||0)>=100), cor:'#7c3aed'},
+      {label:'✅ Meta', items:lista.filter(l=>{const v=l.indice_prevencao||0;return v>=(config.faixa_meta||90)&&v<100;}), cor:'#07583C'},
+      {label:'🟡 Mínimo', items:lista.filter(l=>{const v=l.indice_prevencao||0;return v>=(config.faixa_critico||80)&&v<(config.faixa_meta||90);}), cor:'#c47d0e'},
+      {label:'🔴 Ponto de Atenção', items:lista.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)), cor:'#d93025'},
+    ];
+    mainHTML=groups.filter(g=>g.items.length).map(g=>`
+      <div style="margin-bottom:20px;">
+        <div style="font-size:13px;font-weight:700;color:${g.cor};margin-bottom:8px;padding:6px 12px;background:${g.cor}15;border-radius:6px;border-left:4px solid ${g.cor};">
+          ${g.label} <span style="font-weight:400;font-size:12px">(${g.items.length} gerência${g.items.length>1?'s':''})</span>
+        </div>
+        ${g.items.map(l=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid #f0f0f0;">
+          <span style="font-size:13px;font-weight:600">${l.gerencias?.nome||'—'} <span style="font-size:11px;font-weight:400;color:#5a7a5a">${l.gerencias?.unidades?.nome||''}</span></span>
+          <span style="font-size:18px;font-weight:800;font-family:monospace;color:${g.cor}">${(l.indice_prevencao||0).toFixed(1)}</span>
+        </div>`).join('')}
+      </div>`).join('');
+  }
+
+  content.innerHTML=headerHTML+statsHTML+mainHTML;
+}
+
 function fecharImpressao(){document.getElementById('print-overlay').style.display='none';}
 
 // ── MODAIS ────────────────────────────────────────────────────
@@ -2690,20 +2932,33 @@ ativarWakeLock();
 
 </script>
 
-<!-- PÁGINA DE IMPRESSÃO -->
-<div id="print-overlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:500;overflow-y:auto;padding:30px">
-  <div style="max-width:900px;margin:0 auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:3px solid #07583C;padding-bottom:15px">
-      <div>
-        <div style="font-size:22px;font-weight:800;color:#07583C">Índice de Prevenção — VIDAS</div>
-        <div id="print-subtitle" style="font-size:14px;color:#5a7a5a;margin-top:4px"></div>
+<!-- PÁGINA DE IMPRESSÃO / POWERPOINT -->
+<div id="print-overlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:500;overflow-y:auto;padding:24px">
+  <div style="max-width:1400px;margin:0 auto;">
+    <!-- Barra de controles (não aparece na impressão) -->
+    <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;background:#07583C;border-radius:10px;padding:14px 20px;">
+      <div style="color:#fff;">
+        <div style="font-size:16px;font-weight:800;">🖨️ Modo Impressão / PowerPoint</div>
+        <div style="font-size:12px;opacity:.8;margin-top:2px">Filtros: por Diretoria ou Gerência. Tire o print da área abaixo.</div>
       </div>
-      <div style="display:flex;gap:10px">
-        <button onclick="window.print()" style="background:#07583C;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer">🖨️ Imprimir</button>
-        <button onclick="fecharImpressao()" style="background:#f0f0f0;color:#333;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer">✕ Fechar</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <select id="print-filtro-dir" onchange="renderPrintContent()" style="padding:7px 12px;border-radius:7px;font-size:13px;border:none;">
+          <option value="">Todas as Diretorias</option>
+        </select>
+        <select id="print-filtro-ger" onchange="renderPrintContent()" style="padding:7px 12px;border-radius:7px;font-size:13px;border:none;">
+          <option value="">Todas as Gerências</option>
+        </select>
+        <select id="print-layout" onchange="renderPrintContent()" style="padding:7px 12px;border-radius:7px;font-size:13px;border:none;">
+          <option value="tabela">📋 Tabela Completa</option>
+          <option value="cards">🃏 Cards (PowerPoint)</option>
+          <option value="resumo">📊 Resumo Executivo</option>
+        </select>
+        <button onclick="window.print()" style="background:#B3DD64;color:#07583C;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;">🖨️ Imprimir</button>
+        <button onclick="fecharImpressao()" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:9px 18px;font-size:13px;cursor:pointer;">✕ Fechar</button>
       </div>
     </div>
-    <div id="print-content"></div>
+    <!-- Área imprimível -->
+    <div id="print-content" style="background:#fff;border-radius:10px;padding:24px;border:1px solid #e0e0e0;"></div>
   </div>
 </div>
 
@@ -2770,8 +3025,12 @@ ativarWakeLock();
 <style>
 @media print {
   body > *:not(#print-overlay){display:none !important;}
-  #print-overlay{position:static !important;padding:0 !important;}
-  #print-overlay > div > div:first-child button{display:none !important;}
+  #print-overlay{position:static !important;padding:0 !important;overflow:visible !important;}
+  .no-print{display:none !important;}
+  #print-content{border:none !important;box-shadow:none !important;padding:0 !important;}
+}
+@media screen {
+  .no-print { display:flex !important; }
 }
 </style>
 </body>

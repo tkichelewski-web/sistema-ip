@@ -1462,16 +1462,24 @@ async function carregarDashboard(){
     .or(`mes.eq.${periodo},periodo.eq.${periodo}`)
     .order('indice_prevencao',{ascending:false});
   dashData=lancs||[];
-  popularGerCheckboxes();
+  _gerSelecionadasIds=null; // reset para "todas" ao mudar período
+  sincronizarCheckboxes();
   renderDashTable();
 }
 
 function getListaFiltrada(){
   if(!dashData)return[];
   const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
-  const selecionadas=getGersSelecionadas();
+  const selecionadas=_gerSelecionadasIds; // null=todas, Set=específicas
   let lista=filtDir?dashData.filter(l=>l.gerencias?.diretoria_id===filtDir):dashData;
-  if(selecionadas.size>0) lista=lista.filter(l=>selecionadas.has(l.gerencia_id||l.id));
+  // Filtro de gerências: só aplica se há seleção parcial (Set com itens)
+  if(selecionadas!==null){
+    if(selecionadas.size===0){
+      lista=[]; // nenhuma marcada → lista vazia
+    } else {
+      lista=lista.filter(l=>selecionadas.has(parseInt(l.gerencia_id||l.id)||0));
+    }
+  }
   const sort=document.getElementById('dash-sort-ger')?.value||'ip_desc';
   if(sort==='alfa_asc') lista=[...lista].sort((a,b)=>(a.gerencias?.nome||'').localeCompare(b.gerencias?.nome||'','pt'));
   else if(sort==='alfa_desc') lista=[...lista].sort((a,b)=>(b.gerencias?.nome||'').localeCompare(a.gerencias?.nome||'','pt'));
@@ -1494,8 +1502,9 @@ function renderDashStats(){
   const maximo=idxs.filter(v=>v>=100).length;
   const meta=idxs.filter(v=>v>=(config.faixa_meta||90)&&v<100).length;
   const critico=idxs.filter(v=>v<(config.faixa_critico||80)).length;
-  const selecionadas=getGersSelecionadas();
-  const labelMedia=selecionadas.size>0?`Média (${selecionadas.size} selecionada${selecionadas.size>1?'s':''})`:'Média Geral';
+  const selecionadas=_gerSelecionadasIds;
+  const nSel=selecionadas===null?0:selecionadas.size;
+  const labelMedia=(selecionadas!==null&&nSel>0)?`Média (${nSel} selecionada${nSel>1?'s':''})`:'Média Geral';
   const el=document.getElementById('dash-stats');
   if(el)el.innerHTML=`
     <div class="stat-card"><div class="stat-label">${labelMedia}</div><div class="stat-value" style="color:${getColor(media)}">${media.toFixed(1)}</div></div>
@@ -1513,30 +1522,61 @@ function toggleCalculo(id){
   if(btn)btn.textContent=open?'▲':'▼';
 }
 
+// ── IDs das gerências actualmente visíveis no dropdown ─────────
+// Guardamos o estado selecionado como Set de gerencia_id para
+// sobreviver a re-renders sem resetar as escolhas do utilizador.
+let _gerSelecionadasIds = null; // null = "todas" (estado inicial)
+
 function onDashDirChange(){
-  // Ao mudar diretoria, recarrega checkboxes filtrados e renderiza
-  popularGerCheckboxes();
+  // Ao mudar diretoria recarrega a lista mas mantém "todas marcadas"
+  _gerSelecionadasIds = null;
+  sincronizarCheckboxes();
   renderDashTable();
 }
 
 function toggleGerDropdown(){
   const panel=document.getElementById('ger-dropdown-panel');
   if(!panel)return;
-  panel.style.display=panel.style.display==='none'?'block':'none';
+  const abrindo = panel.style.display==='none' || panel.style.display==='';
+  if(abrindo){
+    sincronizarCheckboxes(); // garante lista atualizada ao abrir
+    panel.style.display='block';
+  } else {
+    panel.style.display='none';
+  }
 }
 
 function selecionarTodasGers(marcar){
-  document.querySelectorAll('#ger-checkbox-list input[type=checkbox]').forEach(cb=>cb.checked=marcar);
+  const checks=document.querySelectorAll('#ger-checkbox-list input[type=checkbox]');
+  checks.forEach(cb=>cb.checked=marcar);
+  _gerSelecionadasIds = marcar ? null : new Set(); // null = todas, Set vazio = nenhuma
+  atualizarLabelGer();
+  renderDashTable();
+}
+
+function onGerCheckboxChange(gId, checked){
+  // Leitura precisa do estado atual
+  const checks=[...document.querySelectorAll('#ger-checkbox-list input[type=checkbox]')];
+  const total=checks.length;
+  const marcadas=checks.filter(cb=>cb.checked).length;
+  if(marcadas===total){
+    _gerSelecionadasIds=null; // todas = sem filtro
+  } else {
+    _gerSelecionadasIds=new Set(checks.filter(cb=>cb.checked).map(cb=>parseInt(cb.value)));
+  }
   atualizarLabelGer();
   renderDashTable();
 }
 
 function atualizarLabelGer(){
-  const checks=document.querySelectorAll('#ger-checkbox-list input[type=checkbox]');
-  const selecionadas=[...checks].filter(cb=>cb.checked);
+  const checks=[...document.querySelectorAll('#ger-checkbox-list input[type=checkbox]')];
+  const total=checks.length;
+  const selecionadas=checks.filter(cb=>cb.checked);
   const label=document.getElementById('ger-dropdown-label');
   if(!label)return;
-  if(selecionadas.length===0||selecionadas.length===checks.length){
+  if(selecionadas.length===0){
+    label.textContent='Nenhuma selecionada';
+  } else if(selecionadas.length===total||total===0){
     label.textContent='Todas as Gerências';
   } else if(selecionadas.length===1){
     label.textContent=selecionadas[0].dataset.nome;
@@ -1545,30 +1585,40 @@ function atualizarLabelGer(){
   }
 }
 
-function popularGerCheckboxes(){
+function sincronizarCheckboxes(){
+  // Reconstrói o DOM dos checkboxes preservando _gerSelecionadasIds
   if(!dashData)return;
   const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
-  let gers=dashData;
+  let gers=[...dashData];
   if(filtDir) gers=gers.filter(l=>l.gerencias?.diretoria_id===filtDir);
-  // Ordena alfabético: nome + unidade
-  gers=[...gers].sort((a,b)=>{
+  gers.sort((a,b)=>{
     const na=(a.gerencias?.nome||'')+(a.gerencias?.unidades?.nome||'');
     const nb=(b.gerencias?.nome||'')+(b.gerencias?.unidades?.nome||'');
     return na.localeCompare(nb,'pt');
   });
-  const lista=document.getElementById('ger-checkbox-list');
-  if(!lista)return;
-  lista.innerHTML=gers.map(l=>{
-    const gId=l.gerencia_id||l.id;
+  const listaEl=document.getElementById('ger-checkbox-list');
+  if(!listaEl)return;
+  listaEl.innerHTML=gers.map(l=>{
+    const gId=parseInt(l.gerencia_id||l.id)||0;
     const gNome=l.gerencias?.nome||'—';
     const gUni=l.gerencias?.unidades?.nome||'';
-    const label=gUni?`${gNome} <span style="font-size:10px;color:var(--blue);font-weight:600">${gUni}</span>`:gNome;
-    return`<label style="display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
-      <input type="checkbox" value="${gId}" data-nome="${gNome} ${gUni}" checked style="accent-color:#07583C;width:14px;height:14px;" onchange="atualizarLabelGer();renderDashTable();">
-      <span>${label}</span>
+    // checked: null = todas marcadas; Set = só as do Set
+    const checked=(_gerSelecionadasIds===null)||_gerSelecionadasIds.has(gId);
+    const uniSpan=gUni?` <span style="font-size:10px;color:var(--blue);font-weight:600;background:#e8f0fe;border-radius:3px;padding:1px 4px;">${gUni}</span>`:'';
+    return`<label style="display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);transition:background .1s;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <input type="checkbox" value="${gId}" data-nome="${gNome}${gUni?' '+gUni:''}" ${checked?'checked':''} style="accent-color:#07583C;width:14px;height:14px;flex-shrink:0;" onchange="onGerCheckboxChange(${gId},this.checked)">
+      <span>${gNome}${uniSpan}</span>
     </label>`;
   }).join('');
+  if(gers.length===0){
+    listaEl.innerHTML='<div style="padding:10px 14px;font-size:12px;color:var(--muted);">Nenhuma gerência para este período.</div>';
+  }
   atualizarLabelGer();
+}
+
+// helper: retorna Set de ids selecionados, ou null se todas
+function getGersSelecionadas(){
+  return _gerSelecionadasIds;
 }
 
 // Fecha dropdown ao clicar fora
@@ -1582,7 +1632,6 @@ document.addEventListener('click',function(e){
 
 function renderDashTable(){
   if(!dashData)return;
-  popularGerCheckboxes();
   const lista=getListaFiltrada();
   renderDashStats();
   const tw=document.getElementById('dash-table-wrap');
@@ -2472,7 +2521,7 @@ function exportarPDF(){
   const doc=new jsPDF({orientation:'landscape'});
   const periodo=document.getElementById('dash-periodo')?.value||'';
   const lista=getListaFiltrada();
-  const selecionadas=getGersSelecionadas();
+  const selecionadas=_gerSelecionadasIds;
 
   // Cabeçalho
   doc.setFontSize(14);doc.setTextColor(7,88,60);
@@ -2485,7 +2534,7 @@ function exportarPDF(){
   const dirNome=filtDir?.selectedOptions[0]?.text||'';
   let filtroTexto='';
   if(dirNome&&dirNome!=='Todas as Diretorias') filtroTexto+='Diretoria: '+dirNome+'  ';
-  if(selecionadas.size>0&&selecionadas.size<_exLista.length) filtroTexto+='Gerências selecionadas: '+lista.length;
+  if(selecionadas!==null&&selecionadas.size>0) filtroTexto+='Gerências selecionadas: '+lista.length;
   if(filtroTexto){
     doc.setFontSize(8);doc.setTextColor(180,80,0);
     doc.text('Filtro ativo: '+filtroTexto,14,29);
@@ -2496,7 +2545,7 @@ function exportarPDF(){
   const metaMax=lista.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length;
   const atencao=lista.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length;
   doc.setFontSize(9);doc.setTextColor(30,46,26);
-  const labelM=selecionadas.size>0&&selecionadas.size<_exLista.length?'Média selecionadas':'Média Geral';
+  const labelM=(selecionadas!==null&&selecionadas.size>0)?'Média selecionadas':'Média Geral';
   doc.text(labelM+': '+media.toFixed(1)+'  |  Gerências: '+lista.length+'  |  Meta+Máx: '+metaMax+'  |  Pt.Atenção: '+atencao,14,filtroTexto?35:29);
 
   let y=filtroTexto?43:37;
@@ -2532,7 +2581,7 @@ function exportarPDF(){
     });
     y+=5.5;
   }
-  doc.save('IP_'+periodo+(selecionadas.size>0&&selecionadas.size<_exLista.length?'_filtrado':'')+'.pdf');
+  doc.save('IP_'+periodo+((selecionadas!==null&&selecionadas.size>0)?'_filtrado':'')+'.pdf');
 }
 
 // ── BACKUP COMPLETO ───────────────────────────────────────────
@@ -2756,13 +2805,13 @@ async function abrirImpressao(){
   // Usa a mesma lista filtrada do dashboard (diretoria + gerências selecionadas)
   const lista=getListaFiltrada();
   const periodo=document.getElementById('dash-periodo')?.value||'';
-  const selecionadas=getGersSelecionadas();
+  const selecionadas=_gerSelecionadasIds; // null=todas, Set=específicas
   // Monta subtítulo com filtros ativos
   const filtDir=document.getElementById('dash-filtro-dir');
   const dirNome=filtDir?.selectedOptions[0]?.text||'';
   let subtituloFiltros='Período: '+periodo;
   if(dirNome&&dirNome!=='Todas as Diretorias') subtituloFiltros+=' · '+dirNome;
-  if(selecionadas.size>0&&selecionadas.size<dashData.length){
+  if(selecionadas!==null&&selecionadas.size>0){
     const nomes=lista.map(l=>(l.gerencias?.nome||'')+(l.gerencias?.unidades?.nome?' '+l.gerencias.unidades.nome:''));
     subtituloFiltros+=' · '+nomes.join(', ');
   }
@@ -2792,7 +2841,7 @@ async function abrirImpressao(){
     </tr>`;
   }).join('');
 
-  const labelMedia=selecionadas.size>0&&selecionadas.size<dashData.length?`Média (${lista.length} selecionadas)`:'Média Geral';
+  const labelMedia=(selecionadas!==null&&selecionadas.size>0)?`Média (${lista.length} selecionada${lista.length>1?'s':''})`:'Média Geral';
 
   content.innerHTML=`
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">

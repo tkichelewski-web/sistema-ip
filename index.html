@@ -2803,138 +2803,190 @@ function renderModalNA() {
     return true;
   });
 
-  // Monta linhas de não atingidos
-  const naoAtingidos = [];
-  let totalPesoPerdido = 0;
-  let totalItens = 0;
-  let somaIP = 0, countIP = 0;
-
-  // Mapa de IP final por lançamento
-  const ipPorLanc = {};
-  for (const lanc of lancs) {
-    const ip = lanc.indice_prevencao ?? null;
-    if (ip != null) { somaIP += ip; countIP++; }
-    ipPorLanc[lanc.id] = ip;
-  }
+  // Acumula dados por gerência
+  // estrutura: Map<lancId, {lanc, itensComPerda: []}>
+  const gerMap = new Map(); // gerencia_id+mes => {gerencia, pontuacaoGer, perdaTotalGer, itens[]}
+  let totalPerdaGlobal = 0;
+  let totalItensGlobal = 0;
+  let somaGerPont = 0, countGer = 0;
 
   for (const lanc of lancs) {
     const items = _naItens[lanc.id] || [];
-    for (const item of items) {
-      totalItens++;
-      // Obtém pontuação do item
-      let pont = item.pontuacao ?? 0;
-      const tipo = item.indicadores?.tipo || '';
-      // Para binário: sim = 100, não = 0
-      if (tipo === 'binario') {
-        pont = item.sim_nao ? 100 : 0;
-      }
-      const peso = item.peso || 0;
-      // "Não atingido" = pontuação abaixo de 100% do esperado (qualquer valor < 100)
-      // Mas o peso perdido = quanto do peso total deixou de ser pontuado
-      // Peso perdido = peso * (100 - pont) / 100 — quanto de pontuação máxima foi perdido
-      const pesoPerdidoIndicador = peso * (100 - pont) / 100;
+    if (!items.length) continue;
 
-      // Só mostra se teve alguma perda (pont < 100) — assim captura qualquer não-atingido
+    const pontGer = lanc.pontuacao_gerencia ?? 0; // pontuação da gerência (0-100)
+    somaGerPont += pontGer; countGer++;
+
+    // Calcula perda total de pontuação da gerência
+    let perdaTotalGer = 0;
+    const itensComPerda = [];
+
+    for (const item of items) {
+      totalItensGlobal++;
+      const tipo = item.indicadores?.tipo || '';
+      let pont = item.pontuacao ?? 0;
+      if (tipo === 'binario') pont = item.sim_nao ? 100 : 0;
+
+      const peso = item.peso || 0;
+      // Perda na pontuação da gerência = peso * (100 - pont) / 100
+      // Ou seja: quanto esse indicador retirou dos 100 pontos máximos da gerência
+      const perdaPont = peso * (100 - pont) / 100;
+
       if (pont < 100) {
-        totalPesoPerdido += pesoPerdidoIndicador;
-        naoAtingidos.push({
-          gerencia: lanc.gerencias?.nome || '—',
-          diretoria: lanc.gerencias?.diretorias?.nome || '—',
-          unidade: lanc.gerencias?.unidades?.nome || '—',
-          mes: lanc.mes || lanc.periodo || '—',
+        totalPerdaGlobal += perdaPont;
+        itensComPerda.push({
           indicador: item.indicadores?.nome || '—',
-          tipo: tipo,
-          peso: peso,
-          pont: pont,
-          pesoPerdidoIndicador: parseFloat(pesoPerdidoIndicador.toFixed(2)),
-          ipFinal: ipPorLanc[lanc.id],
-          comentario: item.comentario || '',
-          lancId: lanc.id,
+          tipo,
+          peso,
+          pont,
+          perdaPont: parseFloat(perdaPont.toFixed(2)),
+          previsto: item.previsto,
+          realizado: item.realizado,
+          nota: item.nota,
+          sim_nao: item.sim_nao,
         });
       }
     }
+
+    if (itensComPerda.length) {
+      const key = lanc.id;
+      const mesLanc = lanc.mes || lanc.periodo || '—';
+      gerMap.set(key, {
+        gerencia: lanc.gerencias?.nome || '—',
+        unidade: lanc.gerencias?.unidades?.nome || '—',
+        diretoria: lanc.gerencias?.diretorias?.nome || '—',
+        mes: mesLanc,
+        pontGer: pontGer,
+        perdaTotalGer: itensComPerda.reduce((s, i) => s + i.perdaPont, 0),
+        itensComPerda: itensComPerda.sort((a,b) => b.perdaPont - a.perdaPont),
+      });
+    }
   }
 
-  // Resumo
+  // Resumo cards
   const naResumo = document.getElementById('na-resumo');
   if (naResumo) {
-    const totalNA = naoAtingidos.length;
-    const pct = totalItens > 0 ? ((totalNA / totalItens) * 100).toFixed(1) : '0.0';
-    const mediaIP = countIP > 0 ? (somaIP / countIP).toFixed(1) : '—';
-    const corIP = countIP > 0 ? getColor(somaIP/countIP) : '#5a7a5a';
+    const totalGers = gerMap.size;
+    const mediaGerPont = countGer > 0 ? (somaGerPont / countGer) : 0;
+    const corMedia = getColor(mediaGerPont);
     naResumo.innerHTML = `
-      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #d93025;">
-        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Com Perda</div>
-        <div style="font-size:26px;font-weight:800;color:#d93025;">${totalNA}</div>
-        <div style="font-size:11px;color:var(--muted);">${pct}% dos indicadores</div>
+      <div style="flex:1;min-width:160px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 20px;border-top:3px solid #d93025;">
+        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Gerências com Perda</div>
+        <div style="font-size:32px;font-weight:800;color:#d93025;line-height:1">${totalGers}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">de ${lancs.length} lançamento(s)</div>
       </div>
-      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #c47d0e;">
-        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Peso Perdido</div>
-        <div style="font-size:26px;font-weight:800;color:#c47d0e;">${totalPesoPerdido.toFixed(1)}</div>
-        <div style="font-size:11px;color:var(--muted);">pts de peso não atingidos</div>
+      <div style="flex:1;min-width:160px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 20px;border-top:3px solid #c47d0e;">
+        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Total Perdido (Pont. Ger.)</div>
+        <div style="font-size:32px;font-weight:800;color:#c47d0e;line-height:1">-${totalPerdaGlobal.toFixed(1)}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">pontos de pontuação da gerência</div>
       </div>
-      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid ${corIP};">
-        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">IP Médio</div>
-        <div style="font-size:26px;font-weight:800;color:${corIP};">${mediaIP}</div>
-        <div style="font-size:11px;color:var(--muted);">${countIP} lançamento(s) filtrado(s)</div>
+      <div style="flex:1;min-width:160px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 20px;border-top:3px solid ${corMedia};">
+        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Média Pont. Gerência</div>
+        <div style="font-size:32px;font-weight:800;color:${corMedia};line-height:1">${mediaGerPont.toFixed(1)}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">pontuação média das gerências</div>
       </div>
-      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #B3DD64;">
-        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Total Avaliados</div>
-        <div style="font-size:26px;font-weight:800;color:#07583C;">${totalItens}</div>
-        <div style="font-size:11px;color:var(--muted);">indicadores analisados</div>
+      <div style="flex:1;min-width:160px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 20px;border-top:3px solid #B3DD64;">
+        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Indicadores Avaliados</div>
+        <div style="font-size:32px;font-weight:800;color:#07583C;line-height:1">${totalItensGlobal}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">indicadores no período</div>
       </div>
     `;
   }
 
-  // Tabela
   const naConteudo = document.getElementById('na-conteudo');
   if (!naConteudo) return;
-  if (!naoAtingidos.length) {
-    naConteudo.innerHTML = '<div class="loading" style="color:#07583C;font-weight:600;">✅ Nenhum indicador não atingido encontrado para os filtros selecionados.</div>';
+
+  if (!gerMap.size) {
+    naConteudo.innerHTML = '<div style="padding:24px;text-align:center;color:#07583C;font-size:15px;font-weight:700;">✅ Nenhuma gerência com perda encontrada para os filtros selecionados.</div>';
     return;
   }
 
-  // Ordena por peso perdido desc
-  naoAtingidos.sort((a, b) => b.pesoPerdidoIndicador - a.pesoPerdidoIndicador);
-
-  const tipoLabel = { previsto_realizado: 'Prev×Real', nota: 'Nota', binario: 'Sim/Não' };
   const nomesMes = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   function fmtMes(m) {
     if (!m || m === '—') return '—';
     const [a, mm] = m.split('-');
     return `${nomesMes[parseInt(mm)]}/${a}`;
   }
+  function fmtValor(item) {
+    if (item.tipo === 'previsto_realizado') {
+      const prev = item.previsto ?? '—';
+      const real = item.realizado ?? '—';
+      return `<span style="color:var(--muted);font-size:12px">Prev:</span> <b>${prev}</b> &nbsp; <span style="color:var(--muted);font-size:12px">Real:</span> <b style="color:${item.pont < 80 ? '#d93025' : '#c47d0e'}">${real}</b>`;
+    }
+    if (item.tipo === 'nota') {
+      return `<span style="color:var(--muted);font-size:12px">Nota:</span> <b style="color:${item.pont < 80 ? '#d93025' : '#c47d0e'}">${item.nota ?? '—'}</b>`;
+    }
+    if (item.tipo === 'binario') {
+      return `<b style="color:#d93025">✗ Não realizado</b>`;
+    }
+    return '—';
+  }
 
-  const rows = naoAtingidos.map(n => {
-    const corPerdido = n.pesoPerdidoIndicador >= 10 ? '#d93025' : n.pesoPerdidoIndicador >= 3 ? '#c47d0e' : '#5a7a5a';
-    const corPont = n.pont < 50 ? '#d93025' : n.pont < 80 ? '#c47d0e' : '#5a7a5a';
-    const ipFinalStr = n.ipFinal != null ? n.ipFinal.toFixed(1) : '—';
-    const corIP = n.ipFinal != null ? getColor(n.ipFinal) : '#5a7a5a';
-    return `<tr>
-      <td style="font-size:12px;white-space:nowrap">${fmtMes(n.mes)}</td>
-      <td><b>${n.gerencia}</b><br><span style="font-size:10px;color:var(--muted)">${n.unidade}</span></td>
-      <td style="font-size:11px;color:var(--muted)">${n.diretoria}</td>
-      <td style="max-width:180px;white-space:normal">${n.indicador}</td>
-      <td><span class="badge ${n.tipo === 'binario' ? 'badge-yellow' : n.tipo === 'nota' ? 'badge-green' : 'badge-blue'}" style="font-size:10px">${tipoLabel[n.tipo] || n.tipo}</span></td>
-      <td class="mono" style="text-align:center">${n.peso}%</td>
-      <td class="mono" style="text-align:center;color:${corPont};font-weight:700">${n.pont.toFixed(1)}</td>
-      <td class="mono" style="text-align:center;font-weight:700;color:${corPerdido}">-${n.pesoPerdidoIndicador.toFixed(2)} pts</td>
-      <td class="mono" style="text-align:center;font-weight:800;color:${corIP}">${ipFinalStr}</td>
-      <td style="font-size:11px;color:var(--muted);max-width:150px;white-space:normal">${n.comentario}</td>
-    </tr>`;
+  // Ordena por maior perda total da gerência
+  const gersOrdenadas = [...gerMap.values()].sort((a,b) => b.perdaTotalGer - a.perdaTotalGer);
+
+  const blocos = gersOrdenadas.map(g => {
+    const corPerd = g.perdaTotalGer >= 5 ? '#d93025' : g.perdaTotalGer >= 2 ? '#c47d0e' : '#5a7a5a';
+    const pontMax = 100;
+    const pontAtingida = g.pontGer;
+    const perdaDisplay = (pontMax - pontAtingida).toFixed(1);
+    const barPct = Math.min((g.perdaTotalGer / pontMax) * 100, 100);
+
+    const linhasIndicadores = g.itensComPerda.map((item, i) => {
+      const corItemPerda = item.perdaPont >= 5 ? '#d93025' : item.perdaPont >= 1 ? '#c47d0e' : '#888';
+      return `
+        <tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:10px 14px;font-size:14px;color:#1a2e1a;max-width:280px;">${item.indicador}</td>
+          <td style="padding:10px 14px;font-size:14px;">${fmtValor(item)}</td>
+          <td style="padding:10px 14px;text-align:right;">
+            <span style="font-size:15px;font-weight:800;color:${corItemPerda};font-family:'DM Mono',monospace;">-${item.perdaPont.toFixed(2)} pts</span>
+            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${item.pont.toFixed(0)}% atingido</div>
+          </td>
+        </tr>`;
+    }).join('');
+
+    return `
+      <div style="background:#fff;border:1px solid var(--border);border-radius:12px;margin-bottom:20px;overflow:hidden;">
+        <!-- Header da gerência -->
+        <div style="background:linear-gradient(90deg,#07583C 0%,#0a7a54 100%);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-size:17px;font-weight:800;color:#fff;">${g.gerencia}</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.75);margin-top:2px;font-family:'DM Mono',monospace;">${g.unidade} · ${g.diretoria} · ${fmtMes(g.mes)}</div>
+          </div>
+          <div style="display:flex;gap:24px;align-items:center;">
+            <!-- Pontuação da gerência -->
+            <div style="text-align:center;">
+              <div style="font-size:11px;color:rgba(255,255,255,0.65);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;">Pont. Gerência</div>
+              <div style="font-size:28px;font-weight:800;color:#B3DD64;font-family:'DM Mono',monospace;line-height:1.1;">${pontAtingida.toFixed(1)}<span style="font-size:14px;color:rgba(255,255,255,0.5)">/100</span></div>
+            </div>
+            <!-- Seta separadora -->
+            <div style="font-size:20px;color:rgba(255,255,255,0.4);">→</div>
+            <!-- Total perdido -->
+            <div style="text-align:center;background:rgba(0,0,0,0.2);border-radius:8px;padding:8px 16px;">
+              <div style="font-size:11px;color:rgba(255,255,255,0.65);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;">Pontos Perdidos</div>
+              <div style="font-size:28px;font-weight:800;color:#ff8080;font-family:'DM Mono',monospace;line-height:1.1;">-${g.perdaTotalGer.toFixed(1)}</div>
+            </div>
+          </div>
+        </div>
+        <!-- Barra de perda -->
+        <div style="height:5px;background:#e8f5ee;">
+          <div style="height:100%;width:${(pontAtingida/pontMax*100).toFixed(1)}%;background:#B3DD64;border-radius:0 2px 2px 0;transition:width .3s;"></div>
+        </div>
+        <!-- Tabela de indicadores -->
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f8fdf8;border-bottom:2px solid #e0f0e8;">
+              <th style="padding:10px 14px;text-align:left;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Indicador</th>
+              <th style="padding:10px 14px;text-align:left;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Previsto / Realizado</th>
+              <th style="padding:10px 14px;text-align:right;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Pontos Perdidos</th>
+            </tr>
+          </thead>
+          <tbody>${linhasIndicadores}</tbody>
+        </table>
+      </div>`;
   }).join('');
 
-  naConteudo.innerHTML = `
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;padding:6px 10px;background:var(--surface2);border-radius:6px;font-family:'DM Mono',monospace;">
-      ℹ️ Exibe <b>todos</b> os indicadores que não atingiram 100% — incluindo gerências com IP alto (ex: 99,5). O "Peso Perdido" é quanto aquele indicador deduziu da pontuação máxima da gerência.
-    </div>
-    <div style="overflow-x:auto"><table style="min-width:800px">
-    <thead><tr>
-      <th>Mês</th><th>Gerência / Unid.</th><th>Diretoria</th>
-      <th>Indicador</th><th>Tipo</th><th>Peso</th><th>Pont.</th><th>Peso Perdido</th><th>IP Final Ger.</th><th>Comentário</th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table></div>`;
+  naConteudo.innerHTML = blocos;
 }
 
 // ── START ─────────────────────────────────────────────────────
@@ -2987,37 +3039,40 @@ ativarWakeLock();
 </script>
 
 <!-- MODAL INDICADORES NÃO ATINGIDOS -->
-<div class="modal-overlay" id="modal-nao-atingidos" style="z-index:250">
-  <div class="modal" style="width:820px;max-width:97vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-title">⚠️ Indicadores Não Atingidos por Gerência</div>
-    <!-- Filtros -->
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+<div class="modal-overlay" id="modal-nao-atingidos" style="z-index:250;padding:16px;">
+  <div class="modal" style="width:1100px;max-width:98vw;max-height:95vh;overflow-y:auto;padding:32px 36px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #B3DD64;">
       <div>
-        <label style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Diretoria</label>
-        <select id="na-filtro-dir" onchange="filtrarGerenciasNA();renderModalNA()" style="padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);width:auto;">
+        <div style="font-size:20px;font-weight:800;color:#07583C;">⚠️ Indicadores Não Atingidos por Gerência</div>
+        <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Pontuação da gerência perdida por indicador</div>
+      </div>
+      <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')" style="font-size:13px;">✕ Fechar</button>
+    </div>
+    <!-- Filtros -->
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;align-items:flex-end;">
+      <div>
+        <label style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:5px;">Diretoria</label>
+        <select id="na-filtro-dir" onchange="filtrarGerenciasNA();renderModalNA()" style="padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:#fff;min-width:220px;">
           <option value="">Todas as Diretorias</option>
         </select>
       </div>
       <div>
-        <label style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Gerência</label>
-        <select id="na-filtro-ger" onchange="renderModalNA()" style="padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);width:auto;">
+        <label style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:5px;">Gerência</label>
+        <select id="na-filtro-ger" onchange="renderModalNA()" style="padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:#fff;min-width:220px;">
           <option value="">Todas as Gerências</option>
         </select>
       </div>
       <div>
-        <label style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Mês</label>
-        <select id="na-filtro-mes" onchange="renderModalNA()" style="padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);width:auto;">
+        <label style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:5px;">Mês</label>
+        <select id="na-filtro-mes" onchange="renderModalNA()" style="padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:#fff;min-width:160px;">
           <option value="">Todos os Meses</option>
         </select>
       </div>
     </div>
-    <!-- Resumo -->
-    <div id="na-resumo" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;"></div>
-    <!-- Tabela -->
+    <!-- Cards resumo -->
+    <div id="na-resumo" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:22px;"></div>
+    <!-- Conteúdo -->
     <div id="na-conteudo"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')">Fechar</button>
-    </div>
   </div>
 </div>
 

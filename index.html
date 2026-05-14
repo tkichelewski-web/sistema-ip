@@ -201,7 +201,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <input type="month" id="dash-periodo" onchange="carregarDashboard()" style="width:auto;padding:6px 10px;">
         </div>
         <div class="flex-row">
-          <select id="dash-filtro-dir" onchange="renderDashTable()" style="width:auto;padding:6px 10px;font-size:12px;"></select>
+          <select id="dash-filtro-dir" onchange="filtrarGerenciasDash();renderDashTable();" style="width:auto;padding:6px 10px;font-size:12px;"></select>
+          <select id="dash-filtro-ger" onchange="renderDashTable()" style="width:auto;padding:6px 10px;font-size:12px;"></select>
           <button class="btn btn-secondary btn-sm" onclick="abrirModalNaoAtingidos()">⚠️ Não Atingidos</button>
           <button class="btn btn-secondary btn-sm" onclick="exportarExcel()">⬇ Excel</button>
           <button class="btn btn-secondary btn-sm" onclick="exportarPDF()">⬇ PDF</button>
@@ -223,8 +224,14 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <select id="acum-safra" onchange="carregarAcumulado()" style="width:auto;padding:6px 10px;font-size:13px">
             <option value="">— Selecione a safra —</option>
           </select>
-          <select id="acum-dir" onchange="renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
+          <select id="acum-dir" onchange="filtrarGerenciasAcum();renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
             <option value="">Todas as Diretorias</option>
+          </select>
+          <select id="acum-ger" onchange="renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
+            <option value="">Todas as Gerências</option>
+          </select>
+          <select id="acum-mes" onchange="renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
+            <option value="">Todos os Meses</option>
           </select>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="exportarAcumCSV()">⬇ CSV</button>
@@ -766,6 +773,15 @@ async function carregarAcumulado() {
     const dirs = [...new Map(acumAllData.map(l => [l.gerencias?.diretoria_id, l.gerencias?.diretorias?.nome])).entries()];
     adEl.innerHTML = '<option value="">Todas as Diretorias</option>' + dirs.map(([id,n]) => `<option value="${id}">${n}</option>`).join('');
   }
+  // Preenche filtro gerência acumulado
+  filtrarGerenciasAcum();
+  // Preenche filtro mês acumulado
+  const safraObj = safrasData.find(s => s.id == safraId);
+  const amEl = document.getElementById('acum-mes');
+  if(amEl && safraObj) {
+    const mesesDisp = getMesesSafra(safraObj).filter(m => acumAllData.some(l => l.mes === m.val));
+    amEl.innerHTML = '<option value="">Todos os Meses</option>' + mesesDisp.map(m => `<option value="${m.val}">${m.nome}</option>`).join('');
+  }
   renderAcumTable();
   setTimeout(()=>{renderAcumChart();renderAcumChartMensal();},300);
 }
@@ -791,11 +807,20 @@ function renderAcumTable() {
   const safraId = document.getElementById('acum-safra')?.value;
   const safra   = safrasData.find(s => s.id == safraId);
   const filtDir = parseInt(document.getElementById('acum-dir')?.value) || 0;
+  const filtGer = parseInt(document.getElementById('acum-ger')?.value) || 0;
+  const filtMes = document.getElementById('acum-mes')?.value || '';
   const gtEl    = document.getElementById('acum-ger-tbl');
   const dtEl    = document.getElementById('acum-dir-tbl');
   if(!acumAllData.length) { if(gtEl) gtEl.innerHTML = '<div class="loading">Nenhum dado.</div>'; return; }
 
+  // Aplica filtros de gerência e mês sobre acumAllData
+  let dadosFiltrados = acumAllData;
+  if(filtDir) dadosFiltrados = dadosFiltrados.filter(l => l.gerencias?.diretoria_id === filtDir);
+  if(filtGer) dadosFiltrados = dadosFiltrados.filter(l => l.gerencia_id === filtGer);
+  if(filtMes) dadosFiltrados = dadosFiltrados.filter(l => l.mes === filtMes);
+
   const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const mesesVisiveis = filtMes ? meses.filter(m => m.val === filtMes) : meses;
   const wPG   = Number(config?.peso_gerencia)  || 0.5;
   const wMD   = Number(config?.peso_diretoria) || 0.2;
   const wAUD  = Number(config?.peso_auditoria) || 0.3;
@@ -811,7 +836,7 @@ function renderAcumTable() {
 
   // ── Coleta unidades únicas para legenda ──────────────────────
   const unisSet = new Set();
-  acumAllData.forEach(l => { if(l.gerencias?.unidades?.nome) unisSet.add(l.gerencias.unidades.nome); });
+  dadosFiltrados.forEach(l => { if(l.gerencias?.unidades?.nome) unisSet.add(l.gerencias.unidades.nome); });
   const unisLegenda = [...unisSet].sort();
 
   const legendaHTML = unisLegenda.length > 1
@@ -823,9 +848,7 @@ function renderAcumTable() {
 
   // ── Agrupa gerências por gerencia_id ──────────────────────────
   const gersMap = new Map();
-  acumAllData
-    .filter(l => !filtDir || l.gerencias?.diretoria_id === filtDir)
-    .forEach(l => {
+  dadosFiltrados.forEach(l => {
       if(!gersMap.has(l.gerencia_id))
         gersMap.set(l.gerencia_id, {
           id:   l.gerencia_id,
@@ -836,14 +859,14 @@ function renderAcumTable() {
     });
   const gers = [...gersMap.values()];
 
-  const mesThsG = meses.map(m =>
+  const mesThsG = mesesVisiveis.map(m =>
     '<th style="white-space:nowrap">'+m.nome+'</th>'
     +'<th style="background:#d4edda;color:#07583C;white-space:nowrap">Acum.</th>'
   ).join('');
 
   const gersRows = gers.map(g => {
     let soma = 0, count = 0;
-    const cells = meses.map(m => {
+    const cells = mesesVisiveis.map(m => {
       const l   = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
       const ip  = calcIP(l);
       if(ip != null) { soma += ip; count++; }
@@ -868,20 +891,20 @@ function renderAcumTable() {
 
   // ── Tabela diretorias ─────────────────────────────────────────
   const dirsMap = new Map();
-  acumAllData.forEach(l => {
+  dadosFiltrados.forEach(l => {
     const did = l.gerencias?.diretoria_id;
     if(did && !dirsMap.has(did)) dirsMap.set(did, l.gerencias?.diretorias?.nome || '—');
   });
   const dirs2 = [...dirsMap.entries()].map(([id,n]) => ({id,n}));
 
-  const mesThsD = meses.map(m =>
+  const mesThsD = mesesVisiveis.map(m =>
     '<th>'+m.nome+'</th><th style="background:#d4edda;color:#07583C">Acum.</th>'
   ).join('');
 
   const dirsRows = dirs2.map(d => {
     let soma = 0, count = 0;
-    const cells = meses.map(m => {
-      const ls = acumAllData.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
+    const cells = mesesVisiveis.map(m => {
+      const ls = dadosFiltrados.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
       let media = null;
       if(ls.length) {
         const ips = ls.map(l => calcIP(l)).filter(v => v != null);
@@ -986,9 +1009,10 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode){
   if(tipo==='gerencia'){
     // Agrupa por gerencia_id para separar homônimas de unidades diferentes
     const filtDirChart=parseInt(document.getElementById('acum-dir')?.value)||0;
+    const filtGerChart=parseInt(document.getElementById('acum-ger')?.value)||0;
     const gersMap=new Map();
     acumAllData
-      .filter(l=>!filtDirChart||l.gerencias?.diretoria_id===filtDirChart)
+      .filter(l=>(!filtDirChart||l.gerencias?.diretoria_id===filtDirChart)&&(!filtGerChart||l.gerencia_id===filtGerChart))
       .forEach(l=>{
         if(!gersMap.has(l.gerencia_id))
           gersMap.set(l.gerencia_id,{
@@ -1231,6 +1255,8 @@ function preencherForms(){
   // dash filtro
   const fd=document.getElementById('dash-filtro-dir');
   if(fd){fd.innerHTML='<option value="">Todas as Diretorias</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
+  const fdg=document.getElementById('dash-filtro-ger');
+  if(fdg){fdg.innerHTML='<option value="">Todas as Gerências</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}${g.unidades?' ('+g.unidades.nome+')':''}</option>`).join('');}
   // ger form
   const gd=document.getElementById('ger-diretoria');
   if(gd){gd.innerHTML='<option value="">— Selecione —</option>'+estrutura.diretorias.map(d=>`<option value="${d.id}">${d.nome}</option>`).join('');}
@@ -1250,6 +1276,22 @@ function onSafraLancarChange(){
   preencherMesesLancar(safraId);
   const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
   if(gerId) onGerenciaChange();
+}
+
+function filtrarGerenciasDash(){
+  const dirId=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
+  const fdg=document.getElementById('dash-filtro-ger');
+  if(!fdg)return;
+  const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):estrutura.gerencias;
+  fdg.innerHTML='<option value="">Todas as Gerências</option>'+gers.map(g=>`<option value="${g.id}">${g.nome}${g.unidades?' ('+g.unidades.nome+')':''}</option>`).join('');
+}
+
+function filtrarGerenciasAcum(){
+  const dirId=parseInt(document.getElementById('acum-dir')?.value)||0;
+  const ag=document.getElementById('acum-ger');
+  if(!ag)return;
+  const gers=dirId?estrutura.gerencias.filter(g=>g.diretoria_id===dirId):estrutura.gerencias;
+  ag.innerHTML='<option value="">Todas as Gerências</option>'+gers.map(g=>`<option value="${g.id}">${g.nome}${g.unidades?' ('+g.unidades.nome+')':''}</option>`).join('');
 }
 
 function filtrarGerencias(){
@@ -1472,7 +1514,10 @@ function toggleCalculo(id){
 function renderDashTable(){
   if(!dashData)return;
   const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
-  let lista=filtDir?dashData.filter(l=>l.gerencias?.diretoria_id===filtDir):dashData;
+  const filtGer=parseInt(document.getElementById('dash-filtro-ger')?.value)||0;
+  let lista=dashData;
+  if(filtDir) lista=lista.filter(l=>l.gerencias?.diretoria_id===filtDir);
+  if(filtGer) lista=lista.filter(l=>l.gerencia_id===filtGer);
   const tw=document.getElementById('dash-table-wrap');
   if(!lista.length){if(tw)tw.innerHTML='<div class="loading">Nenhum lançamento encontrado para este período.</div>';return;}
 
@@ -2762,34 +2807,47 @@ function renderModalNA() {
   const naoAtingidos = [];
   let totalPesoPerdido = 0;
   let totalItens = 0;
+  let somaIP = 0, countIP = 0;
+
+  // Mapa de IP final por lançamento
+  const ipPorLanc = {};
+  for (const lanc of lancs) {
+    const ip = lanc.indice_prevencao ?? null;
+    if (ip != null) { somaIP += ip; countIP++; }
+    ipPorLanc[lanc.id] = ip;
+  }
 
   for (const lanc of lancs) {
     const items = _naItens[lanc.id] || [];
     for (const item of items) {
       totalItens++;
-      // Calcula pontuação do item
+      // Obtém pontuação do item
       let pont = item.pontuacao ?? 0;
-      let atingido = pont >= 80;
+      const tipo = item.indicadores?.tipo || '';
       // Para binário: sim = 100, não = 0
-      if (item.indicadores?.tipo === 'binario') {
+      if (tipo === 'binario') {
         pont = item.sim_nao ? 100 : 0;
-        atingido = item.sim_nao;
       }
-      // Para nota: atingido se nota >= 80
-      if (!atingido) {
-        const peso = item.peso || 0;
-        const pesoPerdido = peso * (1 - pont / 100);
-        totalPesoPerdido += pesoPerdido;
+      const peso = item.peso || 0;
+      // "Não atingido" = pontuação abaixo de 100% do esperado (qualquer valor < 100)
+      // Mas o peso perdido = quanto do peso total deixou de ser pontuado
+      // Peso perdido = peso * (100 - pont) / 100 — quanto de pontuação máxima foi perdido
+      const pesoPerdidoIndicador = peso * (100 - pont) / 100;
+
+      // Só mostra se teve alguma perda (pont < 100) — assim captura qualquer não-atingido
+      if (pont < 100) {
+        totalPesoPerdido += pesoPerdidoIndicador;
         naoAtingidos.push({
           gerencia: lanc.gerencias?.nome || '—',
           diretoria: lanc.gerencias?.diretorias?.nome || '—',
           unidade: lanc.gerencias?.unidades?.nome || '—',
           mes: lanc.mes || lanc.periodo || '—',
           indicador: item.indicadores?.nome || '—',
-          tipo: item.indicadores?.tipo || '—',
+          tipo: tipo,
           peso: peso,
           pont: pont,
-          pesoPerdido: parseFloat(pesoPerdido.toFixed(2)),
+          pesoPerdidoIndicador: parseFloat(pesoPerdidoIndicador.toFixed(2)),
+          ipFinal: ipPorLanc[lanc.id],
           comentario: item.comentario || '',
           lancId: lanc.id,
         });
@@ -2802,21 +2860,28 @@ function renderModalNA() {
   if (naResumo) {
     const totalNA = naoAtingidos.length;
     const pct = totalItens > 0 ? ((totalNA / totalItens) * 100).toFixed(1) : '0.0';
+    const mediaIP = countIP > 0 ? (somaIP / countIP).toFixed(1) : '—';
+    const corIP = countIP > 0 ? getColor(somaIP/countIP) : '#5a7a5a';
     naResumo.innerHTML = `
-      <div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #d93025;">
-        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Não Atingidos</div>
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #d93025;">
+        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Com Perda</div>
         <div style="font-size:26px;font-weight:800;color:#d93025;">${totalNA}</div>
         <div style="font-size:11px;color:var(--muted);">${pct}% dos indicadores</div>
       </div>
-      <div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #c47d0e;">
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #c47d0e;">
         <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Peso Perdido</div>
         <div style="font-size:26px;font-weight:800;color:#c47d0e;">${totalPesoPerdido.toFixed(1)}</div>
-        <div style="font-size:11px;color:var(--muted);">pontos de peso não atingidos</div>
+        <div style="font-size:11px;color:var(--muted);">pts de peso não atingidos</div>
       </div>
-      <div style="flex:1;min-width:140px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #B3DD64;">
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid ${corIP};">
+        <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">IP Médio</div>
+        <div style="font-size:26px;font-weight:800;color:${corIP};">${mediaIP}</div>
+        <div style="font-size:11px;color:var(--muted);">${countIP} lançamento(s) filtrado(s)</div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 16px;border-top:3px solid #B3DD64;">
         <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Total Avaliados</div>
         <div style="font-size:26px;font-weight:800;color:#07583C;">${totalItens}</div>
-        <div style="font-size:11px;color:var(--muted);">itens em ${lancs.length} lançamento(s)</div>
+        <div style="font-size:11px;color:var(--muted);">indicadores analisados</div>
       </div>
     `;
   }
@@ -2830,7 +2895,7 @@ function renderModalNA() {
   }
 
   // Ordena por peso perdido desc
-  naoAtingidos.sort((a, b) => b.pesoPerdido - a.pesoPerdido);
+  naoAtingidos.sort((a, b) => b.pesoPerdidoIndicador - a.pesoPerdidoIndicador);
 
   const tipoLabel = { previsto_realizado: 'Prev×Real', nota: 'Nota', binario: 'Sim/Não' };
   const nomesMes = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
@@ -2841,25 +2906,32 @@ function renderModalNA() {
   }
 
   const rows = naoAtingidos.map(n => {
-    const corPerdido = n.pesoPerdido >= 10 ? '#d93025' : n.pesoPerdido >= 5 ? '#c47d0e' : '#5a7a5a';
+    const corPerdido = n.pesoPerdidoIndicador >= 10 ? '#d93025' : n.pesoPerdidoIndicador >= 3 ? '#c47d0e' : '#5a7a5a';
+    const corPont = n.pont < 50 ? '#d93025' : n.pont < 80 ? '#c47d0e' : '#5a7a5a';
+    const ipFinalStr = n.ipFinal != null ? n.ipFinal.toFixed(1) : '—';
+    const corIP = n.ipFinal != null ? getColor(n.ipFinal) : '#5a7a5a';
     return `<tr>
-      <td>${fmtMes(n.mes)}</td>
-      <td><b>${n.gerencia}</b></td>
+      <td style="font-size:12px;white-space:nowrap">${fmtMes(n.mes)}</td>
+      <td><b>${n.gerencia}</b><br><span style="font-size:10px;color:var(--muted)">${n.unidade}</span></td>
       <td style="font-size:11px;color:var(--muted)">${n.diretoria}</td>
-      <td style="font-size:11px;color:var(--blue)">${n.unidade}</td>
-      <td>${n.indicador}</td>
+      <td style="max-width:180px;white-space:normal">${n.indicador}</td>
       <td><span class="badge ${n.tipo === 'binario' ? 'badge-yellow' : n.tipo === 'nota' ? 'badge-green' : 'badge-blue'}" style="font-size:10px">${tipoLabel[n.tipo] || n.tipo}</span></td>
       <td class="mono" style="text-align:center">${n.peso}%</td>
-      <td class="mono" style="text-align:center;color:${n.pont < 50 ? '#d93025' : '#c47d0e'}">${n.pont.toFixed(1)}</td>
-      <td class="mono" style="text-align:center;font-weight:700;color:${corPerdido}">-${n.pesoPerdido.toFixed(2)}</td>
-      <td style="font-size:11px;color:var(--muted);max-width:160px;white-space:normal">${n.comentario}</td>
+      <td class="mono" style="text-align:center;color:${corPont};font-weight:700">${n.pont.toFixed(1)}</td>
+      <td class="mono" style="text-align:center;font-weight:700;color:${corPerdido}">-${n.pesoPerdidoIndicador.toFixed(2)} pts</td>
+      <td class="mono" style="text-align:center;font-weight:800;color:${corIP}">${ipFinalStr}</td>
+      <td style="font-size:11px;color:var(--muted);max-width:150px;white-space:normal">${n.comentario}</td>
     </tr>`;
   }).join('');
 
-  naConteudo.innerHTML = `<div style="overflow-x:auto"><table style="min-width:700px">
+  naConteudo.innerHTML = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;padding:6px 10px;background:var(--surface2);border-radius:6px;font-family:'DM Mono',monospace;">
+      ℹ️ Exibe <b>todos</b> os indicadores que não atingiram 100% — incluindo gerências com IP alto (ex: 99,5). O "Peso Perdido" é quanto aquele indicador deduziu da pontuação máxima da gerência.
+    </div>
+    <div style="overflow-x:auto"><table style="min-width:800px">
     <thead><tr>
-      <th>Mês</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th>
-      <th>Indicador</th><th>Tipo</th><th>Peso</th><th>Pont.</th><th>Peso Perdido</th><th>Comentário</th>
+      <th>Mês</th><th>Gerência / Unid.</th><th>Diretoria</th>
+      <th>Indicador</th><th>Tipo</th><th>Peso</th><th>Pont.</th><th>Peso Perdido</th><th>IP Final Ger.</th><th>Comentário</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;

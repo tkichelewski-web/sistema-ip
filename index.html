@@ -2721,6 +2721,7 @@ function preencherHistoricoFiltros() {
 // Cache de dados para o modal
 let _naLancamentos = [];
 let _naItens = {};
+let _naPesos = {}; // Map: `${gerencia_id}_${safra_id}_${indicador_id}` => peso
 
 async function abrirModalNaoAtingidos() {
   document.getElementById('modal-nao-atingidos').classList.add('show');
@@ -2730,7 +2731,6 @@ async function abrirModalNaoAtingidos() {
     naDir.innerHTML = '<option value="">Todas as Diretorias</option>' +
       estrutura.diretorias.map(d => `<option value="${d.id}">${d.nome}</option>`).join('');
   }
-  // Preenche filtro de mês — usa dados do dashData (lançamentos já carregados) ou busca tudo
   await carregarDadosNA();
   filtrarGerenciasNA();
   renderModalNA();
@@ -2740,7 +2740,7 @@ async function carregarDadosNA() {
   const naConteudo = document.getElementById('na-conteudo');
   if (naConteudo) naConteudo.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando lançamentos...</div>';
 
-  // Busca todos os lançamentos com itens
+  // Busca todos os lançamentos
   const { data: lancs } = await sb.from('lancamentos')
     .select('*,gerencias(id,nome,diretoria_id,diretorias(nome),unidades(nome))')
     .order('mes', { ascending: false })
@@ -2751,7 +2751,6 @@ async function carregarDadosNA() {
   const lancIds = _naLancamentos.map(l => l.id);
   _naItens = {};
   if (lancIds.length) {
-    // busca em lotes de 100
     for (let i = 0; i < lancIds.length; i += 100) {
       const lote = lancIds.slice(i, i + 100);
       const { data: items } = await sb.from('lancamento_itens')
@@ -2764,6 +2763,27 @@ async function carregarDadosNA() {
     }
   }
 
+  // Busca pesos de ind_gerencia_safra para todas as gerências/safras presentes
+  _naPesos = {};
+  // Coleta pares únicos gerencia_id + safra_id
+  const pares = [...new Map(_naLancamentos.map(l => [`${l.gerencia_id}_${l.safra_id}`, {gerId: l.gerencia_id, safraId: l.safra_id}])).values()];
+  for (let i = 0; i < pares.length; i += 50) {
+    const lote = pares.slice(i, i + 50);
+    const gerIds = [...new Set(lote.map(p => p.gerId).filter(Boolean))];
+    const safIds = [...new Set(lote.map(p => p.safraId).filter(Boolean))];
+    if (!gerIds.length) continue;
+    let q = sb.from('ind_gerencia_safra')
+      .select('gerencia_id,safra_id,indicador_id,peso')
+      .eq('ativo', true)
+      .in('gerencia_id', gerIds);
+    if (safIds.length) q = q.in('safra_id', safIds);
+    const { data: pesos } = await q;
+    (pesos || []).forEach(p => {
+      const key = `${p.gerencia_id}_${p.safra_id}_${p.indicador_id}`;
+      _naPesos[key] = p.peso;
+    });
+  }
+
   // Preenche filtro de meses disponíveis
   const meses = [...new Set(_naLancamentos.map(l => l.mes || l.periodo).filter(Boolean))].sort().reverse();
   const naMes = document.getElementById('na-filtro-mes');
@@ -2774,7 +2794,6 @@ async function carregarDadosNA() {
         const nomesMes = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
         return `<option value="${m}">${nomesMes[parseInt(mm)]}/${ano}</option>`;
       }).join('');
-    // Auto-seleciona o mês mais recente
     if (meses.length) naMes.value = meses[0];
   }
 }
@@ -2814,11 +2833,9 @@ function renderModalNA() {
     const items = _naItens[lanc.id] || [];
     if (!items.length) continue;
 
-    const pontGer = lanc.pontuacao_gerencia ?? 0; // pontuação da gerência (0-100)
+    const pontGer = lanc.pontuacao_gerencia ?? 0;
     somaGerPont += pontGer; countGer++;
 
-    // Calcula perda total de pontuação da gerência
-    let perdaTotalGer = 0;
     const itensComPerda = [];
 
     for (const item of items) {
@@ -2827,19 +2844,33 @@ function renderModalNA() {
       let pont = item.pontuacao ?? 0;
       if (tipo === 'binario') pont = item.sim_nao ? 100 : 0;
 
-      const peso = item.peso || 0;
-      // Perda na pontuação da gerência = peso * (100 - pont) / 100
-      // Ou seja: quanto esse indicador retirou dos 100 pontos máximos da gerência
-      const perdaPont = peso * (100 - pont) / 100;
+      // Busca peso: primeiro em _naPesos (ind_gerencia_safra), depois item.peso, depois indicador base
+      const keyPeso = `${lanc.gerencia_id}_${lanc.safra_id}_${item.indicador_id}`;
+      const peso = _naPesos[keyPeso] ?? item.peso ?? indicadores.find(i => i.id === item.indicador_id)?.peso ?? 0;
 
-      if (pont < 100) {
+      // Recalcula pontuação do indicador a partir dos valores brutos (mais preciso que campo salvo)
+      let pontCalc = pont;
+      if (tipo === 'previsto_realizado') {
+        const prev = parseFloat(item.previsto) || 0;
+        const real = parseFloat(item.realizado) || 0;
+        pontCalc = (prev === 0 && real === 0) ? 100 : (prev > 0 ? Math.min((real / prev) * 100, 100) : 0);
+      } else if (tipo === 'nota') {
+        pontCalc = Math.min(parseFloat(item.nota) || 0, 100);
+      } else if (tipo === 'binario') {
+        pontCalc = item.sim_nao ? 100 : 0;
+      }
+
+      // Perda na pontuação da gerência = peso * (100 - pontCalc) / 100
+      const perdaPont = (peso * (100 - pontCalc)) / 100;
+
+      if (pontCalc < 100) {
         totalPerdaGlobal += perdaPont;
         itensComPerda.push({
           indicador: item.indicadores?.nome || '—',
           tipo,
           peso,
-          pont,
-          perdaPont: parseFloat(perdaPont.toFixed(2)),
+          pont: pontCalc,
+          perdaPont: parseFloat(perdaPont.toFixed(3)),
           previsto: item.previsto,
           realizado: item.realizado,
           nota: item.nota,
@@ -2877,7 +2908,7 @@ function renderModalNA() {
       </div>
       <div style="flex:1;min-width:160px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 20px;border-top:3px solid #c47d0e;">
         <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Total Perdido (Pont. Ger.)</div>
-        <div style="font-size:32px;font-weight:800;color:#c47d0e;line-height:1">-${totalPerdaGlobal.toFixed(1)}</div>
+        <div style="font-size:32px;font-weight:800;color:#c47d0e;line-height:1">${totalPerdaGlobal > 0 ? '-' : ''}${totalPerdaGlobal.toFixed(2)}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:4px;">pontos de pontuação da gerência</div>
       </div>
       <div style="flex:1;min-width:160px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 20px;border-top:3px solid ${corMedia};">
@@ -2934,13 +2965,15 @@ function renderModalNA() {
 
     const linhasIndicadores = g.itensComPerda.map((item, i) => {
       const corItemPerda = item.perdaPont >= 5 ? '#d93025' : item.perdaPont >= 1 ? '#c47d0e' : '#888';
+      const pontPct = item.pont.toFixed(1);
+      const perdaDisplay = item.perdaPont > 0 ? `-${item.perdaPont.toFixed(2)} pts` : '0 pts';
       return `
         <tr style="border-bottom:1px solid #f0f0f0;">
           <td style="padding:10px 14px;font-size:14px;color:#1a2e1a;max-width:280px;">${item.indicador}</td>
           <td style="padding:10px 14px;font-size:14px;">${fmtValor(item)}</td>
           <td style="padding:10px 14px;text-align:right;">
-            <span style="font-size:15px;font-weight:800;color:${corItemPerda};font-family:'DM Mono',monospace;">-${item.perdaPont.toFixed(2)} pts</span>
-            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${item.pont.toFixed(0)}% atingido</div>
+            <span style="font-size:15px;font-weight:800;color:${corItemPerda};font-family:'DM Mono',monospace;">${perdaDisplay}</span>
+            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${pontPct}% atingido</div>
           </td>
         </tr>`;
     }).join('');
@@ -2964,7 +2997,7 @@ function renderModalNA() {
             <!-- Total perdido -->
             <div style="text-align:center;background:rgba(0,0,0,0.2);border-radius:8px;padding:8px 16px;">
               <div style="font-size:11px;color:rgba(255,255,255,0.65);text-transform:uppercase;letter-spacing:1px;font-family:'DM Mono',monospace;">Pontos Perdidos</div>
-              <div style="font-size:28px;font-weight:800;color:#ff8080;font-family:'DM Mono',monospace;line-height:1.1;">-${g.perdaTotalGer.toFixed(1)}</div>
+              <div style="font-size:28px;font-weight:800;color:#ff8080;font-family:'DM Mono',monospace;line-height:1.1;">${g.perdaTotalGer > 0 ? '-' : ''}${g.perdaTotalGer.toFixed(2)}</div>
             </div>
           </div>
         </div>

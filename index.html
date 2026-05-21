@@ -292,7 +292,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="table-wrap" style="margin-bottom:20px">
         <div class="table-header">
           <span class="table-title">📊 IP Mensal por Diretoria</span>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center;">
             <select id="acum-chart-mes-tipo" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
               <option value="diretoria">Por Diretoria</option>
               <option value="gerencia">Por Gerência (único gráfico)</option>
@@ -301,6 +301,9 @@ input[type=number]{font-family:'DM Mono',monospace;}
               <option value="bar">📊 Colunas</option>
               <option value="line">📈 Linha</option>
             </select>
+            <button onclick="abrirApresentacao()" style="background:#07583C;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
+              ▶ Apresentação
+            </button>
           </div>
         </div>
         <!-- Container para múltiplos gráficos por diretoria -->
@@ -3408,5 +3411,231 @@ ativarWakeLock();
   #print-overlay > div > div:first-child button{display:none !important;}
 }
 </style>
+
+<!-- OVERLAY APRESENTAÇÃO POR DIRETORIA -->
+<div id="apresentacao-overlay" style="display:none;position:fixed;inset:0;background:#0a1a0f;z-index:9999;flex-direction:column;">
+
+  <!-- Barra superior -->
+  <div style="background:#07583C;padding:14px 28px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div id="apres-titulo" style="font-size:22px;font-weight:800;color:#fff;"></div>
+      <div id="apres-subtitulo" style="font-size:13px;color:#B3DD64;font-family:'DM Mono',monospace;"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <!-- Indicadores de diretoria (bolinhas) -->
+      <div id="apres-dots" style="display:flex;gap:8px;align-items:center;"></div>
+      <!-- Contador -->
+      <div id="apres-counter" style="font-size:13px;color:rgba(255,255,255,0.7);font-family:'DM Mono',monospace;min-width:60px;text-align:center;"></div>
+      <button onclick="fecharApresentacao()" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:6px;padding:7px 16px;font-size:13px;cursor:pointer;font-weight:600;">✕ Fechar</button>
+    </div>
+  </div>
+
+  <!-- Área do gráfico -->
+  <div style="flex:1;display:flex;align-items:stretch;min-height:0;padding:24px 32px 16px;">
+    <div style="background:#fff;border-radius:16px;flex:1;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+      <!-- Cabeçalho do card -->
+      <div id="apres-card-header" style="padding:18px 28px;border-bottom:2px solid #B3DD64;background:#f5fbf7;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div id="apres-dir-nome" style="font-size:20px;font-weight:800;color:#07583C;"></div>
+          <div id="apres-dir-info" style="font-size:13px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;"></div>
+        </div>
+        <div id="apres-dir-media" style="font-size:40px;font-weight:800;font-family:'DM Mono',monospace;"></div>
+      </div>
+      <!-- Canvas -->
+      <div style="flex:1;position:relative;padding:20px 28px 12px;">
+        <canvas id="apres-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Navegação inferior -->
+  <div style="padding:14px 32px;display:flex;align-items:center;justify-content:center;gap:24px;flex-shrink:0;">
+    <button id="apres-prev" onclick="navegarApresentacao(-1)"
+      style="background:rgba(255,255,255,0.1);color:#fff;border:2px solid rgba(255,255,255,0.3);border-radius:50px;padding:12px 32px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px;">
+      ← Anterior
+    </button>
+    <div id="apres-nav-info" style="font-size:14px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;min-width:120px;text-align:center;"></div>
+    <button id="apres-next" onclick="navegarApresentacao(1)"
+      style="background:#B3DD64;color:#07583C;border:2px solid #B3DD64;border-radius:50px;padding:12px 32px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px;">
+      Próxima →
+    </button>
+  </div>
+
+</div>
+
+<script>
+// ── APRESENTAÇÃO FULLSCREEN ────────────────────────────────────
+let _apresData=[];     // Array de diretorias com seus dados
+let _apresIdx=0;       // Índice atual
+let _apresChart=null;  // Referência do chart atual
+let _apresViz='bar';   // tipo de viz
+
+function abrirApresentacao(){
+  const tipo=document.getElementById('acum-chart-mes-tipo')?.value||'diretoria';
+  if(tipo!=='diretoria'){alert('Selecione "Por Diretoria" para usar a apresentação.');return;}
+  _apresViz=document.getElementById('acum-chart-mes-viz')?.value||'bar';
+
+  // Monta dados das diretorias
+  const safraId=document.getElementById('acum-safra')?.value;
+  const safra=safrasData.find(s=>s.id==safraId);
+  if(!acumAllData.length||!safra){alert('Selecione uma safra e carregue os dados primeiro.');return;}
+
+  const filtDirId=parseInt(document.getElementById('acum-dir')?.value)||0;
+  const filtGerId=parseInt(document.getElementById('acum-ger')?.value)||0;
+  const filtMes=document.getElementById('acum-mes')?.value||'';
+  const meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+  const mesesVis=filtMes?meses.filter(m=>m.val===filtMes):meses;
+
+  const dirsMap=new Map();
+  acumAllData.forEach(l=>{
+    const did=l.gerencias?.diretoria_id;
+    if(!did)return;
+    if(filtDirId&&did!==filtDirId)return;
+    if(!dirsMap.has(did))dirsMap.set(did,{nome:l.gerencias?.diretorias?.nome||'—',gerencias:new Map()});
+    const d=dirsMap.get(did);
+    const gid=l.gerencia_id;
+    if(filtGerId&&gid!==filtGerId)return;
+    if(!d.gerencias.has(gid))d.gerencias.set(gid,{nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||'',dados:[]});
+    d.gerencias.get(gid).dados.push(l);
+  });
+
+  if(!dirsMap.size){alert('Nenhuma diretoria encontrada.');return;}
+
+  _apresData=[...dirsMap.entries()].map(([did,dir])=>({did,dir,mesesVis}));
+  _apresIdx=0;
+
+  // Monta dots
+  const dots=document.getElementById('apres-dots');
+  if(dots){
+    dots.innerHTML=_apresData.map((_,i)=>`<div id="dot-${i}" onclick="irApresentacao(${i})" style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.3);cursor:pointer;transition:all .2s;"></div>`).join('');
+  }
+
+  // Período no subtítulo
+  const sub=document.getElementById('apres-subtitulo');
+  if(sub) sub.textContent=mesesVis.length===1?mesesVis[0].nome:'Safra '+safra.nome;
+
+  // Mostra overlay
+  const ov=document.getElementById('apresentacao-overlay');
+  if(ov){ov.style.display='flex';document.body.style.overflow='hidden';}
+
+  renderSlideApresentacao();
+
+  // Teclas de navegação
+  document.addEventListener('keydown',_apresKeyHandler);
+}
+
+function _apresKeyHandler(e){
+  if(e.key==='ArrowRight'||e.key==='ArrowDown') navegarApresentacao(1);
+  if(e.key==='ArrowLeft'||e.key==='ArrowUp') navegarApresentacao(-1);
+  if(e.key==='Escape') fecharApresentacao();
+}
+
+function fecharApresentacao(){
+  const ov=document.getElementById('apresentacao-overlay');
+  if(ov){ov.style.display='none';document.body.style.overflow='';}
+  if(_apresChart){try{_apresChart.destroy();}catch(e){}_apresChart=null;}
+  document.removeEventListener('keydown',_apresKeyHandler);
+}
+
+function navegarApresentacao(delta){
+  const novo=_apresIdx+delta;
+  if(novo<0||novo>=_apresData.length)return;
+  _apresIdx=novo;
+  renderSlideApresentacao();
+}
+
+function irApresentacao(idx){
+  _apresIdx=idx;
+  renderSlideApresentacao();
+}
+
+function renderSlideApresentacao(){
+  const {did,dir,mesesVis}=_apresData[_apresIdx];
+  const total=_apresData.length;
+  const isBar=_apresViz==='bar';
+
+  // Atualiza cabeçalho
+  document.getElementById('apres-titulo').textContent='IP Mensal por Diretoria';
+  document.getElementById('apres-counter').textContent=(_apresIdx+1)+' / '+total;
+  document.getElementById('apres-nav-info').textContent=(_apresIdx+1)+' de '+total;
+  document.getElementById('apres-dir-nome').textContent=dir.nome;
+
+  const gers=[...dir.gerencias.values()];
+  document.getElementById('apres-dir-info').textContent=gers.length+' gerência'+(gers.length!==1?'s':'')+' · '+mesesVis.map(m=>m.nome).join(', ');
+
+  // Calcula média da diretoria
+  const todosIPs=[];
+  gers.forEach(g=>{
+    mesesVis.forEach(m=>{
+      const l=g.dados.find(x=>x.mes===m.val);
+      const ip=calcIPLanc(l);
+      if(ip!=null) todosIPs.push(ip);
+    });
+  });
+  const media=todosIPs.length?todosIPs.reduce((a,b)=>a+b,0)/todosIPs.length:null;
+  const mediaEl=document.getElementById('apres-dir-media');
+  if(mediaEl){
+    const cor=media!=null?getColor(media):'#888';
+    mediaEl.style.color=cor;
+    mediaEl.textContent=media!=null?media.toFixed(1):'—';
+  }
+
+  // Botões anterior/próximo
+  document.getElementById('apres-prev').style.opacity=_apresIdx===0?'0.3':'1';
+  document.getElementById('apres-prev').disabled=_apresIdx===0;
+  document.getElementById('apres-next').style.opacity=_apresIdx===total-1?'0.3':'1';
+  document.getElementById('apres-next').disabled=_apresIdx===total-1;
+
+  // Atualiza dots
+  for(let i=0;i<total;i++){
+    const dot=document.getElementById('dot-'+i);
+    if(dot){
+      dot.style.background=i===_apresIdx?'#B3DD64':'rgba(255,255,255,0.3)';
+      dot.style.width=i===_apresIdx?'28px':'10px';
+      dot.style.borderRadius='10px';
+    }
+  }
+
+  // Datasets
+  const labels=mesesVis.map(m=>m.nome);
+  const datasets=gers.map(g=>{
+    const cor=uniCorChart(g.uni);
+    const corTx=uniLabelTexto(g.uni);
+    const pts=mesesVis.map(m=>{
+      const l=g.dados.find(x=>x.mes===m.val);
+      const ip=calcIPLanc(l);
+      return ip!=null?parseFloat(ip.toFixed(2)):null;
+    });
+    const label=g.uni?g.nome+' '+g.uni:g.nome;
+    return{label,data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,borderWidth:isBar?0:2.5,pointRadius:isBar?0:6,pointHoverRadius:isBar?0:9,borderRadius:isBar?6:0,tension:0.3,spanGaps:false,_corTexto:corTx||'#fff'};
+  });
+
+  // Destroi chart anterior
+  if(_apresChart){try{_apresChart.destroy();}catch(e){}_apresChart=null;}
+
+  const canvas=document.getElementById('apres-canvas');
+  if(!canvas)return;
+
+  _apresChart=new Chart(canvas,{
+    type:_apresViz,
+    data:{labels,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      animation:{duration:400},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{font:{size:14},padding:20,usePointStyle:true,boxWidth:12}},
+        tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')},bodyFont:{size:14}}
+      },
+      scales:{
+        x:{grid:{color:'#e8f0e8'},ticks:{font:{size:13}}},
+        y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:13},callback:v=>v.toFixed(0)}}
+      }
+    },
+    plugins:isBar?[refLinesPlugin,dataLabelsPlugin]:[refLinesPlugin]
+  });
+}
+</script>
+
 </body>
 </html>

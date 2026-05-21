@@ -147,7 +147,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
 .flex-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .mono{font-family:'DM Mono',monospace;}
 .acum-cell{background:#f0f9f0 !important;font-weight:700;}
-@media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}}
+@media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}#acum-chart-mensal-grid{grid-template-columns:1fr !important;}}
 </style>
 </head>
 <body>
@@ -299,7 +299,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
             </select>
           </div>
         </div>
-        <div id="acum-chart-mensal-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(450px,1fr));gap:16px;padding:16px;background:#f4f6f4;border-radius:8px">
+        <div id="acum-chart-mensal-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;padding:16px;background:#f4f6f4;border-radius:8px">
           <!-- Cards de gráficos serão inseridos aqui via JS -->
         </div>
       </div>
@@ -1168,7 +1168,7 @@ function renderAcumChartMensalGrid(){
     cardDiv.appendChild(titleDiv);
     
     const canvasDiv=document.createElement('div');
-    canvasDiv.style.cssText='position:relative;height:280px;margin-bottom:10px';
+    canvasDiv.style.cssText='position:relative;height:350px;margin-bottom:10px';
     const canvas=document.createElement('canvas');
     canvas.id='acum-chart-mensal-'+dir.id;
     canvasDiv.appendChild(canvas);

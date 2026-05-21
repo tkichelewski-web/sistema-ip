@@ -148,6 +148,41 @@ input[type=number]{font-family:'DM Mono',monospace;}
 .mono{font-family:'DM Mono',monospace;}
 .acum-cell{background:#f0f9f0 !important;font-weight:700;}
 @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}}
+
+/* ── SLIDE 16:9 ── */
+#sec-slide{padding:0!important;background:#f0f4f0;}
+#slide-wrap{width:100%;aspect-ratio:16/9;max-height:calc(100vh - 120px);margin:0 auto;position:relative;overflow:hidden;}
+#slide-16x9{
+  width:100%;height:100%;
+  display:flex;flex-direction:column;
+  background:linear-gradient(160deg,#f5fbf7 0%,#e8f5ee 100%);
+  font-family:'Open Sans',sans-serif;
+}
+#s-header{
+  background:#07583C;padding:0 32px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;height:7%;
+}
+#s-header h1{font-size:clamp(14px,1.8vw,26px);font-weight:800;color:#fff;}
+#s-header .s-periodo{font-size:clamp(10px,1.1vw,16px);color:#B3DD64;font-family:'DM Mono',monospace;font-weight:700;}
+#s-header .s-refs{display:flex;gap:16px;align-items:center;}
+#s-header .s-ref{display:flex;align-items:center;gap:5px;font-size:clamp(9px,0.85vw,12px);color:rgba(255,255,255,0.85);}
+#s-header .s-ref-line{width:20px;height:3px;border-radius:2px;}
+#s-charts{flex:1;display:grid;gap:10px;padding:10px 14px 12px;min-height:0;}
+.s-card{background:#fff;border-radius:10px;border:1px solid #d0e4d0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 2px 8px rgba(7,88,60,0.07);}
+.s-card-hd{background:linear-gradient(135deg,#07583C,#0a7a54);padding:6px 12px 5px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;}
+.s-card-hd h3{font-size:clamp(10px,1vw,14px);font-weight:800;color:#fff;line-height:1.2;max-width:75%;}
+.s-card-hd .s-media{font-size:clamp(16px,2vw,28px);font-weight:800;font-family:'DM Mono',monospace;line-height:1;}
+.s-card-gers{font-size:clamp(8px,0.7vw,10px);color:rgba(255,255,255,0.65);font-family:'DM Mono',monospace;margin-top:2px;}
+.s-card-body{flex:1;position:relative;padding:6px 8px 4px;min-height:0;}
+#slide-controls{background:#fff;border-top:2px solid #B3DD64;padding:10px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+#slide-controls label{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin-right:-8px;}
+#slide-controls select{padding:5px 9px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);}
+.s-btn{background:#07583C;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;}
+.s-btn:hover{background:#0a6e4a;}
+.s-btn-outline{background:#fff;color:#07583C;border:2px solid #07583C;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;}
+.s-btn-outline:hover{background:#f0f9f0;}
+#slide-dica{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-left:auto;}
 </style>
 </head>
 <body>
@@ -194,6 +229,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="tab hidden" onclick="showTab('gerencias')" id="tab-gerencias">Gerências</div>
     <div class="tab hidden" onclick="showTab('usuarios')" id="tab-usuarios">Usuários</div>
     <div class="tab hidden" onclick="showTab('config')" id="tab-config">Configurações</div>
+    <div class="tab" onclick="showTab('slide')" id="tab-slide" style="color:#07583C;border-left:2px solid #B3DD64;margin-left:auto;padding-left:18px;">📊 Slide</div>
   </div>
 
   <main>
@@ -549,6 +585,44 @@ input[type=number]{font-family:'DM Mono',monospace;}
       </div>
     </div>
 
+
+    <!-- SLIDE 16:9 -->
+    <div class="section" id="sec-slide">
+      <!-- Controles -->
+      <div id="slide-controls">
+        <label>Safra</label>
+        <select id="s-safra" onchange="onSSafraChange()"></select>
+        <label>Mês</label>
+        <select id="s-mes" onchange="renderSlide16x9()"><option value="">Todos</option></select>
+        <label>Tipo</label>
+        <select id="s-viz" onchange="renderSlide16x9()">
+          <option value="bar">📊 Colunas</option>
+          <option value="line">📈 Linha</option>
+        </select>
+        <button class="s-btn" onclick="abrirSlideFullscreen()">⛶ Tela Cheia</button>
+        <button class="s-btn-outline" onclick="window.print()">🖨 Imprimir</button>
+        <div id="slide-dica">Dica: use Tela Cheia → tire print → cole no PowerPoint</div>
+      </div>
+      <!-- Slide 16:9 -->
+      <div id="slide-wrap">
+        <div id="slide-16x9">
+          <div id="s-header">
+            <div>
+              <h1>📊 IP Mensal por Diretoria</h1>
+              <div id="s-periodo" class="s-periodo">—</div>
+            </div>
+            <div class="s-refs">
+              <div class="s-ref"><div class="s-ref-line" style="background:#07583C;"></div>Máximo (100)</div>
+              <div class="s-ref"><div class="s-ref-line" style="background:#1a73e8;"></div>Meta (90)</div>
+              <div class="s-ref"><div class="s-ref-line" style="background:#c47d0e;"></div>Mínimo (82)</div>
+              <div style="width:1px;height:18px;background:rgba(255,255,255,0.2);margin:0 4px;"></div>
+              <div class="s-ref" style="color:#B3DD64;font-weight:700;">VIDAS — Usina Santa Adélia</div>
+            </div>
+          </div>
+          <div id="s-charts"></div>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -741,6 +815,7 @@ async function carregarSafras() {
 }
 
 function preencherSelectsSafra() {
+  preencherSelectSlide();
   const opts = safrasData.map(s => `<option value="${s.id}">${s.nome}</option>`).join('');
   ['dash-safra','acum-safra','l-safra','hist-safra'].forEach(id => {
     const el = document.getElementById(id);
@@ -1343,6 +1418,7 @@ function showTab(id) {
   if(id==='historico') carregarHistorico();
   if(id==='config') carregarConfigForm();
   if(id==='acum'){setTimeout(renderAcumChart,80);setTimeout(renderAcumChartMensal,130);}
+  if(id==='slide') renderSlide16x9();
 }
 
 // ── CONFIG & DADOS ────────────────────────────────────────────
@@ -3284,7 +3360,197 @@ async function ativarWakeLock(){
     _wakeLock.addEventListener('release',()=>setTimeout(ativarWakeLock,2000));
   }catch(e){console.warn('Wake Lock:',e.message);}
 }
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();
+
+
+// ── SLIDE 16:9 ────────────────────────────────────────────────
+let _sCharts=new Map();
+let _sAcumData=[];
+let _sLoaded=false;
+
+const _sRefLinesPlugin={
+  id:'sRefLines',
+  afterDraw(chart){
+    const{ctx,chartArea:{left,right},scales:{y}}=chart;
+    const fCrit=config?.faixa_critico||82,fMeta=config?.faixa_meta||90;
+    [[100,'#07583C','Máx(100)'],[fMeta,'#1a73e8','Meta('+fMeta+')'],[fCrit,'#c47d0e','Mín('+fCrit+')']].forEach(([val,color,lbl])=>{
+      const yPx=y.getPixelForValue(val);
+      ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.85;
+      ctx.beginPath();ctx.moveTo(left,yPx);ctx.lineTo(right,yPx);ctx.stroke();
+      ctx.globalAlpha=1;ctx.setLineDash([]);ctx.fillStyle=color;ctx.font='bold 9px DM Mono,monospace';
+      ctx.fillText(lbl,right-72,yPx-3);ctx.restore();
+    });
+  }
+};
+
+const _sDataLabels={
+  id:'sDataLabels',
+  afterDatasetsDraw(chart){
+    const{ctx}=chart;
+    chart.data.datasets.forEach((ds,i)=>{
+      const meta=chart.getDatasetMeta(i);
+      if(meta.hidden)return;
+      const corTx=ds._corTexto||'#fff';
+      meta.data.forEach((bar,j)=>{
+        const val=ds.data[j];if(val==null)return;
+        const{x,y:barY,base}=bar;
+        const barH=Math.abs(base-barY);if(barH<16)return;
+        ctx.save();ctx.fillStyle=corTx;ctx.font='bold 11px Open Sans,sans-serif';
+        ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText(val.toFixed(1),x,(barY+base)/2);ctx.restore();
+      });
+    });
+  }
+};
+
+async function renderSlide16x9(){
+  // Carrega dados se ainda não carregou para esta safra
+  const safraId=document.getElementById('s-safra')?.value;
+  if(!safraId)return;
+
+  if(!_sLoaded || _sCurrentSafra!==safraId){
+    await _sCarregarDados(safraId);
+  }
+  _sDesenharSlide();
+}
+
+let _sCurrentSafra='';
+
+async function _sCarregarDados(safraId){
+  const wrap=document.getElementById('s-charts');
+  if(wrap) wrap.innerHTML='<div class="loading" style="height:100%;display:flex;align-items:center;justify-content:center;"><span class="spinner"></span> Carregando...</div>';
+  const{data}=await sb.from('lancamentos')
+    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))')
+    .eq('safra_id',safraId);
+  _sAcumData=data||[];
+  _sCurrentSafra=safraId;
+  _sLoaded=true;
+
+  // Preenche meses
+  const safra=safrasData.find(s=>s.id==safraId);
+  const meses=getMesesSafra(safra).filter(m=>_sAcumData.some(l=>l.mes===m.val));
+  const selMes=document.getElementById('s-mes');
+  if(selMes){
+    selMes.innerHTML='<option value="">Todos os meses</option>'+meses.map(m=>`<option value="${m.val}">${m.nome}</option>`).join('');
+    // Seleciona mês mais recente
+    if(meses.length) selMes.value=meses[meses.length-1].val;
+  }
+}
+
+async function onSSafraChange(){
+  _sLoaded=false;
+  await renderSlide16x9();
+}
+
+function _sDesenharSlide(){
+  const safraId=document.getElementById('s-safra')?.value;
+  const safra=safrasData.find(s=>s.id==safraId);
+  const filtMes=document.getElementById('s-mes')?.value||'';
+  const vizType=document.getElementById('s-viz')?.value||'bar';
+  if(!safra||!_sAcumData.length)return;
+
+  const mesesSafra=getMesesSafra(safra).filter(m=>_sAcumData.some(l=>l.mes===m.val));
+  const mesesVis=filtMes?mesesSafra.filter(m=>m.val===filtMes):mesesSafra;
+
+  // Período no header
+  const periodoTxt=mesesVis.length===1?mesesVis[0].nome:mesesVis.length===mesesSafra.length?'Safra '+safra.nome:mesesVis.map(m=>m.nome).join(' · ');
+  const pEl=document.getElementById('s-periodo');if(pEl)pEl.textContent=periodoTxt;
+
+  // Agrupa por diretoria
+  const dirsMap=new Map();
+  _sAcumData.forEach(l=>{
+    const did=l.gerencias?.diretoria_id;if(!did)return;
+    if(!dirsMap.has(did))dirsMap.set(did,{nome:l.gerencias?.diretorias?.nome||'—',gers:new Map()});
+    const d=dirsMap.get(did);
+    const gid=l.gerencia_id;
+    if(!d.gers.has(gid))d.gers.set(gid,{nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||'',dados:[]});
+    d.gers.get(gid).dados.push(l);
+  });
+
+  // Destroi charts anteriores
+  _sCharts.forEach(c=>{try{c.destroy();}catch(e){}});
+  _sCharts.clear();
+
+  const wrap=document.getElementById('s-charts');
+  const dirs=[...dirsMap.entries()];
+  const nCols=Math.min(dirs.length,5);
+  wrap.style.gridTemplateColumns=`repeat(${nCols},1fr)`;
+  wrap.innerHTML='';
+
+  dirs.forEach(([did,dir])=>{
+    const gers=[...dir.gers.values()];
+    const labels=mesesVis.map(m=>m.nome);
+    const isBar=vizType==='bar';
+
+    // Média da diretoria
+    const ips=[];
+    gers.forEach(g=>mesesVis.forEach(m=>{
+      const l=g.dados.find(x=>x.mes===m.val);
+      const ip=calcIPLanc(l);if(ip!=null)ips.push(ip);
+    }));
+    const media=ips.length?ips.reduce((a,b)=>a+b,0)/ips.length:null;
+    const mediaCor=media!=null?getColor(media):'#888';
+
+    const datasets=gers.map(g=>{
+      const cor=uniCorChart(g.uni),corTx=uniLabelTexto(g.uni);
+      const pts=mesesVis.map(m=>{
+        const l=g.dados.find(x=>x.mes===m.val);
+        const ip=calcIPLanc(l);
+        return ip!=null?parseFloat(ip.toFixed(2)):null;
+      });
+      const label=g.uni?g.nome+' '+g.uni:g.nome;
+      return{label,data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,borderWidth:isBar?0:2,pointRadius:isBar?0:4,pointHoverRadius:isBar?0:6,borderRadius:isBar?4:0,tension:0.3,spanGaps:false,_corTexto:corTx};
+    });
+
+    const card=document.createElement('div');
+    card.className='s-card';
+    card.innerHTML=`
+      <div class="s-card-hd">
+        <div>
+          <h3>${dir.nome}</h3>
+          <div class="s-card-gers">${gers.length} gerência${gers.length!==1?'s':''}</div>
+        </div>
+        <div class="s-media" style="color:${mediaCor}">${media!=null?media.toFixed(1):'—'}</div>
+      </div>
+      <div class="s-card-body"><canvas id="sc-${did}"></canvas></div>`;
+    wrap.appendChild(card);
+
+    setTimeout(()=>{
+      const canvas=document.getElementById('sc-'+did);if(!canvas)return;
+      const chart=new Chart(canvas,{
+        type:vizType,data:{labels,datasets},
+        options:{
+          responsive:true,maintainAspectRatio:false,animation:{duration:400},
+          interaction:{mode:'index',intersect:false},
+          plugins:{
+            legend:{position:'bottom',labels:{font:{size:10,family:'Open Sans'},padding:6,usePointStyle:true,boxWidth:8}},
+            tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
+          },
+          scales:{
+            x:{grid:{color:'#e8f0e8'},ticks:{font:{size:10},maxRotation:0}},
+            y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:10},stepSize:20,callback:v=>v}}
+          }
+        },
+        plugins:isBar?[_sRefLinesPlugin,_sDataLabels]:[_sRefLinesPlugin]
+      });
+      _sCharts.set(did,chart);
+    },30);
+  });
+}
+
+function abrirSlideFullscreen(){
+  const wrap=document.getElementById('slide-wrap');
+  if(wrap && wrap.requestFullscreen) wrap.requestFullscreen();
+  else if(wrap && wrap.webkitRequestFullscreen) wrap.webkitRequestFullscreen();
+}
+
+// Preenche safras no select do slide quando os dados já estiverem carregados
+function preencherSelectSlide(){
+  const sel=document.getElementById('s-safra');
+  if(!sel||!safrasData.length)return;
+  sel.innerHTML=safrasData.map(s=>`<option value="${s.id}">${s.nome}</option>`).join('');
+}
+});
 ativarWakeLock();
 
 </script>

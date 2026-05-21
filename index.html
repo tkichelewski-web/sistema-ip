@@ -60,7 +60,7 @@ header{background:#07583C;padding:11px 28px;display:flex;align-items:center;just
 .tab:hover{color:#07583C;}
 .tab.active{color:#07583C;border-bottom-color:#B3DD64;background:#f0f9f0;}
 .tab.hidden{display:none;}
-main{padding:22px 32px;max-width:1600px;margin:0 auto;}
+main{padding:22px 28px;max-width:1400px;margin:0 auto;}
 .section{display:none;}.section.active{display:block;}
 
 /* CARDS */
@@ -148,41 +148,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
 .mono{font-family:'DM Mono',monospace;}
 .acum-cell{background:#f0f9f0 !important;font-weight:700;}
 @media(max-width:768px){.stats-row{grid-template-columns:repeat(2,1fr);}main{padding:14px;}.tabs{overflow-x:auto;}.form-row{grid-template-columns:1fr;}}
-
-/* ── SLIDE 16:9 ── */
-#sec-slide{padding:0!important;background:#f0f4f0;}
-#slide-wrap{width:100%;aspect-ratio:16/9;max-height:calc(100vh - 120px);margin:0 auto;position:relative;overflow:hidden;}
-#slide-16x9{
-  width:100%;height:100%;
-  display:flex;flex-direction:column;
-  background:linear-gradient(160deg,#f5fbf7 0%,#e8f5ee 100%);
-  font-family:'Open Sans',sans-serif;
-}
-#s-header{
-  background:#07583C;padding:0 32px;
-  display:flex;align-items:center;justify-content:space-between;
-  flex-shrink:0;height:7%;
-}
-#s-header h1{font-size:clamp(14px,1.8vw,26px);font-weight:800;color:#fff;}
-#s-header .s-periodo{font-size:clamp(10px,1.1vw,16px);color:#B3DD64;font-family:'DM Mono',monospace;font-weight:700;}
-#s-header .s-refs{display:flex;gap:16px;align-items:center;}
-#s-header .s-ref{display:flex;align-items:center;gap:5px;font-size:clamp(9px,0.85vw,12px);color:rgba(255,255,255,0.85);}
-#s-header .s-ref-line{width:20px;height:3px;border-radius:2px;}
-#s-charts{flex:1;display:grid;gap:10px;padding:10px 14px 12px;min-height:0;}
-.s-card{background:#fff;border-radius:10px;border:1px solid #d0e4d0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 2px 8px rgba(7,88,60,0.07);}
-.s-card-hd{background:linear-gradient(135deg,#07583C,#0a7a54);padding:6px 12px 5px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;}
-.s-card-hd h3{font-size:clamp(10px,1vw,14px);font-weight:800;color:#fff;line-height:1.2;max-width:75%;}
-.s-card-hd .s-media{font-size:clamp(16px,2vw,28px);font-weight:800;font-family:'DM Mono',monospace;line-height:1;}
-.s-card-gers{font-size:clamp(8px,0.7vw,10px);color:rgba(255,255,255,0.65);font-family:'DM Mono',monospace;margin-top:2px;}
-.s-card-body{flex:1;position:relative;padding:6px 8px 4px;min-height:0;}
-#slide-controls{background:#fff;border-top:2px solid #B3DD64;padding:10px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
-#slide-controls label{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin-right:-8px;}
-#slide-controls select{padding:5px 9px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:#fff;color:var(--text);}
-.s-btn{background:#07583C;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;}
-.s-btn:hover{background:#0a6e4a;}
-.s-btn-outline{background:#fff;color:#07583C;border:2px solid #07583C;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;}
-.s-btn-outline:hover{background:#f0f9f0;}
-#slide-dica{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-left:auto;}
 </style>
 </head>
 <body>
@@ -229,7 +194,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="tab hidden" onclick="showTab('gerencias')" id="tab-gerencias">Gerências</div>
     <div class="tab hidden" onclick="showTab('usuarios')" id="tab-usuarios">Usuários</div>
     <div class="tab hidden" onclick="showTab('config')" id="tab-config">Configurações</div>
-    <div class="tab" onclick="showTab('slide')" id="tab-slide" style="color:#07583C;border-left:2px solid #B3DD64;margin-left:auto;padding-left:18px;">📊 Slide</div>
+    <div class="tab" onclick="showTab('slide')" id="tab-slide" style="margin-left:auto;border-left:2px solid #B3DD64;padding-left:18px;">📊 Slide</div>
   </div>
 
   <main>
@@ -327,25 +292,19 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <!-- Gráfico IP Mensal -->
       <div class="table-wrap" style="margin-bottom:20px">
         <div class="table-header">
-          <span class="table-title">📊 IP Mensal por Diretoria</span>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <span class="table-title">📊 IP Mensal</span>
+          <div style="display:flex;gap:8px">
             <select id="acum-chart-mes-tipo" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
+              <option value="gerencia">Por Gerência</option>
               <option value="diretoria">Por Diretoria</option>
-              <option value="gerencia">Por Gerência (único gráfico)</option>
             </select>
             <select id="acum-chart-mes-viz" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
               <option value="bar">📊 Colunas</option>
               <option value="line">📈 Linha</option>
             </select>
-            <button onclick="abrirApresentacao()" style="background:#07583C;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;">
-              ▶ Apresentação
-            </button>
           </div>
         </div>
-        <!-- Container para múltiplos gráficos por diretoria -->
-        <div id="acum-chart-mensal-multi" style="display:none;padding:16px;"></div>
-        <!-- Container para gráfico único (por gerência) -->
-        <div id="acum-chart-mensal-single" style="padding:16px;position:relative;height:420px">
+        <div style="padding:16px;position:relative;height:360px">
           <canvas id="acum-chart-mensal"></canvas>
         </div>
       </div>
@@ -585,44 +544,42 @@ input[type=number]{font-family:'DM Mono',monospace;}
       </div>
     </div>
 
-
     <!-- SLIDE 16:9 -->
-    <div class="section" id="sec-slide">
-      <!-- Controles -->
-      <div id="slide-controls">
-        <label>Safra</label>
-        <select id="s-safra" onchange="onSSafraChange()"></select>
-        <label>Mês</label>
-        <select id="s-mes" onchange="renderSlide16x9()"><option value="">Todos</option></select>
-        <label>Tipo</label>
-        <select id="s-viz" onchange="renderSlide16x9()">
+    <div class="section" id="sec-slide" style="padding:0;background:#f0f4f0;">
+      <div style="background:#fff;border-bottom:2px solid #B3DD64;padding:10px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <span style="font-size:13px;font-weight:700;color:#07583C;">📊 Slide IP por Diretoria</span>
+        <label style="font-size:11px;color:#5a7a5a;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin:0;">Safra</label>
+        <select id="s-safra" onchange="sOnSafraChange()" style="padding:5px 9px;font-size:12px;border:1px solid #d0e4d0;border-radius:6px;"></select>
+        <label style="font-size:11px;color:#5a7a5a;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin:0;">Mês</label>
+        <select id="s-mes" onchange="sDesenhar()" style="padding:5px 9px;font-size:12px;border:1px solid #d0e4d0;border-radius:6px;"><option value="">Todos</option></select>
+        <label style="font-size:11px;color:#5a7a5a;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin:0;">Tipo</label>
+        <select id="s-viz" onchange="sDesenhar()" style="padding:5px 9px;font-size:12px;border:1px solid #d0e4d0;border-radius:6px;">
           <option value="bar">📊 Colunas</option>
           <option value="line">📈 Linha</option>
         </select>
-        <button class="s-btn" onclick="abrirSlideFullscreen()">⛶ Tela Cheia</button>
-        <button class="s-btn-outline" onclick="window.print()">🖨 Imprimir</button>
-        <div id="slide-dica">Dica: use Tela Cheia → tire print → cole no PowerPoint</div>
+        <button onclick="sTelaCheia()" style="background:#07583C;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;">⛶ Tela Cheia</button>
+        <span style="font-size:11px;color:#5a7a5a;font-family:'DM Mono',monospace;margin-left:auto;">Tela cheia → Print Screen → cola no PowerPoint</span>
       </div>
-      <!-- Slide 16:9 -->
-      <div id="slide-wrap">
-        <div id="slide-16x9">
-          <div id="s-header">
+      <div id="s-wrap" style="width:100%;aspect-ratio:16/9;max-height:calc(100vh - 130px);overflow:hidden;">
+        <div id="s-slide" style="width:100%;height:100%;display:flex;flex-direction:column;background:linear-gradient(160deg,#f5fbf7 0%,#e8f5ee 100%);font-family:'Open Sans',sans-serif;">
+          <div style="background:#07583C;padding:0 32px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;height:8%;">
             <div>
-              <h1>📊 IP Mensal por Diretoria</h1>
-              <div id="s-periodo" class="s-periodo">—</div>
+              <div style="font-size:clamp(14px,1.8vw,26px);font-weight:800;color:#fff;">📊 IP Mensal por Diretoria</div>
+              <div id="s-periodo" style="font-size:clamp(10px,1vw,15px);color:#B3DD64;font-family:'DM Mono',monospace;font-weight:700;">—</div>
             </div>
-            <div class="s-refs">
-              <div class="s-ref"><div class="s-ref-line" style="background:#07583C;"></div>Máximo (100)</div>
-              <div class="s-ref"><div class="s-ref-line" style="background:#1a73e8;"></div>Meta (90)</div>
-              <div class="s-ref"><div class="s-ref-line" style="background:#c47d0e;"></div>Mínimo (82)</div>
-              <div style="width:1px;height:18px;background:rgba(255,255,255,0.2);margin:0 4px;"></div>
-              <div class="s-ref" style="color:#B3DD64;font-weight:700;">VIDAS — Usina Santa Adélia</div>
+            <div style="display:flex;gap:16px;align-items:center;">
+              <div style="display:flex;align-items:center;gap:5px;font-size:clamp(9px,0.8vw,12px);color:rgba(255,255,255,0.85);"><div style="width:20px;height:3px;border-radius:2px;background:#07583C;border:1px solid #B3DD64;"></div>Máximo (100)</div>
+              <div style="display:flex;align-items:center;gap:5px;font-size:clamp(9px,0.8vw,12px);color:rgba(255,255,255,0.85);"><div style="width:20px;height:3px;border-radius:2px;background:#1a73e8;"></div>Meta (90)</div>
+              <div style="display:flex;align-items:center;gap:5px;font-size:clamp(9px,0.8vw,12px);color:rgba(255,255,255,0.85);"><div style="width:20px;height:3px;border-radius:2px;background:#c47d0e;"></div>Mínimo (82)</div>
+              <div style="width:1px;height:16px;background:rgba(255,255,255,0.2);"></div>
+              <div style="font-size:clamp(9px,0.8vw,12px);color:#B3DD64;font-weight:700;">VIDAS — Usina Santa Adélia</div>
             </div>
           </div>
-          <div id="s-charts"></div>
+          <div id="s-charts" style="flex:1;display:grid;gap:10px;padding:10px 14px 12px;min-height:0;"></div>
         </div>
       </div>
     </div>
+
   </main>
 </div>
 
@@ -815,7 +772,7 @@ async function carregarSafras() {
 }
 
 function preencherSelectsSafra() {
-  preencherSelectSlide();
+  sPreencherSafras();
   const opts = safrasData.map(s => `<option value="${s.id}">${s.nome}</option>`).join('');
   ['dash-safra','acum-safra','l-safra','hist-safra'].forEach(id => {
     const el = document.getElementById(id);
@@ -1201,102 +1158,9 @@ function renderAcumChart(){
 }
 
 function renderAcumChartMensal(){
-  const tipo=document.getElementById('acum-chart-mes-tipo')?.value||'diretoria';
+  const tipo=document.getElementById('acum-chart-mes-tipo')?.value||'gerencia';
   const vizType=document.getElementById('acum-chart-mes-viz')?.value||'bar';
-  const multiWrap=document.getElementById('acum-chart-mensal-multi');
-  const singleWrap=document.getElementById('acum-chart-mensal-single');
-  if(tipo==='diretoria'){
-    if(singleWrap) singleWrap.style.display='none';
-    if(multiWrap) multiWrap.style.display='block';
-    renderAcumChartMensalMulti(vizType);
-  } else {
-    if(multiWrap) multiWrap.style.display='none';
-    if(singleWrap) singleWrap.style.display='block';
-    criarChart('acum-chart-mensal',_refMensal,'gerencia',vizType,false);
-  }
-}
-
-const _refDirCharts=new Map();
-
-function renderAcumChartMensalMulti(vizType){
-  const multiWrap=document.getElementById('acum-chart-mensal-multi');
-  if(!multiWrap)return;
-  const safraId=document.getElementById('acum-safra')?.value;
-  const safra=safrasData.find(s=>s.id==safraId);
-  if(!acumAllData.length||!safra){multiWrap.innerHTML='<div class="loading">Selecione uma safra.</div>';return;}
-  const filtDirId=parseInt(document.getElementById('acum-dir')?.value)||0;
-  const filtGerId=parseInt(document.getElementById('acum-ger')?.value)||0;
-  const filtMes=document.getElementById('acum-mes')?.value||'';
-  const meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
-  const mesesVis=filtMes?meses.filter(m=>m.val===filtMes):meses;
-  const dirsMap=new Map();
-  acumAllData.forEach(l=>{
-    const did=l.gerencias?.diretoria_id;
-    if(!did)return;
-    if(filtDirId&&did!==filtDirId)return;
-    if(!dirsMap.has(did))dirsMap.set(did,{nome:l.gerencias?.diretorias?.nome||'—',gerencias:new Map()});
-    const d=dirsMap.get(did);
-    const gid=l.gerencia_id;
-    if(filtGerId&&gid!==filtGerId)return;
-    if(!d.gerencias.has(gid))d.gerencias.set(gid,{nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||'',dados:[]});
-    d.gerencias.get(gid).dados.push(l);
-  });
-  _refDirCharts.forEach(c=>{try{c.destroy();}catch(e){}});
-  _refDirCharts.clear();
-  if(!dirsMap.size){multiWrap.innerHTML='<div class="loading">Nenhum dado encontrado.</div>';return;}
-  const isBar=vizType==='bar';
-  const dirs=[...dirsMap.entries()];
-  const numCols=dirs.length===1?1:2;
-  const chartH=320;
-  let html='<div style="display:grid;grid-template-columns:repeat('+numCols+',1fr);gap:18px;">';
-  dirs.forEach(([did,dir])=>{
-    html+='<div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;">';
-    html+='<div style="padding:12px 16px 10px;border-bottom:1px solid var(--border);background:#f5fbf7;">';
-    html+='<span style="font-size:14px;font-weight:700;color:#07583C;">\uD83C\uDFE2 '+dir.nome+'</span>';
-    html+='<span style="font-size:11px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-left:10px;">'+dir.gerencias.size+' gerência(s)</span>';
-    html+='</div>';
-    html+='<div style="padding:14px;position:relative;height:'+chartH+'px;">';
-    html+='<canvas id="chart-dir-'+did+'"></canvas>';
-    html+='</div></div>';
-  });
-  html+='</div>';
-  multiWrap.innerHTML=html;
-  setTimeout(()=>{
-    dirs.forEach(([did,dir])=>{
-      const canvas=document.getElementById('chart-dir-'+did);
-      if(!canvas)return;
-      const gers=[...dir.gerencias.values()];
-      const labels=mesesVis.map(m=>m.nome);
-      const datasets=gers.map((g)=>{
-        const cor=uniCorChart(g.uni);
-        const corTx=uniLabelTexto(g.uni);
-        const pts=mesesVis.map(m=>{
-          const l=g.dados.find(x=>x.mes===m.val);
-          const ip=calcIPLanc(l);
-          return ip!=null?parseFloat(ip.toFixed(2)):null;
-        });
-        const label=g.uni?g.nome+' '+g.uni:g.nome;
-        return{label,data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,borderWidth:isBar?0:2,pointRadius:isBar?0:5,pointHoverRadius:isBar?0:7,borderRadius:isBar?5:0,tension:0.3,spanGaps:false,_corTexto:corTx||'#fff'};
-      });
-      const chart=new Chart(canvas,{
-        type:vizType,data:{labels,datasets},
-        options:{
-          responsive:true,maintainAspectRatio:false,
-          interaction:{mode:'index',intersect:false},
-          plugins:{
-            legend:{position:'bottom',labels:{font:{size:11},padding:10,usePointStyle:true,boxWidth:9}},
-            tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
-          },
-          scales:{
-            x:{grid:{color:'#e8f0e8'},ticks:{font:{size:11}}},
-            y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:11},callback:v=>v.toFixed(0)}}
-          }
-        },
-        plugins:isBar?[refLinesPlugin,dataLabelsPlugin]:[refLinesPlugin]
-      });
-      _refDirCharts.set(did,chart);
-    });
-  },50);
+  criarChart('acum-chart-mensal',_refMensal,tipo,vizType,false);
 }
 
 
@@ -1418,7 +1282,7 @@ function showTab(id) {
   if(id==='historico') carregarHistorico();
   if(id==='config') carregarConfigForm();
   if(id==='acum'){setTimeout(renderAcumChart,80);setTimeout(renderAcumChartMensal,130);}
-  if(id==='slide') renderSlide16x9();
+  if(id==='slide') sIniciar();
 }
 
 // ── CONFIG & DADOS ────────────────────────────────────────────
@@ -3360,198 +3224,129 @@ async function ativarWakeLock(){
     _wakeLock.addEventListener('release',()=>setTimeout(ativarWakeLock,2000));
   }catch(e){console.warn('Wake Lock:',e.message);}
 }
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();
-
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();});
+ativarWakeLock();
 
 // ── SLIDE 16:9 ────────────────────────────────────────────────
-let _sCharts=new Map();
-let _sAcumData=[];
-let _sLoaded=false;
+let _sData=[],_sSafraId='',_sChartRefs=new Map();
 
-const _sRefLinesPlugin={
-  id:'sRefLines',
-  afterDraw(chart){
-    const{ctx,chartArea:{left,right},scales:{y}}=chart;
-    const fCrit=config?.faixa_critico||82,fMeta=config?.faixa_meta||90;
-    [[100,'#07583C','Máx(100)'],[fMeta,'#1a73e8','Meta('+fMeta+')'],[fCrit,'#c47d0e','Mín('+fCrit+')']].forEach(([val,color,lbl])=>{
-      const yPx=y.getPixelForValue(val);
-      ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.85;
-      ctx.beginPath();ctx.moveTo(left,yPx);ctx.lineTo(right,yPx);ctx.stroke();
-      ctx.globalAlpha=1;ctx.setLineDash([]);ctx.fillStyle=color;ctx.font='bold 9px DM Mono,monospace';
-      ctx.fillText(lbl,right-72,yPx-3);ctx.restore();
-    });
-  }
-};
-
-const _sDataLabels={
-  id:'sDataLabels',
-  afterDatasetsDraw(chart){
-    const{ctx}=chart;
-    chart.data.datasets.forEach((ds,i)=>{
-      const meta=chart.getDatasetMeta(i);
-      if(meta.hidden)return;
-      const corTx=ds._corTexto||'#fff';
-      meta.data.forEach((bar,j)=>{
-        const val=ds.data[j];if(val==null)return;
-        const{x,y:barY,base}=bar;
-        const barH=Math.abs(base-barY);if(barH<16)return;
-        ctx.save();ctx.fillStyle=corTx;ctx.font='bold 11px Open Sans,sans-serif';
-        ctx.textAlign='center';ctx.textBaseline='middle';
-        ctx.fillText(val.toFixed(1),x,(barY+base)/2);ctx.restore();
-      });
-    });
-  }
-};
-
-async function renderSlide16x9(){
-  // Carrega dados se ainda não carregou para esta safra
-  const safraId=document.getElementById('s-safra')?.value;
-  if(!safraId)return;
-
-  if(!_sLoaded || _sCurrentSafra!==safraId){
-    await _sCarregarDados(safraId);
-  }
-  _sDesenharSlide();
-}
-
-let _sCurrentSafra='';
-
-async function _sCarregarDados(safraId){
-  const wrap=document.getElementById('s-charts');
-  if(wrap) wrap.innerHTML='<div class="loading" style="height:100%;display:flex;align-items:center;justify-content:center;"><span class="spinner"></span> Carregando...</div>';
-  const{data}=await sb.from('lancamentos')
-    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))')
-    .eq('safra_id',safraId);
-  _sAcumData=data||[];
-  _sCurrentSafra=safraId;
-  _sLoaded=true;
-
-  // Preenche meses
-  const safra=safrasData.find(s=>s.id==safraId);
-  const meses=getMesesSafra(safra).filter(m=>_sAcumData.some(l=>l.mes===m.val));
-  const selMes=document.getElementById('s-mes');
-  if(selMes){
-    selMes.innerHTML='<option value="">Todos os meses</option>'+meses.map(m=>`<option value="${m.val}">${m.nome}</option>`).join('');
-    // Seleciona mês mais recente
-    if(meses.length) selMes.value=meses[meses.length-1].val;
-  }
-}
-
-async function onSSafraChange(){
-  _sLoaded=false;
-  await renderSlide16x9();
-}
-
-function _sDesenharSlide(){
-  const safraId=document.getElementById('s-safra')?.value;
-  const safra=safrasData.find(s=>s.id==safraId);
-  const filtMes=document.getElementById('s-mes')?.value||'';
-  const vizType=document.getElementById('s-viz')?.value||'bar';
-  if(!safra||!_sAcumData.length)return;
-
-  const mesesSafra=getMesesSafra(safra).filter(m=>_sAcumData.some(l=>l.mes===m.val));
-  const mesesVis=filtMes?mesesSafra.filter(m=>m.val===filtMes):mesesSafra;
-
-  // Período no header
-  const periodoTxt=mesesVis.length===1?mesesVis[0].nome:mesesVis.length===mesesSafra.length?'Safra '+safra.nome:mesesVis.map(m=>m.nome).join(' · ');
-  const pEl=document.getElementById('s-periodo');if(pEl)pEl.textContent=periodoTxt;
-
-  // Agrupa por diretoria
-  const dirsMap=new Map();
-  _sAcumData.forEach(l=>{
-    const did=l.gerencias?.diretoria_id;if(!did)return;
-    if(!dirsMap.has(did))dirsMap.set(did,{nome:l.gerencias?.diretorias?.nome||'—',gers:new Map()});
-    const d=dirsMap.get(did);
-    const gid=l.gerencia_id;
-    if(!d.gers.has(gid))d.gers.set(gid,{nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||'',dados:[]});
-    d.gers.get(gid).dados.push(l);
+const _sRefPlugin={id:'sRef',afterDraw(chart){
+  const{ctx,chartArea:{left,right},scales:{y}}=chart;
+  const fc=config?.faixa_critico||82,fm=config?.faixa_meta||90;
+  [[100,'#07583C','Máx(100)'],[fm,'#1a73e8','Meta('+fm+')'],[fc,'#c47d0e','Mín('+fc+')']].forEach(([v,c,l])=>{
+    const yp=y.getPixelForValue(v);
+    ctx.save();ctx.setLineDash([5,4]);ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.globalAlpha=.85;
+    ctx.beginPath();ctx.moveTo(left,yp);ctx.lineTo(right,yp);ctx.stroke();
+    ctx.globalAlpha=1;ctx.setLineDash([]);ctx.fillStyle=c;ctx.font='bold 9px DM Mono,monospace';
+    ctx.fillText(l,right-72,yp-3);ctx.restore();
   });
+}};
 
-  // Destroi charts anteriores
-  _sCharts.forEach(c=>{try{c.destroy();}catch(e){}});
-  _sCharts.clear();
-
-  const wrap=document.getElementById('s-charts');
-  const dirs=[...dirsMap.entries()];
-  const nCols=Math.min(dirs.length,5);
-  wrap.style.gridTemplateColumns=`repeat(${nCols},1fr)`;
-  wrap.innerHTML='';
-
-  dirs.forEach(([did,dir])=>{
-    const gers=[...dir.gers.values()];
-    const labels=mesesVis.map(m=>m.nome);
-    const isBar=vizType==='bar';
-
-    // Média da diretoria
-    const ips=[];
-    gers.forEach(g=>mesesVis.forEach(m=>{
-      const l=g.dados.find(x=>x.mes===m.val);
-      const ip=calcIPLanc(l);if(ip!=null)ips.push(ip);
-    }));
-    const media=ips.length?ips.reduce((a,b)=>a+b,0)/ips.length:null;
-    const mediaCor=media!=null?getColor(media):'#888';
-
-    const datasets=gers.map(g=>{
-      const cor=uniCorChart(g.uni),corTx=uniLabelTexto(g.uni);
-      const pts=mesesVis.map(m=>{
-        const l=g.dados.find(x=>x.mes===m.val);
-        const ip=calcIPLanc(l);
-        return ip!=null?parseFloat(ip.toFixed(2)):null;
-      });
-      const label=g.uni?g.nome+' '+g.uni:g.nome;
-      return{label,data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,borderWidth:isBar?0:2,pointRadius:isBar?0:4,pointHoverRadius:isBar?0:6,borderRadius:isBar?4:0,tension:0.3,spanGaps:false,_corTexto:corTx};
+const _sLabelPlugin={id:'sLabel',afterDatasetsDraw(chart){
+  const{ctx}=chart;
+  chart.data.datasets.forEach((ds,i)=>{
+    const meta=chart.getDatasetMeta(i);if(meta.hidden)return;
+    const ct=ds._corTexto||'#fff';
+    meta.data.forEach((bar,j)=>{
+      const v=ds.data[j];if(v==null)return;
+      const{x,y:by,base}=bar,bh=Math.abs(base-by);if(bh<16)return;
+      ctx.save();ctx.fillStyle=ct;ctx.font='bold 11px Open Sans,sans-serif';
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(v.toFixed(1),x,(by+base)/2);ctx.restore();
     });
-
-    const card=document.createElement('div');
-    card.className='s-card';
-    card.innerHTML=`
-      <div class="s-card-hd">
-        <div>
-          <h3>${dir.nome}</h3>
-          <div class="s-card-gers">${gers.length} gerência${gers.length!==1?'s':''}</div>
-        </div>
-        <div class="s-media" style="color:${mediaCor}">${media!=null?media.toFixed(1):'—'}</div>
-      </div>
-      <div class="s-card-body"><canvas id="sc-${did}"></canvas></div>`;
-    wrap.appendChild(card);
-
-    setTimeout(()=>{
-      const canvas=document.getElementById('sc-'+did);if(!canvas)return;
-      const chart=new Chart(canvas,{
-        type:vizType,data:{labels,datasets},
-        options:{
-          responsive:true,maintainAspectRatio:false,animation:{duration:400},
-          interaction:{mode:'index',intersect:false},
-          plugins:{
-            legend:{position:'bottom',labels:{font:{size:10,family:'Open Sans'},padding:6,usePointStyle:true,boxWidth:8}},
-            tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
-          },
-          scales:{
-            x:{grid:{color:'#e8f0e8'},ticks:{font:{size:10},maxRotation:0}},
-            y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:10},stepSize:20,callback:v=>v}}
-          }
-        },
-        plugins:isBar?[_sRefLinesPlugin,_sDataLabels]:[_sRefLinesPlugin]
-      });
-      _sCharts.set(did,chart);
-    },30);
   });
-}
+}};
 
-function abrirSlideFullscreen(){
-  const wrap=document.getElementById('slide-wrap');
-  if(wrap && wrap.requestFullscreen) wrap.requestFullscreen();
-  else if(wrap && wrap.webkitRequestFullscreen) wrap.webkitRequestFullscreen();
-}
-
-// Preenche safras no select do slide quando os dados já estiverem carregados
-function preencherSelectSlide(){
+function sPreencherSafras(){
   const sel=document.getElementById('s-safra');
   if(!sel||!safrasData.length)return;
   sel.innerHTML=safrasData.map(s=>`<option value="${s.id}">${s.nome}</option>`).join('');
 }
-});
-ativarWakeLock();
+
+async function sIniciar(){
+  sPreencherSafras();
+  const sel=document.getElementById('s-safra');
+  if(sel&&sel.value) await sCarregarSafra(sel.value);
+}
+
+async function sOnSafraChange(){
+  const id=document.getElementById('s-safra')?.value;
+  if(id) await sCarregarSafra(id);
+}
+
+async function sCarregarSafra(safraId){
+  _sSafraId=safraId;
+  const wrap=document.getElementById('s-charts');
+  if(wrap)wrap.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#5a7a5a;gap:10px;"><span class="spinner"></span>Carregando...</div>';
+  const{data}=await sb.from('lancamentos')
+    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))').eq('safra_id',safraId);
+  _sData=data||[];
+  const safra=safrasData.find(s=>s.id==safraId);
+  const meses=getMesesSafra(safra).filter(m=>_sData.some(l=>l.mes===m.val));
+  const sel=document.getElementById('s-mes');
+  if(sel){
+    sel.innerHTML='<option value="">Todos os meses</option>'+meses.map(m=>`<option value="${m.val}">${m.nome}</option>`).join('');
+    if(meses.length) sel.value=meses[meses.length-1].val;
+  }
+  sDesenhar();
+}
+
+function sDesenhar(){
+  const safraId=document.getElementById('s-safra')?.value;
+  const safra=safrasData.find(s=>s.id==safraId);
+  if(!safra||!_sData.length)return;
+  const filtMes=document.getElementById('s-mes')?.value||'';
+  const vizType=document.getElementById('s-viz')?.value||'bar';
+  const mesesSafra=getMesesSafra(safra).filter(m=>_sData.some(l=>l.mes===m.val));
+  const mesesVis=filtMes?mesesSafra.filter(m=>m.val===filtMes):mesesSafra;
+  const periodoTxt=mesesVis.length===1?mesesVis[0].nome:mesesVis.length===mesesSafra.length?'Safra '+safra.nome:mesesVis.map(m=>m.nome).join(' · ');
+  const pEl=document.getElementById('s-periodo');if(pEl)pEl.textContent=periodoTxt;
+  const dirsMap=new Map();
+  _sData.forEach(l=>{
+    const did=l.gerencias?.diretoria_id;if(!did)return;
+    if(!dirsMap.has(did))dirsMap.set(did,{nome:l.gerencias?.diretorias?.nome||'—',gers:new Map()});
+    const d=dirsMap.get(did),gid=l.gerencia_id;
+    if(!d.gers.has(gid))d.gers.set(gid,{nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||'',dados:[]});
+    d.gers.get(gid).dados.push(l);
+  });
+  _sChartRefs.forEach(c=>{try{c.destroy();}catch(e){}});_sChartRefs.clear();
+  const wrap=document.getElementById('s-charts');if(!wrap)return;
+  const dirs=[...dirsMap.entries()];
+  wrap.style.gridTemplateColumns=`repeat(${Math.min(dirs.length,5)},1fr)`;
+  wrap.innerHTML='';
+  dirs.forEach(([did,dir])=>{
+    const gers=[...dir.gers.values()],labels=mesesVis.map(m=>m.nome),isBar=vizType==='bar';
+    const ips=[];gers.forEach(g=>mesesVis.forEach(m=>{const l=g.dados.find(x=>x.mes===m.val),ip=calcIPLanc(l);if(ip!=null)ips.push(ip);}));
+    const media=ips.length?ips.reduce((a,b)=>a+b,0)/ips.length:null;
+    const mediaCor=media!=null?getColor(media):'#888';
+    const datasets=gers.map(g=>{
+      const cor=uniCorChart(g.uni),corTx=uniLabelTexto(g.uni);
+      const pts=mesesVis.map(m=>{const l=g.dados.find(x=>x.mes===m.val),ip=calcIPLanc(l);return ip!=null?parseFloat(ip.toFixed(2)):null;});
+      const label=g.uni?g.nome+' '+g.uni:g.nome;
+      return{label,data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,borderWidth:isBar?0:2,pointRadius:isBar?0:4,pointHoverRadius:isBar?0:6,borderRadius:isBar?4:0,tension:0.3,spanGaps:false,_corTexto:corTx};
+    });
+    const card=document.createElement('div');
+    card.style.cssText='background:#fff;border-radius:10px;border:1px solid #d0e4d0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 2px 8px rgba(7,88,60,0.07);';
+    card.innerHTML=`<div style="background:linear-gradient(135deg,#07583C,#0a7a54);padding:6px 12px 5px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;">
+      <div><div style="font-size:clamp(10px,1vw,14px);font-weight:800;color:#fff;line-height:1.2;">${dir.nome}</div>
+      <div style="font-size:clamp(8px,0.65vw,10px);color:rgba(255,255,255,0.65);font-family:'DM Mono',monospace;margin-top:2px;">${gers.length} gerência${gers.length!==1?'s':''}</div></div>
+      <div style="font-size:clamp(16px,2vw,28px);font-weight:800;font-family:'DM Mono',monospace;color:${mediaCor};line-height:1;">${media!=null?media.toFixed(1):'—'}</div>
+    </div>
+    <div style="flex:1;position:relative;padding:6px 8px 4px;min-height:0;"><canvas id="sc-${did}"></canvas></div>`;
+    wrap.appendChild(card);
+    setTimeout(()=>{
+      const canvas=document.getElementById('sc-'+did);if(!canvas)return;
+      const chart=new Chart(canvas,{type:vizType,data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,animation:{duration:400},interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{font:{size:10,family:'Open Sans'},padding:6,usePointStyle:true,boxWidth:8}},tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}},scales:{x:{grid:{color:'#e8f0e8'},ticks:{font:{size:10},maxRotation:0}},y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:10},stepSize:20,callback:v=>v}}}},plugins:isBar?[_sRefPlugin,_sLabelPlugin]:[_sRefPlugin]});
+      _sChartRefs.set(did,chart);
+    },30);
+  });
+}
+
+function sTelaCheia(){
+  const w=document.getElementById('s-wrap');
+  if(w&&w.requestFullscreen)w.requestFullscreen();
+  else if(w&&w.webkitRequestFullscreen)w.webkitRequestFullscreen();
+}
 
 </script>
 
@@ -3677,231 +3472,5 @@ ativarWakeLock();
   #print-overlay > div > div:first-child button{display:none !important;}
 }
 </style>
-
-<!-- OVERLAY APRESENTAÇÃO POR DIRETORIA -->
-<div id="apresentacao-overlay" style="display:none;position:fixed;inset:0;background:#0a1a0f;z-index:9999;flex-direction:column;">
-
-  <!-- Barra superior -->
-  <div style="background:#07583C;padding:14px 28px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-    <div style="display:flex;align-items:center;gap:16px;">
-      <div id="apres-titulo" style="font-size:22px;font-weight:800;color:#fff;"></div>
-      <div id="apres-subtitulo" style="font-size:13px;color:#B3DD64;font-family:'DM Mono',monospace;"></div>
-    </div>
-    <div style="display:flex;align-items:center;gap:16px;">
-      <!-- Indicadores de diretoria (bolinhas) -->
-      <div id="apres-dots" style="display:flex;gap:8px;align-items:center;"></div>
-      <!-- Contador -->
-      <div id="apres-counter" style="font-size:13px;color:rgba(255,255,255,0.7);font-family:'DM Mono',monospace;min-width:60px;text-align:center;"></div>
-      <button onclick="fecharApresentacao()" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:6px;padding:7px 16px;font-size:13px;cursor:pointer;font-weight:600;">✕ Fechar</button>
-    </div>
-  </div>
-
-  <!-- Área do gráfico -->
-  <div style="flex:1;display:flex;align-items:stretch;min-height:0;padding:24px 32px 16px;">
-    <div style="background:#fff;border-radius:16px;flex:1;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
-      <!-- Cabeçalho do card -->
-      <div id="apres-card-header" style="padding:18px 28px;border-bottom:2px solid #B3DD64;background:#f5fbf7;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div id="apres-dir-nome" style="font-size:20px;font-weight:800;color:#07583C;"></div>
-          <div id="apres-dir-info" style="font-size:13px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;"></div>
-        </div>
-        <div id="apres-dir-media" style="font-size:40px;font-weight:800;font-family:'DM Mono',monospace;"></div>
-      </div>
-      <!-- Canvas -->
-      <div style="flex:1;position:relative;padding:20px 28px 12px;">
-        <canvas id="apres-canvas"></canvas>
-      </div>
-    </div>
-  </div>
-
-  <!-- Navegação inferior -->
-  <div style="padding:14px 32px;display:flex;align-items:center;justify-content:center;gap:24px;flex-shrink:0;">
-    <button id="apres-prev" onclick="navegarApresentacao(-1)"
-      style="background:rgba(255,255,255,0.1);color:#fff;border:2px solid rgba(255,255,255,0.3);border-radius:50px;padding:12px 32px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px;">
-      ← Anterior
-    </button>
-    <div id="apres-nav-info" style="font-size:14px;color:rgba(255,255,255,0.6);font-family:'DM Mono',monospace;min-width:120px;text-align:center;"></div>
-    <button id="apres-next" onclick="navegarApresentacao(1)"
-      style="background:#B3DD64;color:#07583C;border:2px solid #B3DD64;border-radius:50px;padding:12px 32px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px;">
-      Próxima →
-    </button>
-  </div>
-
-</div>
-
-<script>
-// ── APRESENTAÇÃO FULLSCREEN ────────────────────────────────────
-let _apresData=[];     // Array de diretorias com seus dados
-let _apresIdx=0;       // Índice atual
-let _apresChart=null;  // Referência do chart atual
-let _apresViz='bar';   // tipo de viz
-
-function abrirApresentacao(){
-  const tipo=document.getElementById('acum-chart-mes-tipo')?.value||'diretoria';
-  if(tipo!=='diretoria'){alert('Selecione "Por Diretoria" para usar a apresentação.');return;}
-  _apresViz=document.getElementById('acum-chart-mes-viz')?.value||'bar';
-
-  // Monta dados das diretorias
-  const safraId=document.getElementById('acum-safra')?.value;
-  const safra=safrasData.find(s=>s.id==safraId);
-  if(!acumAllData.length||!safra){alert('Selecione uma safra e carregue os dados primeiro.');return;}
-
-  const filtDirId=parseInt(document.getElementById('acum-dir')?.value)||0;
-  const filtGerId=parseInt(document.getElementById('acum-ger')?.value)||0;
-  const filtMes=document.getElementById('acum-mes')?.value||'';
-  const meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
-  const mesesVis=filtMes?meses.filter(m=>m.val===filtMes):meses;
-
-  const dirsMap=new Map();
-  acumAllData.forEach(l=>{
-    const did=l.gerencias?.diretoria_id;
-    if(!did)return;
-    if(filtDirId&&did!==filtDirId)return;
-    if(!dirsMap.has(did))dirsMap.set(did,{nome:l.gerencias?.diretorias?.nome||'—',gerencias:new Map()});
-    const d=dirsMap.get(did);
-    const gid=l.gerencia_id;
-    if(filtGerId&&gid!==filtGerId)return;
-    if(!d.gerencias.has(gid))d.gerencias.set(gid,{nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||'',dados:[]});
-    d.gerencias.get(gid).dados.push(l);
-  });
-
-  if(!dirsMap.size){alert('Nenhuma diretoria encontrada.');return;}
-
-  _apresData=[...dirsMap.entries()].map(([did,dir])=>({did,dir,mesesVis}));
-  _apresIdx=0;
-
-  // Monta dots
-  const dots=document.getElementById('apres-dots');
-  if(dots){
-    dots.innerHTML=_apresData.map((_,i)=>`<div id="dot-${i}" onclick="irApresentacao(${i})" style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.3);cursor:pointer;transition:all .2s;"></div>`).join('');
-  }
-
-  // Período no subtítulo
-  const sub=document.getElementById('apres-subtitulo');
-  if(sub) sub.textContent=mesesVis.length===1?mesesVis[0].nome:'Safra '+safra.nome;
-
-  // Mostra overlay
-  const ov=document.getElementById('apresentacao-overlay');
-  if(ov){ov.style.display='flex';document.body.style.overflow='hidden';}
-
-  renderSlideApresentacao();
-
-  // Teclas de navegação
-  document.addEventListener('keydown',_apresKeyHandler);
-}
-
-function _apresKeyHandler(e){
-  if(e.key==='ArrowRight'||e.key==='ArrowDown') navegarApresentacao(1);
-  if(e.key==='ArrowLeft'||e.key==='ArrowUp') navegarApresentacao(-1);
-  if(e.key==='Escape') fecharApresentacao();
-}
-
-function fecharApresentacao(){
-  const ov=document.getElementById('apresentacao-overlay');
-  if(ov){ov.style.display='none';document.body.style.overflow='';}
-  if(_apresChart){try{_apresChart.destroy();}catch(e){}_apresChart=null;}
-  document.removeEventListener('keydown',_apresKeyHandler);
-}
-
-function navegarApresentacao(delta){
-  const novo=_apresIdx+delta;
-  if(novo<0||novo>=_apresData.length)return;
-  _apresIdx=novo;
-  renderSlideApresentacao();
-}
-
-function irApresentacao(idx){
-  _apresIdx=idx;
-  renderSlideApresentacao();
-}
-
-function renderSlideApresentacao(){
-  const {did,dir,mesesVis}=_apresData[_apresIdx];
-  const total=_apresData.length;
-  const isBar=_apresViz==='bar';
-
-  // Atualiza cabeçalho
-  document.getElementById('apres-titulo').textContent='IP Mensal por Diretoria';
-  document.getElementById('apres-counter').textContent=(_apresIdx+1)+' / '+total;
-  document.getElementById('apres-nav-info').textContent=(_apresIdx+1)+' de '+total;
-  document.getElementById('apres-dir-nome').textContent=dir.nome;
-
-  const gers=[...dir.gerencias.values()];
-  document.getElementById('apres-dir-info').textContent=gers.length+' gerência'+(gers.length!==1?'s':'')+' · '+mesesVis.map(m=>m.nome).join(', ');
-
-  // Calcula média da diretoria
-  const todosIPs=[];
-  gers.forEach(g=>{
-    mesesVis.forEach(m=>{
-      const l=g.dados.find(x=>x.mes===m.val);
-      const ip=calcIPLanc(l);
-      if(ip!=null) todosIPs.push(ip);
-    });
-  });
-  const media=todosIPs.length?todosIPs.reduce((a,b)=>a+b,0)/todosIPs.length:null;
-  const mediaEl=document.getElementById('apres-dir-media');
-  if(mediaEl){
-    const cor=media!=null?getColor(media):'#888';
-    mediaEl.style.color=cor;
-    mediaEl.textContent=media!=null?media.toFixed(1):'—';
-  }
-
-  // Botões anterior/próximo
-  document.getElementById('apres-prev').style.opacity=_apresIdx===0?'0.3':'1';
-  document.getElementById('apres-prev').disabled=_apresIdx===0;
-  document.getElementById('apres-next').style.opacity=_apresIdx===total-1?'0.3':'1';
-  document.getElementById('apres-next').disabled=_apresIdx===total-1;
-
-  // Atualiza dots
-  for(let i=0;i<total;i++){
-    const dot=document.getElementById('dot-'+i);
-    if(dot){
-      dot.style.background=i===_apresIdx?'#B3DD64':'rgba(255,255,255,0.3)';
-      dot.style.width=i===_apresIdx?'28px':'10px';
-      dot.style.borderRadius='10px';
-    }
-  }
-
-  // Datasets
-  const labels=mesesVis.map(m=>m.nome);
-  const datasets=gers.map(g=>{
-    const cor=uniCorChart(g.uni);
-    const corTx=uniLabelTexto(g.uni);
-    const pts=mesesVis.map(m=>{
-      const l=g.dados.find(x=>x.mes===m.val);
-      const ip=calcIPLanc(l);
-      return ip!=null?parseFloat(ip.toFixed(2)):null;
-    });
-    const label=g.uni?g.nome+' '+g.uni:g.nome;
-    return{label,data:pts,backgroundColor:isBar?cor:cor+'22',borderColor:cor,borderWidth:isBar?0:2.5,pointRadius:isBar?0:6,pointHoverRadius:isBar?0:9,borderRadius:isBar?6:0,tension:0.3,spanGaps:false,_corTexto:corTx||'#fff'};
-  });
-
-  // Destroi chart anterior
-  if(_apresChart){try{_apresChart.destroy();}catch(e){}_apresChart=null;}
-
-  const canvas=document.getElementById('apres-canvas');
-  if(!canvas)return;
-
-  _apresChart=new Chart(canvas,{
-    type:_apresViz,
-    data:{labels,datasets},
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      animation:{duration:400},
-      interaction:{mode:'index',intersect:false},
-      plugins:{
-        legend:{position:'bottom',labels:{font:{size:14},padding:20,usePointStyle:true,boxWidth:12}},
-        tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')},bodyFont:{size:14}}
-      },
-      scales:{
-        x:{grid:{color:'#e8f0e8'},ticks:{font:{size:13}}},
-        y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:13},callback:v=>v.toFixed(0)}}
-      }
-    },
-    plugins:isBar?[refLinesPlugin,dataLabelsPlugin]:[refLinesPlugin]
-  });
-}
-</script>
-
 </body>
 </html>

@@ -915,13 +915,18 @@ function renderAcumTable() {
     + mesThsG
     + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';
 
-  // ── Tabela diretorias com ícones de status ───────────────────
+  // ── Tabela diretorias + gerências com ícones de status ──────
   const dirsMap2 = new Map();
   dadosFiltrados.forEach(l => {
     const did = l.gerencias?.diretoria_id;
-    if(did && !dirsMap2.has(did)) dirsMap2.set(did, l.gerencias?.diretorias?.nome || '—');
+    if(!did) return;
+    if(!dirsMap2.has(did)) dirsMap2.set(did, { nome: l.gerencias?.diretorias?.nome||'—', gers: new Map() });
+    const d = dirsMap2.get(did);
+    const gid = l.gerencia_id;
+    if(!d.gers.has(gid)) d.gers.set(gid, { nome: l.gerencias?.nome||'—', uni: l.gerencias?.unidades?.nome||'', lancamentos: [] });
+    d.gers.get(gid).lancamentos.push(l);
   });
-  const dirs2 = [...dirsMap2.entries()].map(([id,n]) => ({id,n}));
+  const dirs2 = [...dirsMap2.values()];
 
   const fMeta2 = config?.faixa_meta    || 90;
   const fCrit2 = config?.faixa_critico || 82;
@@ -937,20 +942,53 @@ function renderAcumTable() {
     '<th>'+m.nome+'</th><th style="background:#d4edda;color:#07583C">Acum.</th>'
   ).join('');
 
-  const dirsRows2 = dirs2.map(d => {
-    let soma = 0, count = 0;
-    const cells = mesesVisiveis.map(m => {
-      const ls = dadosFiltrados.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
+  const dirsRows2 = dirs2.map(dir => {
+    // ── Linha da diretoria (média) ──
+    let somaDir = 0, countDir = 0;
+    const cellsDir = mesesVisiveis.map(m => {
+      const ls = dadosFiltrados.filter(l => l.gerencias?.diretorias?.nome === dir.nome && l.mes === m.val);
       let media = null;
       if(ls.length) {
         const ips = ls.map(l => calcIP(l)).filter(v => v != null);
-        if(ips.length) { media = ips.reduce((s,v)=>s+v,0)/ips.length; soma += media; count++; }
+        if(ips.length) { media = ips.reduce((s,v)=>s+v,0)/ips.length; somaDir += media; countDir++; }
       }
-      const acum = count > 0 ? soma/count : null;
-      return '<td class="mono" style="color:'+(media!=null?getColor(media):'var(--muted)')+'">'+iconeStatus(media)+' '+(media!=null?media.toFixed(1):'—')+'</td>'
-           + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+iconeStatus(acum)+' '+(acum!=null?acum.toFixed(1):'—')+'</td>';
+      const acum = countDir > 0 ? somaDir/countDir : null;
+      return '<td class="mono" style="font-weight:700;color:'+(media!=null?getColor(media):'var(--muted)')+'">'+iconeStatus(media)+' '+(media!=null?media.toFixed(1):'—')+'</td>'
+           + '<td class="acum-cell mono" style="background:#c8e6c9;font-weight:800;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+iconeStatus(acum)+' '+(acum!=null?acum.toFixed(1):'—')+'</td>';
     }).join('');
-    return '<tr><td><b>'+(d.n||'—')+'</b></td>'+cells+'</tr>';
+
+    const linhaDir = `<tr style="background:#e8f5ee;border-top:2px solid #07583C;">
+      <td style="padding-left:14px;"><b style="font-size:14px;color:#07583C;">🏢 ${dir.nome}</b></td>
+      ${cellsDir}
+    </tr>`;
+
+    // ── Linhas das gerências (ordem crescente pelo IP do período) ──
+    const gersOrdenadas = [...dir.gers.values()].map(g => {
+      let somaG = 0, countG = 0;
+      const cellsG = mesesVisiveis.map(m => {
+        const l = g.lancamentos.find(x => x.mes === m.val);
+        const ip = calcIP(l);
+        if(ip != null) { somaG += ip; countG++; }
+        const acum = countG > 0 ? somaG/countG : null;
+        return { ip, acum };
+      });
+      // IP do último mês visível para ordenar
+      const ipUltimo = cellsG.length ? cellsG[cellsG.length-1].ip : null;
+      return { ...g, cellsG, ipUltimo };
+    }).sort((a,b) => (a.ipUltimo??999) - (b.ipUltimo??999));
+
+    const linhasGers = gersOrdenadas.map(g => {
+      const cells = g.cellsG.map(c => {
+        return '<td class="mono" style="color:'+(c.ip!=null?getColor(c.ip):'var(--muted)')+';padding-left:28px;">'+iconeStatus(c.ip)+' '+(c.ip!=null?c.ip.toFixed(1):'—')+'</td>'
+             + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(c.acum!=null?getColor(c.acum):'var(--muted)')+'">'+iconeStatus(c.acum)+' '+(c.acum!=null?c.acum.toFixed(1):'—')+'</td>';
+      }).join('');
+      return `<tr style="background:#fff;">
+        <td style="padding-left:28px;color:#1a2e1a;">${g.nome} ${uniTag(g.uni)}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    return linhaDir + linhasGers;
   }).join('');
 
   const legendaRef = `<div style="display:flex;gap:18px;align-items:center;padding:8px 14px;background:#f0f9f0;border-bottom:1px solid #d0e4d0;flex-wrap:wrap;">
@@ -961,7 +999,7 @@ function renderAcumTable() {
   </div>`;
 
   if(dtEl) dtEl.innerHTML = dirs2.length
-    ? legendaRef + '<div style="overflow-x:auto"><table><thead><tr><th>Diretoria</th>'+mesThsD+'</tr></thead><tbody>'+dirsRows2+'</tbody></table></div>'
+    ? legendaRef + '<div style="overflow-x:auto"><table><thead><tr><th>Diretoria / Gerência</th>'+mesThsD+'</tr></thead><tbody>'+dirsRows2+'</tbody></table></div>'
     : '<div class="loading">Nenhum dado.</div>';
 }
 

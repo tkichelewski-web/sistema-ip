@@ -915,93 +915,54 @@ function renderAcumTable() {
     + mesThsG
     + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';
 
-  // ── Cards por Diretoria ──────────────────────────────────────
-  // Agrupa dados por diretoria, calculando IP de cada gerência no período visível
-  const dirsMapCards = new Map();
+  // ── Tabela diretorias com ícones de status ───────────────────
+  const dirsMap2 = new Map();
   dadosFiltrados.forEach(l => {
     const did = l.gerencias?.diretoria_id;
-    const dnome = l.gerencias?.diretorias?.nome || '—';
-    if(!did) return;
-    if(!dirsMapCards.has(did)) dirsMapCards.set(did, {nome: dnome, gers: new Map()});
-    const d = dirsMapCards.get(did);
-    const gid = l.gerencia_id;
-    if(!d.gers.has(gid)) d.gers.set(gid, {nome: l.gerencias?.nome||'—', uni: l.gerencias?.unidades?.nome||'', ips:[]});
-    const ip = calcIP(l);
-    if(ip != null) d.gers.get(gid).ips.push(ip);
+    if(did && !dirsMap2.has(did)) dirsMap2.set(did, l.gerencias?.diretorias?.nome || '—');
   });
+  const dirs2 = [...dirsMap2.entries()].map(([id,n]) => ({id,n}));
 
-  const fMeta  = config?.faixa_meta   || 90;
-  const fCrit  = config?.faixa_critico || 82;
+  const fMeta2 = config?.faixa_meta    || 90;
+  const fCrit2 = config?.faixa_critico || 82;
 
-  // Monta período exibido
-  const periodoLabel = mesesVisiveis.length === 1
-    ? mesesVisiveis[0].nome
-    : mesesVisiveis.map(m => m.nome).join(' · ');
+  function iconeStatus(v) {
+    if(v == null) return '';
+    if(v >= fMeta2) return '<span title="Meta atingida" style="color:#07583C;font-weight:700;font-size:13px;">✓</span>';
+    if(v >= fCrit2) return '<span title="Mínimo" style="color:#c47d0e;font-weight:700;font-size:13px;">⚠️</span>';
+    return '<span title="Ponto de Atenção" style="color:#d93025;font-weight:700;font-size:13px;">↓</span>';
+  }
 
-  let cardsHTML = '<div style="padding:16px 20px;">';
+  const mesThsD = mesesVisiveis.map(m =>
+    '<th>'+m.nome+'</th><th style="background:#d4edda;color:#07583C">Acum.</th>'
+  ).join('');
 
-  // Linha de meta no topo
-  cardsHTML += `<div style="display:flex;gap:20px;align-items:center;margin-bottom:16px;padding:10px 16px;background:#f0f9f0;border-radius:8px;border:1px solid #d0e4d0;flex-wrap:wrap;">
-    <span style="font-size:12px;font-weight:700;color:#5a7a5a;font-family:'DM Mono',monospace;letter-spacing:.8px;">REFERÊNCIAS — ${periodoLabel}</span>
-    <span style="font-size:13px;color:#07583C;font-weight:700;">🏆 Máximo: 100</span>
-    <span style="font-size:13px;color:#1a73e8;font-weight:700;">🎯 Meta: ≥ ${fMeta}</span>
-    <span style="font-size:13px;color:#c47d0e;font-weight:700;">⚠️ Mínimo: ≥ ${fCrit}</span>
-    <span style="font-size:13px;color:#d93025;font-weight:700;">🔴 Ponto de Atenção: < ${fCrit}</span>
+  const dirsRows2 = dirs2.map(d => {
+    let soma = 0, count = 0;
+    const cells = mesesVisiveis.map(m => {
+      const ls = dadosFiltrados.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
+      let media = null;
+      if(ls.length) {
+        const ips = ls.map(l => calcIP(l)).filter(v => v != null);
+        if(ips.length) { media = ips.reduce((s,v)=>s+v,0)/ips.length; soma += media; count++; }
+      }
+      const acum = count > 0 ? soma/count : null;
+      return '<td class="mono" style="color:'+(media!=null?getColor(media):'var(--muted)')+'">'+iconeStatus(media)+' '+(media!=null?media.toFixed(1):'—')+'</td>'
+           + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+iconeStatus(acum)+' '+(acum!=null?acum.toFixed(1):'—')+'</td>';
+    }).join('');
+    return '<tr><td><b>'+(d.n||'—')+'</b></td>'+cells+'</tr>';
+  }).join('');
+
+  const legendaRef = `<div style="display:flex;gap:18px;align-items:center;padding:8px 14px;background:#f0f9f0;border-bottom:1px solid #d0e4d0;flex-wrap:wrap;">
+    <span style="font-size:11px;font-weight:700;color:#5a7a5a;font-family:'DM Mono',monospace;letter-spacing:.8px;">META:</span>
+    <span style="font-size:12px;color:#07583C;font-weight:700;">✓ Máximo (100) / Meta (≥${fMeta2})</span>
+    <span style="font-size:12px;color:#c47d0e;font-weight:700;">⚠️ Mínimo (≥${fCrit2})</span>
+    <span style="font-size:12px;color:#d93025;font-weight:700;">↓ Ponto de Atenção (&lt;${fCrit2})</span>
   </div>`;
 
-  // Grid de cards
-  cardsHTML += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">';
-
-  [...dirsMapCards.values()].forEach(dir => {
-    // Calcula média da diretoria
-    const todasIPs = [...dir.gers.values()].flatMap(g => g.ips);
-    const mediaDirVal = todasIPs.length ? todasIPs.reduce((a,b)=>a+b,0)/todasIPs.length : null;
-    const mediaDirCor = mediaDirVal != null ? getColor(mediaDirVal) : '#888';
-
-    // Ordena gerências por IP crescente (piores primeiro)
-    const gersOrdenadas = [...dir.gers.values()]
-      .map(g => ({...g, media: g.ips.length ? g.ips.reduce((a,b)=>a+b,0)/g.ips.length : null}))
-      .sort((a,b) => (a.media??999) - (b.media??999));
-
-    // Linhas de gerências
-    const gersLinhas = gersOrdenadas.map(g => {
-      const cor = g.media != null ? getColor(g.media) : '#888';
-      const uniCorBg = uniCor(g.uni);
-      const uniCorTx = g.uni && g.uni.toUpperCase().includes('PB') ? '#07583C' : '#fff';
-      const uniSpan = g.uni
-        ? `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;background:${uniCorBg};color:${uniCorTx};margin-left:6px;">${g.uni}</span>`
-        : '';
-      const seta = g.media != null && g.media >= fMeta ? '✓' : g.media != null && g.media >= fCrit ? '~' : '↓';
-      const setaCor = g.media != null && g.media >= fMeta ? '#07583C' : g.media != null && g.media >= fCrit ? '#c47d0e' : '#d93025';
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f0f0;">
-        <div style="flex:1;font-size:13px;color:#1a2e1a;">${g.nome}${uniSpan}</div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;font-weight:700;color:${setaCor};">${seta}</span>
-          <span style="font-size:15px;font-weight:800;font-family:'DM Mono',monospace;color:${cor};min-width:38px;text-align:right;">${g.media!=null?g.media.toFixed(1):'—'}</span>
-        </div>
-      </div>`;
-    }).join('');
-
-    cardsHTML += `<div style="background:#fff;border:1px solid #d0e4d0;border-radius:12px;overflow:hidden;box-shadow:0 1px 6px rgba(7,88,60,0.06);">
-      <!-- Cabeçalho da diretoria -->
-      <div style="background:linear-gradient(135deg,#07583C,#0a7a54);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="font-size:14px;font-weight:800;color:#fff;line-height:1.2;">${dir.nome}</div>
-        <div style="text-align:right;">
-          <div style="font-size:26px;font-weight:800;font-family:'DM Mono',monospace;color:${mediaDirCor};line-height:1;">${mediaDirVal!=null?mediaDirVal.toFixed(1):'—'}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,0.65);font-family:'DM Mono',monospace;">média</div>
-        </div>
-      </div>
-      <!-- Gerências ordenadas crescente -->
-      <div style="padding:4px 14px 10px;">
-        <div style="font-size:10px;color:#5a7a5a;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.8px;padding:8px 0 4px;">Gerências — menor para maior</div>
-        ${gersLinhas}
-      </div>
-    </div>`;
-  });
-
-  cardsHTML += '</div></div>';
-
-  if(dtEl) dtEl.innerHTML = dirsMapCards.size ? cardsHTML : '<div class="loading">Nenhum dado.</div>';
+  if(dtEl) dtEl.innerHTML = dirs2.length
+    ? legendaRef + '<div style="overflow-x:auto"><table><thead><tr><th>Diretoria</th>'+mesThsD+'</tr></thead><tbody>'+dirsRows2+'</tbody></table></div>'
+    : '<div class="loading">Nenhum dado.</div>';
 }
 
 const VERDES = ['#07583C','#0a7a54','#0d9c6c','#10be84','#14d99a','#1a8c5e','#238c6b','#2d6a4f','#40916c','#52b788','#74c69d','#95d5b2','#1b4332','#081c15','#166534'];

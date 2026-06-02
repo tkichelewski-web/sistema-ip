@@ -309,7 +309,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
       </div>
       <!-- Acumulado por Diretoria -->
       <div class="table-wrap">
-        <div class="table-header"><span class="table-title">🏢 IP por Diretoria e Gerência</span></div>
+        <div class="table-header"><span class="table-title">🏢 Acumulado por Diretoria</span></div>
         <div id="acum-dir-tbl"><div class="loading">Selecione uma safra.</div></div>
       </div>
     </div>
@@ -542,7 +542,6 @@ input[type=number]{font-family:'DM Mono',monospace;}
         </div>
       </div>
     </div>
-
 
   </main>
 </div>
@@ -915,92 +914,38 @@ function renderAcumTable() {
     + mesThsG
     + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';
 
-  // ── Tabela diretorias + gerências com ícones de status ──────
-  const dirsMap2 = new Map();
+  // ── Tabela diretorias ─────────────────────────────────────────
+  const dirsMap = new Map();
   dadosFiltrados.forEach(l => {
     const did = l.gerencias?.diretoria_id;
-    if(!did) return;
-    if(!dirsMap2.has(did)) dirsMap2.set(did, { nome: l.gerencias?.diretorias?.nome||'—', gers: new Map() });
-    const d = dirsMap2.get(did);
-    const gid = l.gerencia_id;
-    if(!d.gers.has(gid)) d.gers.set(gid, { nome: l.gerencias?.nome||'—', uni: l.gerencias?.unidades?.nome||'', lancamentos: [] });
-    d.gers.get(gid).lancamentos.push(l);
+    if(did && !dirsMap.has(did)) dirsMap.set(did, l.gerencias?.diretorias?.nome || '—');
   });
-  const dirs2 = [...dirsMap2.values()];
-
-  const fMeta2 = config?.faixa_meta    || 90;
-  const fCrit2 = config?.faixa_critico || 82;
-
-  function iconeStatus(v) {
-    if(v == null) return '';
-    if(v >= fMeta2) return '<span title="Meta atingida" style="color:#07583C;font-weight:700;font-size:13px;">✓</span>';
-    if(v >= fCrit2) return '<span title="Mínimo" style="color:#c47d0e;font-weight:700;font-size:13px;">⚠️</span>';
-    return '<span title="Ponto de Atenção" style="color:#d93025;font-weight:700;font-size:13px;">↓</span>';
-  }
+  const dirs2 = [...dirsMap.entries()].map(([id,n]) => ({id,n}));
 
   const mesThsD = mesesVisiveis.map(m =>
     '<th>'+m.nome+'</th><th style="background:#d4edda;color:#07583C">Acum.</th>'
   ).join('');
 
-  const dirsRows2 = dirs2.map(dir => {
-    // ── Linha da diretoria (média) ──
-    let somaDir = 0, countDir = 0;
-    const cellsDir = mesesVisiveis.map(m => {
-      const ls = dadosFiltrados.filter(l => l.gerencias?.diretorias?.nome === dir.nome && l.mes === m.val);
+  const dirsRows = dirs2.map(d => {
+    let soma = 0, count = 0;
+    const cells = mesesVisiveis.map(m => {
+      const ls = dadosFiltrados.filter(l => l.gerencias?.diretoria_id === d.id && l.mes === m.val);
       let media = null;
       if(ls.length) {
         const ips = ls.map(l => calcIP(l)).filter(v => v != null);
-        if(ips.length) { media = ips.reduce((s,v)=>s+v,0)/ips.length; somaDir += media; countDir++; }
+        if(ips.length) { media = ips.reduce((s,v)=>s+v,0)/ips.length; soma += media; count++; }
       }
-      const acum = countDir > 0 ? somaDir/countDir : null;
-      return '<td class="mono" style="font-weight:700;color:'+(media!=null?getColor(media):'var(--muted)')+'">'+iconeStatus(media)+' '+(media!=null?media.toFixed(1):'—')+'</td>'
-           + '<td class="acum-cell mono" style="background:#c8e6c9;font-weight:800;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+iconeStatus(acum)+' '+(acum!=null?acum.toFixed(1):'—')+'</td>';
+      const acum = count > 0 ? soma/count : null;
+      return '<td class="mono" style="color:'+(media!=null?getColor(media):'var(--muted)')+'">'+( media!=null?media.toFixed(1):'—')+'</td>'
+           + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+( acum!=null?acum.toFixed(1):'—')+'</td>';
     }).join('');
-
-    const linhaDir = `<tr style="background:#e8f5ee;border-top:2px solid #07583C;">
-      <td style="padding-left:14px;"><b style="font-size:14px;color:#07583C;">🏢 ${dir.nome}</b></td>
-      ${cellsDir}
-    </tr>`;
-
-    // ── Linhas das gerências (ordem crescente pelo IP do período) ──
-    const gersOrdenadas = [...dir.gers.values()].map(g => {
-      let somaG = 0, countG = 0;
-      const cellsG = mesesVisiveis.map(m => {
-        const l = g.lancamentos.find(x => x.mes === m.val);
-        const ip = calcIP(l);
-        if(ip != null) { somaG += ip; countG++; }
-        const acum = countG > 0 ? somaG/countG : null;
-        return { ip, acum };
-      });
-      // IP do último mês visível para ordenar
-      const ipUltimo = cellsG.length ? cellsG[cellsG.length-1].ip : null;
-      return { ...g, cellsG, ipUltimo };
-    }).sort((a,b) => (a.ipUltimo??999) - (b.ipUltimo??999));
-
-    const linhasGers = gersOrdenadas.map(g => {
-      const cells = g.cellsG.map(c => {
-        return '<td class="mono" style="color:'+(c.ip!=null?getColor(c.ip):'var(--muted)')+';padding-left:28px;">'+iconeStatus(c.ip)+' '+(c.ip!=null?c.ip.toFixed(1):'—')+'</td>'
-             + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(c.acum!=null?getColor(c.acum):'var(--muted)')+'">'+iconeStatus(c.acum)+' '+(c.acum!=null?c.acum.toFixed(1):'—')+'</td>';
-      }).join('');
-      return `<tr style="background:#fff;">
-        <td style="padding-left:28px;color:#1a2e1a;">${g.nome} ${uniTag(g.uni)}</td>
-        ${cells}
-      </tr>`;
-    }).join('');
-
-    return linhaDir + linhasGers;
+    return '<tr><td><b>'+(d.n||'—')+'</b></td>'+cells+'</tr>';
   }).join('');
 
-  const legendaRef = `<div style="display:flex;gap:18px;align-items:center;padding:8px 14px;background:#f0f9f0;border-bottom:1px solid #d0e4d0;flex-wrap:wrap;">
-    <span style="font-size:11px;font-weight:700;color:#5a7a5a;font-family:'DM Mono',monospace;letter-spacing:.8px;">META:</span>
-    <span style="font-size:12px;color:#07583C;font-weight:700;">✓ Máximo (100) / Meta (≥${fMeta2})</span>
-    <span style="font-size:12px;color:#c47d0e;font-weight:700;">⚠️ Mínimo (≥${fCrit2})</span>
-    <span style="font-size:12px;color:#d93025;font-weight:700;">↓ Ponto de Atenção (&lt;${fCrit2})</span>
-  </div>`;
-
-  if(dtEl) dtEl.innerHTML = dirs2.length
-    ? legendaRef + '<div style="overflow-x:auto"><table><thead><tr><th>Diretoria / Gerência</th>'+mesThsD+'</tr></thead><tbody>'+dirsRows2+'</tbody></table></div>'
-    : '<div class="loading">Nenhum dado.</div>';
+  if(dtEl) dtEl.innerHTML =
+    '<div style="overflow-x:auto"><table><thead><tr>'
+    + '<th>Diretoria</th>'+mesThsD
+    + '</tr></thead><tbody>'+dirsRows+'</tbody></table></div>';
 }
 
 const VERDES = ['#07583C','#0a7a54','#0d9c6c','#10be84','#14d99a','#1a8c5e','#238c6b','#2d6a4f','#40916c','#52b788','#74c69d','#95d5b2','#1b4332','#081c15','#166534'];
@@ -1654,10 +1599,12 @@ async function carregarDashboard(){
   }
   const tw=document.getElementById('dash-table-wrap');
   if(tw)tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
-  const{data:lancs}=await sb.from('lancamentos')
-    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)),safras(nome)')
-    .or(`mes.eq.${periodo},periodo.eq.${periodo}`)
-    .order('indice_prevencao',{ascending:false});
+  const{data:lancs}=await sbSafe(()=>
+    sb.from('lancamentos')
+      .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)),safras(nome)')
+      .or(`mes.eq.${periodo},periodo.eq.${periodo}`)
+      .order('indice_prevencao',{ascending:false})
+  );
   dashData=lancs||[];
   renderDashStats();renderDashTable();
 }
@@ -2041,25 +1988,31 @@ async function salvarLancamento(){
 
     // 9. Salva: verifica se existe, faz UPDATE ou INSERT
     console.log('STEP 9a: buscando lançamento existente...');
-    const {data:ex, error:exErr} = await sb.from('lancamentos')
-      .select('id').eq('gerencia_id',gerId).eq('mes',mesLancar).limit(1);
+    const {data:ex, error:exErr} = await sbSafe(() =>
+      sb.from('lancamentos').select('id').eq('gerencia_id',gerId).eq('mes',mesLancar).limit(1)
+    );
     console.log('STEP 9a result:', ex, exErr?.message);
     let lancId = ex?.[0]?.id || null;
 
     if(lancId){
       console.log('STEP 9b: UPDATE id='+lancId);
-      const {error:eUpd} = await sb.from('lancamentos').update(payload).eq('id',lancId);
+      const {error:eUpd} = await sbSafe(() =>
+        sb.from('lancamentos').update(payload).eq('id',lancId)
+      );
       if(eUpd) throw new Error('Erro ao atualizar: '+eUpd.message);
       console.log('STEP 9b: UPDATE OK');
     } else {
       console.log('STEP 9c: INSERT novo lançamento');
-      const {data:insData, error:eIns} = await sb.from('lancamentos').insert(payload).select('id');
+      const {data:insData, error:eIns} = await sbSafe(() =>
+        sb.from('lancamentos').insert(payload).select('id')
+      );
       console.log('STEP 9c result:', insData, eIns?.message);
       if(eIns) throw new Error('Erro ao inserir: '+eIns.message);
       lancId = insData?.[0]?.id || null;
       if(!lancId){
-        const {data:lb} = await sb.from('lancamentos')
-          .select('id').eq('gerencia_id',gerId).eq('mes',mesLancar).limit(1);
+        const {data:lb} = await sbSafe(() =>
+          sb.from('lancamentos').select('id').eq('gerencia_id',gerId).eq('mes',mesLancar).limit(1)
+        );
         lancId = lb?.[0]?.id || null;
       }
     }
@@ -2068,7 +2021,7 @@ async function salvarLancamento(){
 
     // 10. Salva itens em lotes de 10 para não travar
     console.log('STEP 10: salvando '+itens.length+' itens em lotes...');
-    await sb.from('lancamento_itens').delete().eq('lancamento_id',lancId);
+    await sbSafe(() => sb.from('lancamento_itens').delete().eq('lancamento_id',lancId));
     if(itens.length){
       const rows = itens.map(it=>({
         lancamento_id:lancId, indicador_id:it.indicador_id,
@@ -2079,7 +2032,7 @@ async function salvarLancamento(){
       for(let i=0; i<rows.length; i+=10){
         const lote=rows.slice(i,i+10);
         console.log('Lote '+(Math.floor(i/10)+1)+' de '+Math.ceil(rows.length/10));
-        const{error:eIt}=await sb.from('lancamento_itens').insert(lote);
+        const{error:eIt}=await sbSafe(()=>sb.from('lancamento_itens').insert(lote));
         if(eIt){console.error('Erro lote:',eIt.message);break;}
       }
       console.log('STEP 10: OK');
@@ -2108,15 +2061,21 @@ async function salvarLancamento(){
 
   } catch(e){
     console.error('Erro ao salvar:', e);
-    alert('❌ Erro ao salvar: '+(e.message||'erro desconhecido'));
+    // Tenta renovar sessão se for erro de token e repete o alerta
+    if(e.message && (e.message.includes('JWT') || e.message.includes('token') || e.message.includes('401'))) {
+      try { await sb.auth.refreshSession(); } catch(_) {}
+    }
+    alert('❌ Erro ao salvar: '+(e.message||'erro desconhecido')+'\n\nDica: tente novamente. Se persistir, atualize a página.');
   } finally {
     if(btn){ btn.disabled=false; btn.textContent='✓ Salvar Lançamento'; }
     window._editandoLancamento = false;
+    // Atualiza dashboard com o período do lançamento salvo, sem depender do campo da tela
     try {
       const dp = document.getElementById('dash-periodo');
       if(dp && mesLancar) dp.value = mesLancar;
       dashData = null;
-      setTimeout(carregarDashboard, 200);
+      // Pequeno delay para o Supabase propagar a gravação antes de buscar
+      setTimeout(carregarDashboard, 500);
     } catch(ef){ console.warn('Dashboard update failed:', ef); }
   }
 }
@@ -3199,16 +3158,52 @@ function renderModalNA() {
 // ── START ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded',init);
 
-// Ping a cada 4 minutos: renova token proativamente sempre
-setInterval(async()=>{
-  try{
-    // Sempre tenta refresh para garantir token válido em sessões longas
-    const {data, error} = await sb.auth.refreshSession();
-    if(error) console.warn('Refresh ping falhou:', error.message);
-    else console.log('Token renovado pelo ping');
-    await sb.from('config').select('chave').limit(1);
-  }catch(e){console.warn('Ping falhou:',e);}
-},4*60*1000);
+// ── GESTÃO DE SESSÃO LONGA ─────────────────────────────────────
+// Renova token a cada 4 minutos para evitar expiração durante preenchimento demorado
+let _sessaoExpiradaAlertado = false;
+
+async function renovarTokenProativo() {
+  try {
+    const { data, error } = await sb.auth.refreshSession();
+    if (error) {
+      console.warn('Refresh proativo falhou:', error.message);
+      // Se retornou erro de sessão inválida e usuário está logado, avisa UMA vez
+      if (!_sessaoExpiradaAlertado && usuario &&
+          (error.message?.toLowerCase().includes('refresh') ||
+           error.message?.toLowerCase().includes('session') ||
+           error.message?.toLowerCase().includes('expired'))) {
+        _sessaoExpiradaAlertado = true;
+        const relogar = confirm(
+          '⚠️ Sua sessão expirou após longa inatividade.\n\n' +
+          'Clique em OK para fazer login novamente.\n' +
+          '(Seus dados preenchidos foram preservados — não feche esta janela ainda.)'
+        );
+        if (relogar) {
+          // Salva estado do formulário no sessionStorage antes de relogar
+          try {
+            sessionStorage.setItem('_ip_sessao_expirada', '1');
+          } catch(_) {}
+          window.location.reload();
+        }
+      }
+    } else {
+      _sessaoExpiradaAlertado = false; // Resetar flag se renovação OK
+    }
+  } catch(e) {
+    console.warn('Ping de renovação falhou:', e.message || e);
+  }
+}
+
+// Roda a cada 4 minutos
+setInterval(renovarTokenProativo, 4 * 60 * 1000);
+
+// Renova também ao retornar à aba/janela após inatividade
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // Se voltou à aba, renova token imediatamente
+    setTimeout(renovarTokenProativo, 200);
+  }
+});
 
 // Wrapper com timeout para queries (evita travamento infinito)
 function withTimeout(promise, ms=15000, label='query') {
@@ -3218,17 +3213,36 @@ function withTimeout(promise, ms=15000, label='query') {
   return Promise.race([promise, timeout]);
 }
 
-// Wrapper com retry de sessão
+// Wrapper com retry de sessão — usado nas queries críticas de salvar/inserir
 async function sbSafe(queryFn){
   try{
     const result=await queryFn();
-    if(result.error&&(result.error.message?.includes('JWT')||result.error.message?.includes('token')||result.error.status===401)){
-      console.warn('Token expirado, renovando...');
-      await sb.auth.refreshSession();
+    if(result.error &&
+       (result.error.message?.toLowerCase().includes('jwt') ||
+        result.error.message?.toLowerCase().includes('token') ||
+        result.error.message?.toLowerCase().includes('session') ||
+        result.error.status===401)){
+      console.warn('Token expirado detectado em sbSafe, renovando...');
+      try { await sb.auth.refreshSession(); } catch(_) {}
+      // Aguarda um momento para o token se propagar
+      await new Promise(r=>setTimeout(r,300));
       return await queryFn();
     }
     return result;
-  }catch(e){console.error('Erro na query:',e);return{data:null,error:e};}
+  }catch(e){
+    // Tenta renovar e repetir em caso de erro de rede/token
+    if(e.message && (e.message.includes('JWT') || e.message.includes('401') || e.message.includes('Failed to fetch'))){
+      try {
+        await sb.auth.refreshSession();
+        await new Promise(r=>setTimeout(r,300));
+        return await queryFn();
+      } catch(e2) {
+        console.error('Retry após refresh também falhou:', e2.message);
+      }
+    }
+    console.error('Erro na query (sbSafe):', e);
+    return{data:null,error:e};
+  }
 }
 
 // Wake Lock: impede tela de apagar
@@ -3240,6 +3254,7 @@ async function ativarWakeLock(){
     _wakeLock.addEventListener('release',()=>setTimeout(ativarWakeLock,2000));
   }catch(e){console.warn('Wake Lock:',e.message);}
 }
+// Reativa Wake Lock ao voltar para a aba (já vinculado ao mesmo listener de visibilitychange acima)
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')ativarWakeLock();});
 ativarWakeLock();
 

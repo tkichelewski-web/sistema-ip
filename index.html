@@ -598,9 +598,18 @@ const SB_KEY = 'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ';
 const SB_OPTS = { auth: { persistSession:true, storageKey:'sistema-ip-auth', flowType:'implicit',
                           autoRefreshToken:true, detectSessionInUrl:true,
                           storage: window.localStorage } };
-const sb = createClient(SB_URL, SB_KEY, SB_OPTS);
+let sb = createClient(SB_URL, SB_KEY, SB_OPTS);
 
-// reconnectSb removido — causava múltiplas instâncias
+// Recria o cliente Supabase quando a sessão fica inválida (token expirado em query longa).
+// Isso garante que queries novas não herdem estado corrompido de um cliente "zombie".
+function _recrearClienteSb() {
+  try {
+    sb = createClient(SB_URL, SB_KEY, SB_OPTS);
+    console.log('Cliente Supabase recriado com sucesso.');
+  } catch(e) {
+    console.error('Falha ao recriar cliente Supabase:', e.message);
+  }
+}
 
 let usuario=null, dashData=null;
 let estrutura={diretorias:[],gerencias:[],unidades:[]};
@@ -1842,7 +1851,7 @@ async function calcPreview(){
   // Usa cache para não fazer query a cada keypress
   let indsGer=_cachedIndsGer;
   if(!indsGer.length || _cachedGerId!==gerId || _cachedSafraId!==safraId){
-    indsGer=await getIndsGerencia(gerId, safraId);
+    indsGer=await withTimeout(getIndsGerencia(gerId, safraId), 10000, 'calcPreview getIndsGerencia');
     _cachedIndsGer=indsGer; _cachedGerId=gerId; _cachedSafraId=safraId;
   }
   // Mostra preview mesmo sem indicadores configurados
@@ -1862,7 +1871,7 @@ async function calcPreview(){
   const uniId=window._uniIdAtual||0;
   let aud=audManual;
   if(uniId&&safraIdLanc) {
-    const notaUni=await getNotaAuditoria(uniId,safraIdLanc);
+    const notaUni=await withTimeout(getNotaAuditoria(uniId,safraIdLanc), 8000, 'calcPreview getNotaAuditoria');
     if(notaUni!=null) aud=notaUni;
   }
   const regras=parseInt(document.getElementById('regras-salvas')?.value)||0;
@@ -1912,7 +1921,7 @@ async function salvarLancamento(){
   try {
     // 1. Lê indicadores do cache (já carregados na tabela)
     const indsGer = (_cachedGerId===gerId && _cachedSafraId===safraIdLanc && _cachedIndsGer.length)
-      ? _cachedIndsGer : await getIndsGerencia(gerId, safraIdLanc);
+      ? _cachedIndsGer : await withTimeout(getIndsGerencia(gerId, safraIdLanc), 12000, 'getIndsGerencia no salvar');
 
     // 2. Lê valores dos inputs
     const itens = indsGer.map(ind => {
@@ -2502,7 +2511,19 @@ async function salvarSafra(){const nome=document.getElementById('sf-nome')?.valu
 async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
 async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}
 async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}alert('✅ Notas de auditoria salvas!');carregarAuditorias();}
-async function getNotaAuditoria(unidadeId,safraId){if(!unidadeId||!safraId)return null;const{data}=await sb.from('auditoria_unidade').select('nota').eq('unidade_id',unidadeId).eq('safra_id',safraId).limit(1);return data?.[0]?.nota??null;}
+async function getNotaAuditoria(unidadeId,safraId){
+  if(!unidadeId||!safraId) return null;
+  try {
+    const {data} = await withTimeout(
+      sb.from('auditoria_unidade').select('nota').eq('unidade_id',unidadeId).eq('safra_id',safraId).limit(1),
+      8000, 'getNotaAuditoria'
+    );
+    return data?.[0]?.nota??null;
+  } catch(e) {
+    console.warn('getNotaAuditoria timeout:', e.message);
+    return null;
+  }
+}
 
 // ── EXPORTAR ──────────────────────────────────────────────────
 function exportarExcel(){
@@ -2786,25 +2807,32 @@ function fecharModal(id){document.getElementById(id)?.classList.remove('show');}
 // ── BUSCA INDICADORES POR GERÊNCIA/SAFRA ─────────────────────
 async function getIndsGerencia(gerId, safraId) {
   if(!gerId) return [];
-  let q = sb.from('ind_gerencia_safra')
-    .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
-    .eq('gerencia_id', gerId)
-    .eq('ativo', true);
-  if(safraId) q = q.eq('safra_id', safraId);
-  const { data: cfg } = await q;
-  if(cfg && cfg.length > 0) {
-    return cfg.map(r => ({...r.indicadores, peso: r.peso}));
-  }
-  // Fallback sem filtro de safra
-  if(safraId) {
-    const { data: cfgAll } = await sb.from('ind_gerencia_safra')
+  try {
+    let q = sb.from('ind_gerencia_safra')
       .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
-      .eq('gerencia_id', gerId).eq('ativo', true);
-    if(cfgAll && cfgAll.length > 0) {
-      return cfgAll.map(r => ({...r.indicadores, peso: r.peso}));
+      .eq('gerencia_id', gerId)
+      .eq('ativo', true);
+    if(safraId) q = q.eq('safra_id', safraId);
+    const { data: cfg } = await withTimeout(q, 10000, 'getIndsGerencia');
+    if(cfg && cfg.length > 0) {
+      return cfg.map(r => ({...r.indicadores, peso: r.peso}));
     }
+    // Fallback sem filtro de safra
+    if(safraId) {
+      const { data: cfgAll } = await withTimeout(
+        sb.from('ind_gerencia_safra')
+          .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+          .eq('gerencia_id', gerId).eq('ativo', true),
+        10000, 'getIndsGerencia fallback'
+      );
+      if(cfgAll && cfgAll.length > 0) {
+        return cfgAll.map(r => ({...r.indicadores, peso: r.peso}));
+      }
+    }
+  } catch(e) {
+    console.warn('getIndsGerencia falhou com timeout:', e.message);
   }
-  // Último fallback: indicadores base
+  // Último fallback: indicadores base (sem query de rede)
   return indicadores.filter(i => i.base);
 }
 
@@ -3187,6 +3215,8 @@ async function renovarTokenProativo() {
            error.message?.toLowerCase().includes('session') ||
            error.message?.toLowerCase().includes('expired'))) {
         _sessaoExpiradaAlertado = true;
+        // Recria cliente para limpar estado zombie antes do confirm
+        _recrearClienteSb();
         const relogar = confirm(
           '⚠️ Sua sessão expirou após longa inatividade.\n\n' +
           'Clique em OK para fazer login novamente.\n' +
@@ -3243,9 +3273,10 @@ async function sbSafe(queryFn, ms){
     result = await withTimeout(queryFn(), ms, 'Supabase');
   } catch(e1) {
     console.warn('sbSafe 1a tentativa falhou:', e1.message);
-    // Timeout ou falha de rede: tenta renovar sessao e repetir
+    // Timeout ou falha de rede: recria cliente, renova sessao e repete
+    _recrearClienteSb();
     try { await withTimeout(sb.auth.refreshSession(), 5000, 'refreshSession'); } catch(_) {}
-    await new Promise(function(r){ setTimeout(r, 400); });
+    await new Promise(function(r){ setTimeout(r, 600); });
     try {
       result = await withTimeout(queryFn(), ms, 'Supabase retry');
     } catch(e2) {
@@ -3259,9 +3290,10 @@ async function sbSafe(queryFn, ms){
     var msg = (result.error.message || '').toLowerCase();
     var st  = String(result.error.status || '');
     if(msg.includes('jwt') || msg.includes('token') || msg.includes('session') || st === '401') {
-      console.warn('sbSafe: token expirado na resposta, renovando...');
+      console.warn('sbSafe: token expirado na resposta, recriando cliente e renovando...');
+      _recrearClienteSb();
       try { await withTimeout(sb.auth.refreshSession(), 5000, 'refreshSession'); } catch(_) {}
-      await new Promise(function(r){ setTimeout(r, 400); });
+      await new Promise(function(r){ setTimeout(r, 600); });
       try {
         result = await withTimeout(queryFn(), ms, 'Supabase apos refresh');
       } catch(e3) {

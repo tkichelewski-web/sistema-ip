@@ -1900,6 +1900,15 @@ async function salvarLancamento(){
   const btn = document.getElementById('btn-salvar');
   if(btn){ btn.disabled=true; btn.textContent='Salvando...'; }
 
+  // Timeout de segurança: libera o botão se algo travar por mais de 45s
+  let _salvarTimeout = setTimeout(function(){
+    if(btn && btn.disabled){
+      btn.disabled=false;
+      btn.textContent='✓ Salvar Lançamento';
+      alert('⚠️ O salvamento demorou muito e pode ter travado.\n\nVerifique sua conexão e tente novamente.\n(Se o registro aparece no Dashboard, foi salvo com sucesso.)');
+    }
+  }, 45000);
+
   try {
     // 1. Lê indicadores do cache (já carregados na tabela)
     const indsGer = (_cachedGerId===gerId && _cachedSafraId===safraIdLanc && _cachedIndsGer.length)
@@ -1924,7 +1933,7 @@ async function salvarLancamento(){
     // 3. Nota de auditoria
     let aud = parseFloat(document.getElementById('nota-auditoria')?.value)||0;
     try {
-      const nu = await getNotaAuditoria(uniId, safraIdLanc);
+      const nu = await withTimeout(getNotaAuditoria(uniId, safraIdLanc), 8000, 'getNotaAuditoria');
       if(nu != null) aud = nu;
     } catch(e) { /* usa valor manual */ }
 
@@ -1945,10 +1954,12 @@ async function salvarLancamento(){
       try {
         const gersDir = estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id);
         const gersIds = gersDir.map(g=>g.id);
-        const {data:ld} = await sb.from('lancamentos')
-          .select('pontuacao_gerencia,gerencia_id')
-          .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-          .in('gerencia_id', gersIds);
+        const {data:ld} = await sbSafe(()=>
+          sb.from('lancamentos')
+            .select('pontuacao_gerencia,gerencia_id')
+            .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
+            .in('gerencia_id', gersIds)
+        );
         const mp = {};
         gersDir.forEach(g=>{ mp[g.id]=0; });
         (ld||[]).forEach(l=>{ mp[l.gerencia_id]=l.pontuacao_gerencia||0; });
@@ -1967,10 +1978,12 @@ async function salvarLancamento(){
       const safra = safrasData.find(s=>s.id==safraIdLanc);
       const mesesAnt = safra ? getMesesSafra(safra).map(m=>m.val).filter(m=>m<mesLancar) : [];
       if(mesesAnt.length){
-        const {data:prev} = await sb.from('lancamentos')
-          .select('indice_prevencao')
-          .eq('gerencia_id',gerId).eq('safra_id',safraIdLanc)
-          .in('mes', mesesAnt);
+        const {data:prev} = await sbSafe(()=>
+          sb.from('lancamentos')
+            .select('indice_prevencao')
+            .eq('gerencia_id',gerId).eq('safra_id',safraIdLanc)
+            .in('mes', mesesAnt)
+        );
         if(prev?.length){
           acumGer = (prev.reduce((s,l)=>s+(l.indice_prevencao||0),0)+indFinal)/(prev.length+1);
         }
@@ -2067,6 +2080,7 @@ async function salvarLancamento(){
     }
     alert('❌ Erro ao salvar: '+(e.message||'erro desconhecido')+'\n\nDica: tente novamente. Se persistir, atualize a página.');
   } finally {
+    clearTimeout(_salvarTimeout);
     if(btn){ btn.disabled=false; btn.textContent='✓ Salvar Lançamento'; }
     window._editandoLancamento = false;
     // Atualiza dashboard com o período do lançamento salvo, sem depender do campo da tela
@@ -3205,44 +3219,59 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Wrapper com timeout para queries (evita travamento infinito)
-function withTimeout(promise, ms=15000, label='query') {
-  const timeout = new Promise((_,rej) =>
-    setTimeout(() => rej(new Error('Timeout em '+label+' ('+ms/1000+'s)')), ms)
+// Executa promise com timeout — se travar, rejeita após ms milissegundos
+function withTimeout(promise, ms, label) {
+  ms = ms || 12000;
+  label = label || 'query';
+  var _timer;
+  var timeout = new Promise(function(_,rej){
+    _timer = setTimeout(function(){ rej(new Error('Timeout: '+label+' ('+ms/1000+'s)')); }, ms);
+  });
+  return Promise.race([promise, timeout]).then(
+    function(v){ clearTimeout(_timer); return v; },
+    function(e){ clearTimeout(_timer); throw e; }
   );
-  return Promise.race([promise, timeout]);
 }
 
-// Wrapper com retry de sessão — usado nas queries críticas de salvar/inserir
-async function sbSafe(queryFn){
-  try{
-    const result=await queryFn();
-    if(result.error &&
-       (result.error.message?.toLowerCase().includes('jwt') ||
-        result.error.message?.toLowerCase().includes('token') ||
-        result.error.message?.toLowerCase().includes('session') ||
-        result.error.status===401)){
-      console.warn('Token expirado detectado em sbSafe, renovando...');
-      try { await sb.auth.refreshSession(); } catch(_) {}
-      // Aguarda um momento para o token se propagar
-      await new Promise(r=>setTimeout(r,300));
-      return await queryFn();
+// Wrapper com timeout obrigatorio + retry de sessao em TODA query critica
+async function sbSafe(queryFn, ms){
+  ms = ms || 12000;
+
+  // ── Primeira tentativa ──
+  var result;
+  try {
+    result = await withTimeout(queryFn(), ms, 'Supabase');
+  } catch(e1) {
+    console.warn('sbSafe 1a tentativa falhou:', e1.message);
+    // Timeout ou falha de rede: tenta renovar sessao e repetir
+    try { await withTimeout(sb.auth.refreshSession(), 5000, 'refreshSession'); } catch(_) {}
+    await new Promise(function(r){ setTimeout(r, 400); });
+    try {
+      result = await withTimeout(queryFn(), ms, 'Supabase retry');
+    } catch(e2) {
+      console.error('sbSafe retry tambem falhou:', e2.message);
+      return { data: null, error: { message: e2.message } };
     }
-    return result;
-  }catch(e){
-    // Tenta renovar e repetir em caso de erro de rede/token
-    if(e.message && (e.message.includes('JWT') || e.message.includes('401') || e.message.includes('Failed to fetch'))){
+  }
+
+  // ── Detecta token expirado na resposta (campo .error, nao excecao) ──
+  if(result && result.error) {
+    var msg = (result.error.message || '').toLowerCase();
+    var st  = String(result.error.status || '');
+    if(msg.includes('jwt') || msg.includes('token') || msg.includes('session') || st === '401') {
+      console.warn('sbSafe: token expirado na resposta, renovando...');
+      try { await withTimeout(sb.auth.refreshSession(), 5000, 'refreshSession'); } catch(_) {}
+      await new Promise(function(r){ setTimeout(r, 400); });
       try {
-        await sb.auth.refreshSession();
-        await new Promise(r=>setTimeout(r,300));
-        return await queryFn();
-      } catch(e2) {
-        console.error('Retry após refresh também falhou:', e2.message);
+        result = await withTimeout(queryFn(), ms, 'Supabase apos refresh');
+      } catch(e3) {
+        console.error('sbSafe falhou apos refresh:', e3.message);
+        return { data: null, error: { message: e3.message } };
       }
     }
-    console.error('Erro na query (sbSafe):', e);
-    return{data:null,error:e};
   }
+
+  return result || { data: null, error: null };
 }
 
 // Wake Lock: impede tela de apagar

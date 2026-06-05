@@ -277,6 +277,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
             <select id="acum-chart-tipo" onchange="renderAcumChart()" style="font-size:12px;padding:4px 8px">
               <option value="gerencia">Por Gerência</option>
               <option value="diretoria">Por Diretoria</option>
+              <option value="consolidado">Consolidado JB+PB</option>
             </select>
             <select id="acum-chart-viz" onchange="renderAcumChart()" style="font-size:12px;padding:4px 8px">
               <option value="bar">📊 Colunas</option>
@@ -296,6 +297,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
             <select id="acum-chart-mes-tipo" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
               <option value="gerencia">Por Gerência</option>
               <option value="diretoria">Por Diretoria</option>
+              <option value="consolidado">Consolidado JB+PB</option>
             </select>
             <select id="acum-chart-mes-viz" onchange="renderAcumChartMensal()" style="font-size:12px;padding:4px 8px">
               <option value="bar">📊 Colunas</option>
@@ -916,12 +918,57 @@ function renderAcumTable() {
       + '</tr>';
   }).join('');
 
+  // ── Detecta gerências homônimas (mesmo nome, unidades diferentes) ──────────
+  const nomeGerMap = new Map();
+  dadosFiltrados.forEach(l => {
+    const nome = l.gerencias?.nome || '—';
+    if(!nomeGerMap.has(nome)) nomeGerMap.set(nome, new Set());
+    if(l.gerencias?.unidades?.nome) nomeGerMap.get(nome).add(l.gerencias.unidades.nome);
+  });
+  const homonimas = [...nomeGerMap.entries()].filter(([,unis]) => unis.size > 1).map(([n]) => n);
+
+  // Bloco consolidado (só aparece se houver homônimas)
+  let consolidadoHTML = '';
+  if(homonimas.length > 0) {
+    const consolidadoRows = homonimas.map(nome => {
+      let soma = 0, count = 0;
+      const cells = mesesVisiveis.map(m => {
+        // Busca todos os lançamentos desse nome de gerência no mês
+        const lsM = acumAllData.filter(x =>
+          x.gerencias?.nome === nome && x.mes === m.val &&
+          (!filtDir || x.gerencias?.diretoria_id === filtDir)
+        );
+        const ips = lsM.map(l => calcIP(l)).filter(v => v != null);
+        const media = ips.length ? ips.reduce((s,v) => s+v, 0) / ips.length : null;
+        if(media != null) { soma += media; count++; }
+        const acum = count > 0 ? soma/count : null;
+        return '<td class="mono" style="color:'+(media!=null?getColor(media):'var(--muted)')+'">'+( media!=null?media.toFixed(1):'—')+'</td>'
+             + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+( acum!=null?acum.toFixed(1):'—')+'</td>';
+      }).join('');
+      const unisNomes = [...nomeGerMap.get(nome)].sort().join(' + ');
+      return '<tr style="background:#f8fdf8">'
+        + '<td><b>'+nome+'</b></td>'
+        + '<td style="font-size:11px;color:var(--muted);white-space:nowrap">'+unisNomes+'</td>'
+        + '<td style="font-size:11px;color:var(--muted)">Média consolidada</td>'
+        + cells + '</tr>';
+    }).join('');
+    consolidadoHTML =
+      '<div style="margin-top:16px">'
+      + '<div style="font-size:12px;font-weight:700;color:#07583C;margin-bottom:6px;display:flex;align-items:center;gap:6px">'
+      + '⚖️ Consolidado — Média entre unidades (gerências com mesmo nome)</div>'
+      + '<div style="overflow-x:auto"><table><thead><tr>'
+      + '<th>Gerência</th><th>Unidades</th><th>Observação</th>'
+      + mesThsG
+      + '</tr></thead><tbody>'+consolidadoRows+'</tbody></table></div></div>';
+  }
+
   if(gtEl) gtEl.innerHTML =
     legendaHTML
     + '<div style="overflow-x:auto"><table><thead><tr>'
     + '<th>Gerência</th><th>Unidade</th><th>Diretoria</th>'
     + mesThsG
-    + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';
+    + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>'
+    + consolidadoHTML;
 
   // ── Tabela diretorias ─────────────────────────────────────────
   const dirsMap = new Map();
@@ -1021,8 +1068,18 @@ function calcIPLanc(l) {
   return Math.max(0, Math.min(100, pg*wPG + md*wMD + aud*wAUD + aj));
 }
 
-function buildAcumDatasets(meses,tipo,vizType,acumMode){
+function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
   const isBar=vizType==='bar';
+  const filtDirChart=parseInt(document.getElementById('acum-dir')?.value)||0;
+  const filtGerChart=parseInt(document.getElementById('acum-ger')?.value)||0;
+  // filtMesExt vem de criarChart (já lido); garante consistência
+  const filtMes=filtMesExt||document.getElementById('acum-mes')?.value||'';
+
+  // Dados já filtrados por dir/ger/mês para uso em todos os tipos
+  let base=acumAllData;
+  if(filtDirChart) base=base.filter(l=>l.gerencias?.diretoria_id===filtDirChart);
+  if(filtGerChart) base=base.filter(l=>l.gerencia_id===filtGerChart);
+  if(filtMes)      base=base.filter(l=>l.mes===filtMes);
 
   function mkDs(label, pts, cor, corTexto){
     return {
@@ -1036,50 +1093,72 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode){
       borderRadius: isBar ? 5 : 0,
       tension: 0.3,
       spanGaps: acumMode,
-      _corTexto: corTexto || '#fff',  // usado pelo plugin de rótulos
+      _corTexto: corTexto || '#fff',
     };
   }
 
   if(tipo==='gerencia'){
-    // Agrupa por gerencia_id para separar homônimas de unidades diferentes
-    const filtDirChart=parseInt(document.getElementById('acum-dir')?.value)||0;
-    const filtGerChart=parseInt(document.getElementById('acum-ger')?.value)||0;
+    // Uma barra/linha por gerencia_id (JB e PB separados)
     const gersMap=new Map();
-    acumAllData
-      .filter(l=>(!filtDirChart||l.gerencias?.diretoria_id===filtDirChart)&&(!filtGerChart||l.gerencia_id===filtGerChart))
-      .forEach(l=>{
-        if(!gersMap.has(l.gerencia_id))
-          gersMap.set(l.gerencia_id,{
-            id:   l.gerencia_id,
-            nome: l.gerencias?.nome             || '—',
-            uni:  l.gerencias?.unidades?.nome   || '',
-          });
-      });
+    base.forEach(l=>{
+      if(!gersMap.has(l.gerencia_id))
+        gersMap.set(l.gerencia_id,{
+          id:   l.gerencia_id,
+          nome: l.gerencias?.nome           || '—',
+          uni:  l.gerencias?.unidades?.nome || '',
+        });
+    });
     const gers=[...gersMap.values()];
-
     return gers.map(g=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
-        const l=acumAllData.find(x=>x.gerencia_id===g.id&&x.mes===m.val);
+        // Para acumMode, precisa de todos os meses até m (não só os filtrados)
+        const dataSet=filtMes?acumAllData.filter(l=>l.gerencia_id===g.id&&l.mes<=m.val):acumAllData;
+        const l=dataSet.find(x=>x.gerencia_id===g.id&&x.mes===m.val);
         const ip=calcIPLanc(l);
         if(acumMode){if(ip!=null){soma+=ip;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
         return ip!=null?parseFloat(ip.toFixed(2)):null;
       });
-      // Label com unidade: "Suprimentos JB" ou "Suprimentos PB"
       const label = g.uni ? g.nome+' '+g.uni : g.nome;
       const cor   = uniCorChart(g.uni);
       const corTx = uniLabelTexto(g.uni);
       return mkDs(label, pts, cor, corTx);
     });
 
+  }else if(tipo==='consolidado'){
+    // Agrupa gerências com o MESMO NOME de unidades diferentes → média JB+PB
+    const nomeMap=new Map();
+    base.forEach(l=>{
+      const nome=l.gerencias?.nome||'—';
+      if(!nomeMap.has(nome)) nomeMap.set(nome,[]);
+      nomeMap.get(nome).push(l);
+    });
+    return [...nomeMap.entries()].map(([nome,ls],idx)=>{
+      let soma=0,count=0;
+      const pts=meses.map(m=>{
+        const lsM=ls.filter(l=>l.mes===m.val);
+        if(!lsM.length) return null;
+        const ips=lsM.map(l=>calcIPLanc(l)).filter(v=>v!=null);
+        const media=ips.length?ips.reduce((s,v)=>s+v,0)/ips.length:null;
+        if(acumMode){if(media!=null){soma+=media;count++;}return count>0?parseFloat((soma/count).toFixed(2)):null;}
+        return media!=null?parseFloat(media.toFixed(2)):null;
+      });
+      const cor=VERDES[idx%VERDES.length];
+      return mkDs(nome, pts, cor, '#fff');
+    });
+
   }else{
-    const filtDirChart2=parseInt(document.getElementById('acum-dir')?.value)||0;
-    const dirsFiltered=filtDirChart2?acumAllData.filter(l=>l.gerencias?.diretoria_id===filtDirChart2):acumAllData;
-    const dirs=[...new Map(dirsFiltered.map(l=>[l.gerencias?.diretoria_id,l.gerencias?.diretorias?.nome])).entries()].map(([id,n])=>({id,nome:n}));
+    // Por Diretoria
+    const dirsMap=new Map();
+    base.forEach(l=>{
+      const did=l.gerencias?.diretoria_id;
+      if(did&&!dirsMap.has(did)) dirsMap.set(did,l.gerencias?.diretorias?.nome||'—');
+    });
+    const dirs=[...dirsMap.entries()].map(([id,n])=>({id,nome:n}));
     return dirs.map((d,idx)=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
-        const ls=dirsFiltered.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
+        const ls=base.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
         if(!ls.length) return null;
         const ips=ls.map(l=>calcIPLanc(l)).filter(v=>v!=null);
         const media=ips.length?ips.reduce((s,v)=>s+v,0)/ips.length:null;
@@ -1099,9 +1178,12 @@ function criarChart(canvasId,ref,tipo,vizType,acumMode){
   const safraId=document.getElementById('acum-safra')?.value;
   const safra=safrasData.find(s=>s.id==safraId);
   if(!acumAllData.length||!safra)return;
-  const meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+  const filtMesChart=document.getElementById('acum-mes')?.value||'';
+  // Respeita filtro de mês: se filtrado, mostra só o mês selecionado
+  let meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+  if(filtMesChart) meses=meses.filter(m=>m.val===filtMesChart);
   const labels=meses.map(m=>m.nome);
-  const datasets=buildAcumDatasets(meses,tipo,vizType,acumMode);
+  const datasets=buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesChart);
   const isBar=vizType==='bar';
   if(ref[0]){ref[0].destroy();ref[0]=null;}
   ref[0]=new Chart(canvas,{

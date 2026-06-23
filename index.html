@@ -417,6 +417,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
         <select id="hist-diretoria" style="width:auto;padding:6px 10px;font-size:13px;" onchange="filtrarGerenciasHistorico();carregarHistorico()"><option value="">Todas as Diretorias</option></select>
         <select id="hist-gerencia" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"><option value="">Todas as Gerências</option></select>
         <select id="hist-ano" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"></select>
+        <select id="hist-mes" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarHistorico()"><option value="">Todos os meses</option></select>
         <button class="btn btn-secondary btn-sm" onclick="exportarHistoricoExcel()">⬇ Excel Filtrado</button>
         <button class="btn btn-primary btn-sm" onclick="exportarBackupCompleto()" style="background:#07583C">💾 Backup Completo</button>
       </div>
@@ -2320,6 +2321,7 @@ async function carregarHistorico(){
   const gerId=parseInt(document.getElementById('hist-gerencia')?.value)||0;
   const dirId=parseInt(document.getElementById('hist-diretoria')?.value)||0;
   const ano=document.getElementById('hist-ano')?.value||'';
+  const mes=document.getElementById('hist-mes')?.value||'';
   const tw=document.getElementById('hist-table');
   if(tw)tw.innerHTML='<div class="loading"><span class="spinner"></span>Carregando...</div>';
   // Se filtrou por diretoria, busca gerências dessa diretoria
@@ -2329,7 +2331,12 @@ async function carregarHistorico(){
     if(!gerIdsDir.length){if(tw)tw.innerHTML='<div class="loading">Nenhum registro encontrado.</div>';return;}
   }
   let q=sb.from('lancamentos').select('*,gerencias(nome,diretoria_id,diretorias(nome),unidades(nome)),safras(nome),usuarios(nome)');
-  if(ano) q=q.or(`mes.like.${ano}-%,periodo.like.${ano}-%`);
+  if(mes) {
+    // Mês específico no formato YYYY-MM
+    q=q.or(`mes.eq.${mes},periodo.eq.${mes}`);
+  } else if(ano) {
+    q=q.or(`mes.like.${ano}-%,periodo.like.${ano}-%`);
+  }
   q=q.order('mes',{ascending:false}).order('indice_prevencao',{ascending:false});
   if(gerId) q=q.eq('gerencia_id',gerId);
   else if(dirId && gerIdsDir.length) q=q.in('gerencia_id',gerIdsDir);
@@ -3110,7 +3117,31 @@ function preencherHistoricoFiltros() {
   if (hg) { hg.innerHTML = '<option value="">Todas as Gerências</option>' + estrutura.gerencias.map(g => `<option value="${g.id}">${g.nome}</option>`).join(''); }
   // Ano
   const ha = document.getElementById('hist-ano');
-  if (ha) { const ano = new Date().getFullYear(); ha.innerHTML = '<option value="">Todos os anos</option>' + Array.from({length:5}, (_,i) => ano-i).map(a => `<option value="${a}">${a}</option>`).join(''); ha.value = String(ano); }
+  if (ha) {
+    const ano = new Date().getFullYear();
+    ha.innerHTML = '<option value="">Todos os anos</option>' + Array.from({length:5}, (_,i) => ano-i).map(a => `<option value="${a}">${a}</option>`).join('');
+    ha.value = String(ano);
+    // Ao mudar o ano, repopula os meses disponíveis
+    ha.onchange = function() { preencherMesesHistorico(); carregarHistorico(); };
+  }
+  preencherMesesHistorico();
+}
+
+function preencherMesesHistorico() {
+  const hm = document.getElementById('hist-mes');
+  if (!hm) return;
+  const ano = document.getElementById('hist-ano')?.value || '';
+  const nomesMes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  if (ano) {
+    hm.innerHTML = '<option value="">Todos os meses</option>' +
+      Array.from({length:12}, (_,i) => {
+        const mm = String(i+1).padStart(2,'0');
+        return `<option value="${ano}-${mm}">${nomesMes[i]}</option>`;
+      }).join('');
+  } else {
+    hm.innerHTML = '<option value="">Todos os meses</option>';
+  }
+  hm.value = '';
 }
 
 // ── MODAL INDICADORES NÃO ATINGIDOS ──────────────────────────

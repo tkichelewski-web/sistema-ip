@@ -619,6 +619,9 @@ let indicadores=[];
 let config={peso_gerencia:.5,peso_diretoria:.2,peso_auditoria:.3,faixa_critico:80,faixa_meta:90};
 
 // ── INIT ─────────────────────────────────────────────────────
+// Flag para evitar que renovação de token dispare recarga completa do app
+let _appJaCarregado = false;
+
 async function init() {
   // Checa se voltou de link mágico
   const hash = window.location.hash;
@@ -629,15 +632,44 @@ async function init() {
   const { data:{ session } } = await sb.auth.getSession();
   if (session) await carregarUsuario(session.user);
   else mostrarLogin();
-  sb.auth.onAuthStateChange(async (_,session) => {
-    if (session) await carregarUsuario(session.user);
+  sb.auth.onAuthStateChange(async (event, session) => {
+    // TOKEN_REFRESHED, USER_UPDATED etc. não devem recarregar o app
+    // Só reage a SIGNED_IN quando o app ainda não está carregado (login inicial)
+    if (event === 'SIGNED_IN' && !_appJaCarregado) {
+      await carregarUsuario(session.user);
+    }
+    // SIGNED_OUT: volta para login
+    if (event === 'SIGNED_OUT') {
+      _appJaCarregado = false;
+      mostrarLogin();
+    }
   });
 }
 
 async function carregarUsuario(authUser) {
-  const { data, error } = await sb.from('usuarios')
+  let { data, error } = await sb.from('usuarios')
     .select('*, gerencias(id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))')
     .eq('auth_id', authUser.id).single();
+
+  // Usuário ainda não existe na tabela — pode ser primeiro login via convite
+  if (!data) {
+    const{data:pendente}=await sb.from('usuarios_pendentes').select('*').eq('email',authUser.email).single();
+    if(pendente){
+      // Aplica o perfil pendente criado pelo admin
+      const{error:insErr}=await sb.from('usuarios').insert({
+        auth_id:authUser.id, nome:pendente.nome, email:pendente.email,
+        perfil:pendente.perfil, gerencia_id:pendente.gerencia_id
+      });
+      if(!insErr){
+        // Remove da tabela de pendentes
+        await sb.from('usuarios_pendentes').delete().eq('email',authUser.email);
+        // Relê o usuário recém-criado
+        const res=await sb.from('usuarios').select('*, gerencias(id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))').eq('auth_id',authUser.id).single();
+        data=res.data; error=res.error;
+      }
+    }
+  }
+
   if (error || !data) {
     mostrarLogin();
     document.getElementById('login-err').textContent = 'Usuário não cadastrado no sistema. Contacte o administrador.';
@@ -646,6 +678,7 @@ async function carregarUsuario(authUser) {
   }
   usuario = data;
   await Promise.all([carregarConfig(), carregarEstrutura(), carregarIndicadores()]);
+  _appJaCarregado = true;
   mostrarApp();
 }
 
@@ -2543,28 +2576,55 @@ async function desativarUni(id){if(!confirm('Desativar esta unidade?'))return;aw
 
 // ── USUÁRIOS ──────────────────────────────────────────────────
 function toggleGerSel(){const p=document.getElementById('usr-perfil')?.value;const w=document.getElementById('usr-ger-wrap');if(w)w.style.display=p==='gerencia'?'block':'none';}
+
+// Salva dados pendentes do novo usuário no Supabase (tabela usuarios_pendentes)
+// para serem aplicados quando ele confirmar o e-mail e fizer o primeiro login.
 async function criarUsuario(){
-  const nome=document.getElementById('usr-nome')?.value.trim();const email=document.getElementById('usr-email')?.value.trim();
-  const perfil=document.getElementById('usr-perfil')?.value;const gerId=parseInt(document.getElementById('usr-gerencia')?.value)||null;
+  const nome=document.getElementById('usr-nome')?.value.trim();
+  const email=document.getElementById('usr-email')?.value.trim();
+  const perfil=document.getElementById('usr-perfil')?.value;
+  const gerId=parseInt(document.getElementById('usr-gerencia')?.value)||null;
   if(!nome||!email){alert('Nome e e-mail são obrigatórios.');return;}
-  const senhaTemp='Vidas@'+Math.floor(1000+Math.random()*9000);
-  const{data:authData,error:authErr}=await sb.auth.admin.createUser({email,password:senhaTemp,email_confirm:true});
-  if(authErr){alert('Erro ao criar: '+authErr.message);return;}
-  const{error}=await sb.from('usuarios').insert({auth_id:authData.user.id,nome,email,perfil,gerencia_id:gerId});
-  if(error){alert('Erro ao salvar perfil: '+error.message);return;}
-  alert('Usuário '+nome+' criado!\nSenha temporária: '+senhaTemp+'\nRepasse ao usuário.');
+  if(perfil==='gerencia'&&!gerId){alert('Selecione a gerência do usuário.');return;}
+
+  // Salva perfil pendente ANTES do convite (auth_id ainda desconhecido)
+  const{error:pendErr}=await sb.from('usuarios_pendentes').upsert({email,nome,perfil,gerencia_id:gerId},{onConflict:'email'});
+  if(pendErr){alert('Erro ao preparar perfil: '+pendErr.message);return;}
+
+  // Envia convite por e-mail via Supabase Auth (não requer service role)
+  const{error:invErr}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true,emailRedirectTo:window.location.href.split('#')[0]}});
+  if(invErr){alert('Erro ao enviar convite: '+invErr.message);return;}
+
+  alert('✅ Convite enviado para '+email+'!\n\nO usuário receberá um e-mail com link de acesso.\nQuando fizer o primeiro login, o perfil será aplicado automaticamente.');
   ['usr-nome','usr-email'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   renderUsuarios();
 }
+
 async function renderUsuarios(){
   const{data}=await sb.from('usuarios').select('*,gerencias(nome)').order('nome');
+  const{data:pendentes}=await sb.from('usuarios_pendentes').select('*,gerencias(nome)').order('nome');
   const el=document.getElementById('usr-lista');if(!el)return;
   const cores={admin:'badge-purple',gestor:'badge-blue',gerencia:'badge-green'};
-  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Gerência</th></tr></thead><tbody>${(data||[]).map(u=>`<tr>
+  const listaAtivos=(data||[]).map(u=>`<tr>
     <td><b>${u.nome}</b></td><td class="mono" style="font-size:12px">${u.email}</td>
     <td><span class="badge ${cores[u.perfil]||'badge-green'}">${u.perfil}</span></td>
     <td style="font-size:12px;color:var(--muted)">${u.gerencias?.nome||'—'}</td>
-  </tr>`).join('')}</tbody></table></div>`;
+    <td><span class="badge badge-green" style="font-size:10px">Ativo</span></td>
+  </tr>`).join('');
+  const listaPend=(pendentes||[]).filter(p=>!(data||[]).find(u=>u.email===p.email)).map(p=>`<tr>
+    <td><b>${p.nome}</b></td><td class="mono" style="font-size:12px">${p.email}</td>
+    <td><span class="badge ${cores[p.perfil]||'badge-green'}">${p.perfil}</span></td>
+    <td style="font-size:12px;color:var(--muted)">${p.gerencias?.nome||'—'}</td>
+    <td><span class="badge badge-blue" style="font-size:10px;background:#e8a020">Aguardando login</span>
+    <button class="btn btn-secondary btn-sm" style="margin-left:6px;font-size:10px" onclick="reenviarConvite('${p.email}')">↺ Reenviar</button></td>
+  </tr>`).join('');
+  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Gerência</th><th>Status</th></tr></thead><tbody>${listaAtivos}${listaPend}</tbody></table></div>`;
+}
+
+async function reenviarConvite(email){
+  const{error}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:false,emailRedirectTo:window.location.href.split('#')[0]}});
+  if(error){alert('Erro: '+error.message);return;}
+  alert('Convite reenviado para '+email);
 }
 
 // ── CONFIGURAÇÕES ─────────────────────────────────────────────

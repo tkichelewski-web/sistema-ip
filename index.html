@@ -2378,6 +2378,18 @@ async function salvarLancamento(){
       console.log('STEP 10b: OK');
     }
 
+    // 10c. Grava snapshot no histórico semanal (base do "Farol de Indicadores")
+    if(itens.length){
+      const histRows = itens.map(it=>({
+        lancamento_id:lancId, indicador_id:it.indicador_id,
+        previsto:it.previsto||null, realizado:it.realizado||null,
+        nota:it.nota||null, sim_nao:it.sim_nao??null,
+        pontuacao:it.pontuacao||0
+      }));
+      try{ await sbSafe(()=>sb.from('lancamento_itens_historico').insert(histRows)); }
+      catch(eh){ console.warn('Histórico semanal não gravado:', eh.message); }
+    }
+
     // 11. Recalcula outras gerências da diretoria (em background)
     setTimeout(async ()=>{
       try {
@@ -3305,37 +3317,66 @@ async function abrirModalNaoAtingidos() {
 }
 
 // ── APRESENTAÇÃO GERADA POR IA (Claude) ────────────────────────
-async function gerarApresentacaoIA(){
+
+function agregarPorDiretoria(dadosNA){
+  const map = new Map();
+  dadosNA.gerencias.forEach(g=>{
+    if(!map.has(g.diretoria)) map.set(g.diretoria, { diretoria:g.diretoria, perdaTotal:0, gerenciasComPerda:0, indicadoresMap:new Map(), mes:g.mes });
+    const d = map.get(g.diretoria);
+    d.perdaTotal += g.perdaTotal;
+    d.gerenciasComPerda += 1;
+    g.indicadoresNaoAtingidos.forEach(it=>{
+      const acc = d.indicadoresMap.get(it.indicador) || { indicador:it.indicador, perdaPontos:0, semEvidencia:0 };
+      acc.perdaPontos += it.perdaPontos;
+      if(!it.temEvidencia) acc.semEvidencia++;
+      d.indicadoresMap.set(it.indicador, acc);
+    });
+  });
+  return [...map.values()].map(d=>({
+    diretoria:d.diretoria, mes:d.mes,
+    perdaTotal: parseFloat(d.perdaTotal.toFixed(2)),
+    gerenciasComPerda: d.gerenciasComPerda,
+    indicadoresNaoAtingidos: [...d.indicadoresMap.values()]
+      .sort((a,b)=>b.perdaPontos-a.perdaPontos)
+      .slice(0,6)
+      .map(it=>({indicador:it.indicador, perdaPontos:parseFloat(it.perdaPontos.toFixed(2)), temEvidencia: it.semEvidencia===0})),
+  })).sort((a,b)=>b.perdaTotal-a.perdaTotal);
+}
+
+async function gerarApresentacaoIA(modo){
+  modo = modo === 'diretoria' ? 'diretoria' : 'gerencia';
   if(!_naDadosAtuais || !_naDadosAtuais.gerencias.length){
     alert('Nenhuma gerência com indicador não atingido nos filtros atuais. Ajuste os filtros e tente novamente.');
     return;
   }
-  const btn=document.getElementById('btn-gerar-apresentacao');
+  const btnId = modo==='diretoria' ? 'btn-gerar-apres-dir' : 'btn-gerar-apres-ger';
+  const btn=document.getElementById(btnId);
+  const btnTextoOrig = btn?btn.textContent:'';
   if(btn){btn.disabled=true;btn.textContent='⏳ Gerando com IA...';}
   try{
-    // Limita a payload às gerências com maior perda, para caber no orçamento de tokens da resposta
-    const top = {
-      filtros: _naDadosAtuais.filtros,
-      resumo: _naDadosAtuais.resumo,
-      gerencias: _naDadosAtuais.gerencias.slice(0,6).map(g=>({
-        ...g,
-        indicadoresNaoAtingidos: g.indicadoresNaoAtingidos.slice(0,5)
-      }))
-    };
+    let top, agrupador;
+    if(modo==='diretoria'){
+      agrupador = agregarPorDiretoria(_naDadosAtuais);
+      top = { filtros:_naDadosAtuais.filtros, resumo:_naDadosAtuais.resumo, diretorias:agrupador.slice(0,6) };
+    } else {
+      agrupador = _naDadosAtuais.gerencias.slice(0,6).map(g=>({ ...g, indicadoresNaoAtingidos:g.indicadoresNaoAtingidos.slice(0,5) }));
+      top = { filtros:_naDadosAtuais.filtros, resumo:_naDadosAtuais.resumo, gerencias:agrupador };
+    }
 
     const systemPrompt = 'Você é um analista de SSMA (Saúde, Segurança e Meio Ambiente) que prepara apresentações executivas curtas e objetivas para a liderança de uma usina agroindustrial (Usina Santa Adélia), a partir de dados do Sistema IP (Índice de Prevenção). Responda SEMPRE apenas com um JSON válido, sem markdown, sem crases, sem comentários — nada além do JSON.';
 
-    const userPrompt = 'Monte uma apresentação executiva curta sobre indicadores de SSMA não atingidos, usando estes dados:\n\n'
+    const tipoSlideItem = modo==='diretoria' ? 'diretoria' : 'gerencia';
+    const userPrompt = 'Monte uma apresentação executiva curta sobre indicadores de SSMA não atingidos, agrupada por '+(modo==='diretoria'?'DIRETORIA':'GERÊNCIA')+', usando estes dados:\n\n'
       + JSON.stringify(top)
       + '\n\nFormato de resposta (JSON estrito):\n'
       + '{"slides":[\n'
       + '  {"tipo":"capa","titulo":"...","subtitulo":"..."},\n'
       + '  {"tipo":"resumo","titulo":"Resumo Executivo","bullets":["...","..."]},\n'
-      + '  {"tipo":"gerencia","titulo":"Nome da Gerência","subtitulo":"Unidade · Diretoria · Mês","bullets":["...","..."]},\n'
+      + '  {"tipo":"'+tipoSlideItem+'","titulo":"Nome da '+(modo==='diretoria'?'Diretoria':'Gerência')+'","subtitulo":"'+(modo==='diretoria'?'Mês':'Unidade · Diretoria · Mês')+'","bullets":["...","..."]},\n'
       + '  {"tipo":"fechamento","titulo":"Próximos Passos","bullets":["...","..."]}\n'
       + ']}\n\n'
-      + 'Regras: capa com título e subtítulo curtos; 1 slide de resumo com os números principais (gerências com perda, total de pontos perdidos, média); '
-      + '1 slide por gerência (as com maior perda primeiro, no máximo 5 gerências), cada bullet citando o indicador, os pontos perdidos e, quando temEvidencia=false, mencionar "sem evidência anexada"; '
+      + 'Regras: capa com título e subtítulo curtos; 1 slide de resumo com os números principais (quantidade com perda, total de pontos perdidos, média); '
+      + '1 slide por '+(modo==='diretoria'?'diretoria':'gerência')+' (as com maior perda primeiro, no máximo 5), cada bullet citando o indicador, os pontos perdidos e, quando temEvidencia=false, mencionar "sem evidência anexada"; '
       + 'termine com 1 slide de recomendações objetivas. Bullets curtos (máx. 18 palavras cada, no máx. 4 por slide). Português do Brasil, tom executivo e direto.';
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -3355,15 +3396,123 @@ async function gerarApresentacaoIA(){
     const parsed = JSON.parse(limpo);
     if(!parsed.slides || !parsed.slides.length) throw new Error('A resposta da IA não trouxe slides.');
 
-    _apresentacaoSlides = parsed.slides;
+    let slides = parsed.slides;
+
+    // Slides de farol semanal — só faz sentido no modo por gerência (dado é por gerência)
+    if(modo==='gerencia'){
+      if(btn) btn.textContent='⏳ Montando farol semanal...';
+      const farolSlides = await montarSlidesFarol(_naDadosAtuais.gerencias.slice(0,6));
+      if(farolSlides.length){
+        // Insere cada farol logo após o respectivo slide de gerência
+        const resultado=[];
+        slides.forEach(s=>{
+          resultado.push(s);
+          if(s.tipo==='gerencia'){
+            const f=farolSlides.find(fs=>fs.gerenciaNome===s.titulo);
+            if(f) resultado.push(f.slide);
+          }
+        });
+        slides = resultado;
+      }
+    }
+
+    _apresentacaoSlides = slides;
     _apresentacaoSlideAtual = 0;
     abrirApresentacao();
   }catch(e){
     console.error('Erro ao gerar apresentação:', e);
     alert('❌ Não foi possível gerar a apresentação: '+(e.message||'erro desconhecido')+'\n\nTente novamente ou reduza os filtros (ex.: selecione uma diretoria específica).');
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='🎤 Gerar Apresentação com IA';}
+    if(btn){btn.disabled=false;btn.textContent=btnTextoOrig;}
   }
+}
+
+// ── FAROL SEMANAL DE INDICADORES ───────────────────────────────
+function semanaDoMes(dataStr){
+  const d=new Date(dataStr);
+  return Math.min(Math.ceil(d.getDate()/7),5);
+}
+function corFarolStatus(pct){
+  if(pct>=(config.faixa_meta||90)) return {cor:'#07583C',bg:'#e8f5ee',label:'Verde'};
+  if(pct>=(config.faixa_critico||80)) return {cor:'#c47d0e',bg:'#fef3e0',label:'Amarelo'};
+  return {cor:'#d93025',bg:'#fce8e6',label:'Vermelho'};
+}
+
+// Busca o histórico semanal para as gerências informadas (no mês já filtrado) e monta um slide de farol por gerência
+async function montarSlidesFarol(gerenciasResumo){
+  if(!gerenciasResumo.length) return [];
+  const mesFiltro = document.getElementById('na-filtro-mes')?.value || '';
+  const nomesGer = new Set(gerenciasResumo.map(g=>g.nome));
+  // Localiza os lançamentos correspondentes (já carregados em _naLancamentos)
+  const lancsAlvo = _naLancamentos.filter(l=>{
+    if(!nomesGer.has(l.gerencias?.nome)) return false;
+    if(mesFiltro && (l.mes||l.periodo)!==mesFiltro) return false;
+    return true;
+  });
+  if(!lancsAlvo.length) return [];
+  const lancIds = lancsAlvo.map(l=>l.id);
+  const lancPorGer = {}; lancsAlvo.forEach(l=>{ lancPorGer[l.id]=l.gerencias?.nome||'—'; });
+
+  let hist=[];
+  try{
+    const{data}=await sb.from('lancamento_itens_historico')
+      .select('lancamento_id,indicador_id,previsto,realizado,nota,sim_nao,pontuacao,salvo_em,indicadores(nome,tipo)')
+      .in('lancamento_id', lancIds).order('salvo_em');
+    hist=data||[];
+  }catch(e){ console.warn('Sem histórico semanal disponível:', e.message); return []; }
+  if(!hist.length) return [];
+
+  // Agrupa: gerência -> indicador -> semana -> última pontuação registrada naquela semana
+  const porGer = {};
+  hist.forEach(row=>{
+    const gerNome = lancPorGer[row.lancamento_id]; if(!gerNome) return;
+    const semana = semanaDoMes(row.salvo_em);
+    const tipo = row.indicadores?.tipo;
+    let pct = row.pontuacao||0;
+    if(tipo==='previsto_realizado'){
+      const prev=parseFloat(row.previsto)||0, real=parseFloat(row.realizado)||0;
+      pct = (prev===0&&real===0)?100:(prev>0?Math.min((real/prev)*100,100):0);
+    } else if(tipo==='nota'){ pct=Math.min(parseFloat(row.nota)||0,100); }
+    else if(tipo==='binario'){ pct = row.sim_nao?100:0; }
+
+    if(!porGer[gerNome]) porGer[gerNome]={};
+    const indNome = row.indicadores?.nome||'Indicador';
+    if(!porGer[gerNome][indNome]) porGer[gerNome][indNome]={};
+    porGer[gerNome][indNome][semana]=pct; // sobrescreve com o snapshot mais recente daquela semana
+  });
+
+  const slides=[];
+  Object.keys(porGer).forEach(gerNome=>{
+    const indicadoresMap = porGer[gerNome];
+    // Só mostra indicadores com pelo menos 2 semanas distintas registradas (evidência de acompanhamento semanal)
+    const linhas = Object.keys(indicadoresMap)
+      .map(ind=>({indicador:ind, semanas:indicadoresMap[ind]}))
+      .filter(l=>Object.keys(l.semanas).length>=2);
+    if(!linhas.length) return;
+
+    const maxSemana = Math.max(...linhas.flatMap(l=>Object.keys(l.semanas).map(Number)));
+    const headerCols = Array.from({length:maxSemana},(_, i)=>i+1);
+    const headerHTML = headerCols.map(s=>'<th style="padding:8px 10px;font-size:10px;font-family:\'DM Mono\',monospace;color:#07583C;text-align:center;background:#f0f9f0;">S'+s+'</th>').join('');
+    const linhasHTML = linhas.map(l=>{
+      const cels = headerCols.map(s=>{
+        const pct=l.semanas[s];
+        if(pct==null) return '<td style="padding:8px 10px;text-align:center;color:#ccc;font-size:12px;">—</td>';
+        const st=corFarolStatus(pct);
+        return '<td style="padding:8px 10px;text-align:center;"><span title="'+pct.toFixed(0)+'%" style="display:inline-block;width:22px;height:22px;border-radius:50%;background:'+st.cor+';color:#fff;font-size:10px;font-weight:800;line-height:22px;">'+Math.round(pct)+'</span></td>';
+      }).join('');
+      return '<tr><td style="padding:8px 10px;font-size:13px;color:#1a2e1a;white-space:nowrap;">'+l.indicador+'</td>'+cels+'</tr>';
+    }).join('');
+
+    const tabelaHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+      +'<thead><tr><th style="padding:8px 10px;font-size:10px;font-family:\'DM Mono\',monospace;color:#07583C;text-align:left;background:#f0f9f0;">Indicador</th>'+headerHTML+'</tr></thead>'
+      +'<tbody>'+linhasHTML+'</tbody></table>';
+
+    slides.push({
+      gerenciaNome: gerNome,
+      slide: { tipo:'farol', titulo:'Farol Semanal — '+gerNome, subtitulo:'% atingido por semana · 🟢 ≥'+(config.faixa_meta||90)+' 🟡 ≥'+(config.faixa_critico||80)+' 🔴 abaixo', tabelaHTML }
+    });
+  });
+  return slides;
 }
 
 function abrirApresentacao(){
@@ -3385,6 +3534,13 @@ function renderConteudoSlide(s){
       +'<div style="font-size:12px;letter-spacing:3px;color:#B3DD64;font-weight:700;margin-bottom:20px;font-family:\'DM Mono\',monospace;">VIDAS — ÍNDICE DE PREVENÇÃO</div>'
       +'<div style="font-size:34px;font-weight:800;color:#07583C;line-height:1.25;max-width:720px;">'+(s.titulo||'')+'</div>'
       +(s.subtitulo?'<div style="font-size:16px;color:#5a7a5a;margin-top:18px;max-width:600px;">'+s.subtitulo+'</div>':'')
+      +'</div>';
+  }
+  if(s.tipo==='farol'){
+    return '<div style="padding:40px 48px;height:100%;display:flex;flex-direction:column;">'
+      +'<div style="font-size:22px;font-weight:800;color:#07583C;border-bottom:3px solid #B3DD64;padding-bottom:12px;margin-bottom:6px;">'+(s.titulo||'')+'</div>'
+      +'<div style="font-size:12px;color:#5a7a5a;font-family:\'DM Mono\',monospace;margin-bottom:16px;">'+(s.subtitulo||'')+'</div>'
+      +'<div style="flex:1;overflow-y:auto;">'+(s.tabelaHTML||'')+'</div>'
       +'</div>';
   }
   const bullets=(s.bullets||[]).map(b=>'<li style="margin-bottom:14px;font-size:17px;line-height:1.5;color:#1a2e1a;">'+b+'</li>').join('');
@@ -3890,7 +4046,8 @@ ativarWakeLock();
         <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Pontuação da gerência perdida por indicador</div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;">
-        <button class="btn btn-primary" id="btn-gerar-apresentacao" onclick="gerarApresentacaoIA()" style="font-size:13px;background:#07583C;">🎤 Gerar Apresentação com IA</button>
+        <button class="btn btn-primary" id="btn-gerar-apres-ger" onclick="gerarApresentacaoIA('gerencia')" style="font-size:13px;background:#07583C;">🎤 Apresentação por Gerência</button>
+        <button class="btn btn-primary" id="btn-gerar-apres-dir" onclick="gerarApresentacaoIA('diretoria')" style="font-size:13px;background:#0a7a54;">🏢 Apresentação por Diretoria</button>
         <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')" style="font-size:13px;">✕ Fechar</button>
       </div>
     </div>

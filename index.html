@@ -3205,11 +3205,78 @@ async function abrirImpressao(){
   if(!dashData?.length){alert('Carregue o Dashboard primeiro.');return;}
   const overlay=document.getElementById('print-overlay');const content=document.getElementById('print-content');const subtitle=document.getElementById('print-subtitle');
   const periodo=document.getElementById('dash-periodo')?.value||'';
+
+  // Respeita os mesmos filtros já aplicados na tela (diretoria + gerências selecionadas)
+  const filtDir=parseInt(document.getElementById('dash-filtro-dir')?.value)||0;
+  let lista=dashData;
+  if(filtDir) lista=lista.filter(l=>l.gerencias?.diretoria_id===filtDir);
+  if(_dashGerSelecionadas.size>0) lista=lista.filter(l=>_dashGerSelecionadas.has(l.gerencia_id));
+  if(!lista.length){ alert('Nenhuma gerência para os filtros atuais.'); return; }
+
   if(subtitle)subtitle.textContent='Período: '+periodo+' · Exportado em '+new Date().toLocaleDateString('pt-BR');
-  const rows=dashData.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);return`<tr><td style="padding:10px 14px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.nota_auditoria||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td style="padding:10px 14px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td><td style="padding:10px 14px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td></tr>`;}).join('');
-  const media=dashData.reduce((s,l)=>s+(l.indice_prevencao||0),0)/dashData.length;
-  content.innerHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px"><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">MÉDIA GERAL</div><div style="font-size:30px;font-weight:800;color:${getColor(media)}">${media.toFixed(1)}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">GERÊNCIAS</div><div style="font-size:30px;font-weight:800;color:#1a73e8">${dashData.length}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">META + MÁXIMO</div><div style="font-size:30px;font-weight:800;color:#07583C">${dashData.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length}</div></div><div style="background:#fef3e0;border-radius:10px;padding:16px;border-top:3px solid #c47d0e"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">PONTO DE ATENÇÃO</div><div style="font-size:30px;font-weight:800;color:#c47d0e">${dashData.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#07583C"><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">UNIDADE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AJUSTE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">STATUS</th></tr></thead><tbody>${rows}</tbody></table>`;
+  content.innerHTML='<div class="loading"><span class="spinner"></span>Carregando indicadores...</div>';
   overlay.style.display='block';
+
+  // Busca os itens (indicadores) dos lançamentos filtrados — paginado para não bater no limite de 1000 linhas
+  const lancIds=lista.map(l=>l.id);
+  const itensPorLanc={};
+  for(let i=0;i<lancIds.length;i+=100){
+    const lote=lancIds.slice(i,i+100);
+    let from=0; const pageSize=1000;
+    while(true){
+      const{data:items,error}=await sb.from('lancamento_itens')
+        .select('*,indicadores(id,nome,tipo)')
+        .in('lancamento_id',lote)
+        .order('id',{ascending:true})
+        .range(from,from+pageSize-1);
+      if(error){console.error('Erro ao buscar itens p/ impressão:',error.message);break;}
+      (items||[]).forEach(it=>{
+        if(!itensPorLanc[it.lancamento_id]) itensPorLanc[it.lancamento_id]=[];
+        itensPorLanc[it.lancamento_id].push(it);
+      });
+      if(!items||items.length<pageSize)break;
+      from+=pageSize;
+    }
+  }
+
+  function temValor(item){
+    const tipo=item.indicadores?.tipo;
+    if(tipo==='previsto_realizado') return item.previsto!=null || item.realizado!=null;
+    if(tipo==='nota') return item.nota!=null;
+    if(tipo==='binario') return item.sim_nao!=null;
+    return item.previsto!=null || item.realizado!=null || item.nota!=null || item.sim_nao!=null;
+  }
+  function valorTexto(item){
+    const tipo=item.indicadores?.tipo;
+    if(tipo==='previsto_realizado') return 'Previsto: '+(item.previsto??'—')+' / Realizado: '+(item.realizado??'—');
+    if(tipo==='nota') return 'Nota: '+(item.nota??'—');
+    if(tipo==='binario') return item.sim_nao ? '✓ Sim' : '✗ Não';
+    return '—';
+  }
+
+  const rows=lista.map(l=>{const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);return`<tr><td style="padding:10px 14px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td><td style="padding:10px 14px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.pontuacao_gerencia||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${l.media_diretoria!=null?l.media_diretoria.toFixed(1):'—'}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;border-bottom:1px solid #e0f0e8">${(l.nota_auditoria||0).toFixed(1)}</td><td style="padding:10px 14px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td><td style="padding:10px 14px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td><td style="padding:10px 14px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td></tr>`;}).join('');
+  const media=lista.reduce((s,l)=>s+(l.indice_prevencao||0),0)/lista.length;
+
+  // Um bloco por gerência com os indicadores que têm valor preenchido (pula os vazios)
+  const blocosIndicadores=lista.map(l=>{
+    const itens=(itensPorLanc[l.id]||[]).filter(temValor);
+    if(!itens.length) return '';
+    const linhas=itens.map(it=>{
+      const pts=Number(it.pontuacao)||0;
+      const corP=pts>=90?'#07583C':pts>=70?'#c47d0e':'#d93025';
+      const comt=it.comentario?'<div style="font-size:10px;color:#c47d0e;margin-top:2px">💬 '+it.comentario+'</div>':'';
+      return `<tr><td style="padding:6px 10px;font-size:12px;border-bottom:1px solid #eee">${it.indicadores?.nome||'—'}${comt}</td><td style="padding:6px 10px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #eee">${valorTexto(it)}</td><td style="padding:6px 10px;font-size:12px;font-weight:700;color:${corP};border-bottom:1px solid #eee;text-align:right">${pts.toFixed(1)}</td></tr>`;
+    }).join('');
+    return `<div style="margin-top:18px;page-break-inside:avoid">
+      <div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:6px;padding-bottom:5px;border-bottom:2px solid #B3DD64">${l.gerencias?.nome||'—'} — Indicadores Preenchidos</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#f0f9f0"><th style="padding:6px 10px;font-size:10px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">INDICADOR</th><th style="padding:6px 10px;font-size:10px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">VALOR</th><th style="padding:6px 10px;font-size:10px;font-family:'DM Mono',monospace;color:#07583C;text-align:right">PONTUAÇÃO</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  content.innerHTML=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px"><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">MÉDIA GERAL</div><div style="font-size:30px;font-weight:800;color:${getColor(media)}">${media.toFixed(1)}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">GERÊNCIAS</div><div style="font-size:30px;font-weight:800;color:#1a73e8">${lista.length}</div></div><div style="background:#f0f9f0;border-radius:10px;padding:16px;border-top:3px solid #B3DD64"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">META + MÁXIMO</div><div style="font-size:30px;font-weight:800;color:#07583C">${lista.filter(l=>(l.indice_prevencao||0)>=(config.faixa_meta||90)).length}</div></div><div style="background:#fef3e0;border-radius:10px;padding:16px;border-top:3px solid #c47d0e"><div style="font-size:11px;color:#5a7a5a;font-weight:600;margin-bottom:6px">PONTO DE ATENÇÃO</div><div style="font-size:30px;font-weight:800;color:#c47d0e">${lista.filter(l=>(l.indice_prevencao||0)<(config.faixa_critico||80)).length}</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#07583C"><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">UNIDADE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AJUSTE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">STATUS</th></tr></thead><tbody>${rows}</tbody></table>${blocosIndicadores}`;
 }
 function fecharImpressao(){document.getElementById('print-overlay').style.display='none';}
 

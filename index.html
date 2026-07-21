@@ -3343,6 +3343,41 @@ function agregarPorDiretoria(dadosNA){
   })).sort((a,b)=>b.perdaTotal-a.perdaTotal);
 }
 
+// ── EXPORTAR DADOS PARA GERAR APRESENTAÇÃO NO CHAT COM CLAUDE ──
+async function exportarDadosParaIA(){
+  if(!_naDadosAtuais || !_naDadosAtuais.gerencias.length){
+    alert('Nenhuma gerência com indicador não atingido nos filtros atuais. Ajuste os filtros e tente novamente.');
+    return;
+  }
+  const btn=document.getElementById('btn-exportar-ia');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Preparando...';}
+  try{
+    const gerenciasParaFarol = _naDadosAtuais.gerencias.slice(0,10);
+    const farol = await coletarFarolSemanal(gerenciasParaFarol);
+
+    const exportPack = {
+      instrucoes: 'Dados exportados do Sistema IP (VIDAS — Usina Santa Adélia) para gerar uma apresentação executiva sobre indicadores de SSMA não atingidos. Peça ao Claude: "monta uma apresentação (PowerPoint) com esses dados".',
+      geradoEm: new Date().toISOString(),
+      filtros: _naDadosAtuais.filtros,
+      resumo: _naDadosAtuais.resumo,
+      gerencias: _naDadosAtuais.gerencias,
+      farolSemanal: farol,
+    };
+
+    const blob = new Blob([JSON.stringify(exportPack, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const mesLabel = (_naDadosAtuais.filtros.mes||'periodo').replace('/', '-');
+    a.download = 'dados_apresentacao_' + mesLabel + '.json';
+    a.click();
+  }catch(e){
+    console.error('Erro ao exportar dados:', e);
+    alert('❌ Não foi possível exportar: '+(e.message||'erro desconhecido'));
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='⬇️ Exportar Dados para IA';}
+  }
+}
+
 async function gerarApresentacaoIA(modo){
   modo = modo === 'diretoria' ? 'diretoria' : 'gerencia';
   if(!_naDadosAtuais || !_naDadosAtuais.gerencias.length){
@@ -3439,17 +3474,17 @@ function corFarolStatus(pct){
 }
 
 // Busca o histórico semanal para as gerências informadas (no mês já filtrado) e monta um slide de farol por gerência
-async function montarSlidesFarol(gerenciasResumo){
-  if(!gerenciasResumo.length) return [];
+// Coleta os dados brutos do farol semanal (gerência -> indicador -> semana -> % atingido)
+async function coletarFarolSemanal(gerenciasResumo){
+  if(!gerenciasResumo.length) return {};
   const mesFiltro = document.getElementById('na-filtro-mes')?.value || '';
   const nomesGer = new Set(gerenciasResumo.map(g=>g.nome));
-  // Localiza os lançamentos correspondentes (já carregados em _naLancamentos)
   const lancsAlvo = _naLancamentos.filter(l=>{
     if(!nomesGer.has(l.gerencias?.nome)) return false;
     if(mesFiltro && (l.mes||l.periodo)!==mesFiltro) return false;
     return true;
   });
-  if(!lancsAlvo.length) return [];
+  if(!lancsAlvo.length) return {};
   const lancIds = lancsAlvo.map(l=>l.id);
   const lancPorGer = {}; lancsAlvo.forEach(l=>{ lancPorGer[l.id]=l.gerencias?.nome||'—'; });
 
@@ -3459,8 +3494,8 @@ async function montarSlidesFarol(gerenciasResumo){
       .select('lancamento_id,indicador_id,previsto,realizado,nota,sim_nao,pontuacao,salvo_em,indicadores(nome,tipo)')
       .in('lancamento_id', lancIds).order('salvo_em');
     hist=data||[];
-  }catch(e){ console.warn('Sem histórico semanal disponível:', e.message); return []; }
-  if(!hist.length) return [];
+  }catch(e){ console.warn('Sem histórico semanal disponível:', e.message); return {}; }
+  if(!hist.length) return {};
 
   // Agrupa: gerência -> indicador -> semana -> última pontuação registrada naquela semana
   const porGer = {};
@@ -3480,7 +3515,12 @@ async function montarSlidesFarol(gerenciasResumo){
     if(!porGer[gerNome][indNome]) porGer[gerNome][indNome]={};
     porGer[gerNome][indNome][semana]=pct; // sobrescreve com o snapshot mais recente daquela semana
   });
+  return porGer;
+}
 
+async function montarSlidesFarol(gerenciasResumo){
+  const porGer = await coletarFarolSemanal(gerenciasResumo);
+  if(!Object.keys(porGer).length) return [];
   const slides=[];
   Object.keys(porGer).forEach(gerNome=>{
     const indicadoresMap = porGer[gerNome];
@@ -3853,6 +3893,8 @@ function renderModalNA() {
         pontuacaoAtingida: parseFloat(it.pont.toFixed(1)),
         perdaPontos: it.perdaPont,
         temEvidencia: !!it.evidenciaUrl,
+        evidenciaUrl: it.evidenciaUrl || null,
+        evidenciaNome: it.evidenciaNome || null,
         comentario: it.comentario || null,
       })),
     })),
@@ -4062,7 +4104,8 @@ ativarWakeLock();
         <div style="font-size:20px;font-weight:800;color:#07583C;">⚠️ Indicadores Não Atingidos por Gerência</div>
         <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Pontuação da gerência perdida por indicador</div>
       </div>
-      <div style="display:flex;gap:10px;align-items:center;">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-secondary" id="btn-exportar-ia" onclick="exportarDadosParaIA()" style="font-size:13px;">⬇️ Exportar Dados para IA</button>
         <button class="btn btn-primary" id="btn-gerar-apres-ger" onclick="gerarApresentacaoIA('gerencia')" style="font-size:13px;background:#07583C;">🎤 Apresentação por Gerência</button>
         <button class="btn btn-primary" id="btn-gerar-apres-dir" onclick="gerarApresentacaoIA('diretoria')" style="font-size:13px;background:#0a7a54;">🏢 Apresentação por Diretoria</button>
         <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')" style="font-size:13px;">✕ Fechar</button>

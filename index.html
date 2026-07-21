@@ -3601,23 +3601,33 @@ async function carregarDadosNA() {
     .limit(1000);
   _naLancamentos = lancs || [];
 
-  // Busca itens de lançamento com indicadores
+  // Busca itens de lançamento com indicadores — paginado (o Supabase corta em 1000 linhas por padrão,
+  // e o total de itens facilmente passa disso com muitos lançamentos)
   const lancIds = _naLancamentos.map(l => l.id);
   _naItens = {};
   if (lancIds.length) {
     for (let i = 0; i < lancIds.length; i += 100) {
       const lote = lancIds.slice(i, i + 100);
-      const { data: items } = await sb.from('lancamento_itens')
-        .select('*,indicadores(id,nome,tipo)')
-        .in('lancamento_id', lote);
-      (items || []).forEach(it => {
-        if (!_naItens[it.lancamento_id]) _naItens[it.lancamento_id] = [];
-        _naItens[it.lancamento_id].push(it);
-      });
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: items, error } = await sb.from('lancamento_itens')
+          .select('*,indicadores(id,nome,tipo)')
+          .in('lancamento_id', lote)
+          .order('id', { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) { console.error('Erro ao buscar lancamento_itens:', error.message); break; }
+        (items || []).forEach(it => {
+          if (!_naItens[it.lancamento_id]) _naItens[it.lancamento_id] = [];
+          _naItens[it.lancamento_id].push(it);
+        });
+        if (!items || items.length < pageSize) break;
+        from += pageSize;
+      }
     }
   }
 
-  // Busca pesos de ind_gerencia_safra para todas as gerências/safras presentes
+  // Busca pesos de ind_gerencia_safra para todas as gerências/safras presentes — também paginado
   _naPesos = {};
   // Coleta pares únicos gerencia_id + safra_id
   const pares = [...new Map(_naLancamentos.map(l => [`${l.gerencia_id}_${l.safra_id}`, {gerId: l.gerencia_id, safraId: l.safra_id}])).values()];
@@ -3626,16 +3636,23 @@ async function carregarDadosNA() {
     const gerIds = [...new Set(lote.map(p => p.gerId).filter(Boolean))];
     const safIds = [...new Set(lote.map(p => p.safraId).filter(Boolean))];
     if (!gerIds.length) continue;
-    let q = sb.from('ind_gerencia_safra')
-      .select('gerencia_id,safra_id,indicador_id,peso')
-      .eq('ativo', true)
-      .in('gerencia_id', gerIds);
-    if (safIds.length) q = q.in('safra_id', safIds);
-    const { data: pesos } = await q;
-    (pesos || []).forEach(p => {
-      const key = `${p.gerencia_id}_${p.safra_id}_${p.indicador_id}`;
-      _naPesos[key] = p.peso;
-    });
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      let q = sb.from('ind_gerencia_safra')
+        .select('gerencia_id,safra_id,indicador_id,peso')
+        .eq('ativo', true)
+        .in('gerencia_id', gerIds);
+      if (safIds.length) q = q.in('safra_id', safIds);
+      const { data: pesos, error } = await q.range(from, from + pageSize - 1);
+      if (error) { console.error('Erro ao buscar ind_gerencia_safra:', error.message); break; }
+      (pesos || []).forEach(p => {
+        const key = `${p.gerencia_id}_${p.safra_id}_${p.indicador_id}`;
+        _naPesos[key] = p.peso;
+      });
+      if (!pesos || pesos.length < pageSize) break;
+      from += pageSize;
+    }
   }
 
   // Preenche filtro de meses disponíveis

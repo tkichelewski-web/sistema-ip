@@ -185,8 +185,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
   </header>
 
   <div class="tabs" id="tabs-bar">
-    <div class="tab active" onclick="showTab('dashboard')" id="tab-dashboard">Dashboard</div>
-    <div class="tab" onclick="showTab('acum')" id="tab-acum">Acumulado Safra</div>
+    <div class="tab active" onclick="showTab('dashboard')" id="tab-dashboard">Apuração do Mês</div>
+    <div class="tab" onclick="showTab('acum')" id="tab-acum">Desempenho da Safra</div>
     <div class="tab" onclick="showTab('ranking')" id="tab-ranking">Ranking</div>
     <div class="tab" onclick="showTab('lancar')" id="tab-lancar">Lançar Dados</div>
     <div class="tab" onclick="showTab('historico')" id="tab-historico">Histórico</div>
@@ -331,8 +331,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <!-- RANKING -->
     <div class="section" id="sec-ranking">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-        <div class="table-wrap"><div class="table-header"><span class="table-title">🏆 Gerências</span></div><div id="rank-gerencias"><div class="loading">Abra o Dashboard e selecione um período primeiro.</div></div></div>
-        <div class="table-wrap"><div class="table-header"><span class="table-title">📊 Diretorias</span></div><div id="rank-diretorias"><div class="loading">Abra o Dashboard e selecione um período primeiro.</div></div></div>
+        <div class="table-wrap"><div class="table-header"><span class="table-title">🏆 Gerências</span></div><div id="rank-gerencias"><div class="loading">Abra a Apuração do Mês e selecione um período primeiro.</div></div></div>
+        <div class="table-wrap"><div class="table-header"><span class="table-title">📊 Diretorias</span></div><div id="rank-diretorias"><div class="loading">Abra a Apuração do Mês e selecione um período primeiro.</div></div></div>
       </div>
     </div>
 
@@ -2109,7 +2109,7 @@ function renderDashTable(){
 // ── RANKING ───────────────────────────────────────────────────
 function renderRanking(){
   if(!dashData?.length){
-    ['rank-gerencias','rank-diretorias'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='<div class="loading">Abra o Dashboard e selecione um período primeiro.</div>';});return;
+    ['rank-gerencias','rank-diretorias'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='<div class="loading">Abra a Apuração do Mês e selecione um período primeiro.</div>';});return;
   }
   const sorted=[...dashData].sort((a,b)=>(b.indice_prevencao||0)-(a.indice_prevencao||0));
   const medals=['gold','silver','bronze'];
@@ -2286,7 +2286,7 @@ async function salvarLancamento(){
     if(btn && btn.disabled){
       btn.disabled=false;
       btn.textContent='✓ Salvar Lançamento';
-      alert('⚠️ O salvamento demorou muito e pode ter travado.\n\nVerifique sua conexão e tente novamente.\n(Se o registro aparece no Dashboard, foi salvo com sucesso.)');
+      alert('⚠️ O salvamento demorou muito e pode ter travado.\n\nVerifique sua conexão e tente novamente.\n(Se o registro aparece na Apuração do Mês, foi salvo com sucesso.)');
     }
   }, 45000);
 

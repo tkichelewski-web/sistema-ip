@@ -2129,23 +2129,12 @@ function renderRanking(){
 }
 
 // ── LANÇAR ────────────────────────────────────────────────────
-async function renderIndTable(){
-  const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
-  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
-  const tw=document.getElementById('ind-table-wrap');
-  if(!gerId){if(tw)tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p>';return;}
-  _cachedGerId=null;_cachedSafraId=null;_cachedIndsGer=[];
-  const indsGer=await getIndsGerencia(gerId,safraId);
-  _cachedIndsGer=indsGer;_cachedGerId=gerId;_cachedSafraId=safraId;
-  if(!indsGer.length){
-    if(tw)tw.innerHTML='<div class="alert alert-warn">⚠️ Nenhum indicador configurado para esta gerência nesta safra. Vá em <b>Gerências → ⚙️ Indicadores</b> para configurar.</div>';
-    return;
-  }
-  const totalPeso=indsGer.reduce((s,i)=>s+(i.peso||0),0);
-  const aviso=totalPeso!==100?'<div class="alert alert-warn">⚠️ Soma dos pesos: <b>'+totalPeso+'%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>':'';
+// Monta o HTML da tabela de indicadores agrupada por bloco (mesmo padrão visual da tela "Indicadores Cadastrados")
+function montarHTMLIndicadoresAgrupados(indsGer){
+  const BLOCOS_ORD=['Ferramentas de Prevenção', 'Tratamento de Desvios, Incidentes e Ocorrências', 'Requisito Legal', 'Emergência', 'Comitês Operacionais', 'Inspeções e Auditorias', 'Meio Ambiente', 'Outros'];
+  const ICONS_RI={'Ferramentas de Prevenção': '🛡️', 'Tratamento de Desvios, Incidentes e Ocorrências': '⚠️', 'Requisito Legal': '⚖️', 'Emergência': '🚨', 'Comitês Operacionais': '👥', 'Inspeções e Auditorias': '🔍', 'Meio Ambiente': '🌿', 'Outros': '📋'};
 
-  // Tabela simples sem agrupamento por blocos
-  const rows=indsGer.map(ind=>{
+  function linhaIndicador(ind){
     const tipo=ind.tipo;
     const tipoTag=tipo==='previsto_realizado'
       ?'<span class="badge badge-blue" style="font-size:10px">Prev×Real</span>'
@@ -2167,11 +2156,53 @@ async function renderIndTable(){
       +'<td><input type="text" id="coment_'+ind.id+'" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td>'
       +'<td>'+renderCelulaEvidencia(ind.id)+'</td>'
       +'</tr>';
-  }).join('');
+  }
 
-  if(tw)tw.innerHTML=aviso+'<div style="overflow-x:auto"><table class="ind-table"><thead><tr>'
-    +'<th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th><th>Comentário</th><th>Evidência</th>'
-    +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+  function blocoHTML(nome,icon,inds){
+    return '<div style="margin-bottom:20px">'
+      +'<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:linear-gradient(90deg,#07583C,#0a7a54);border-radius:8px 8px 0 0">'
+      +'<span style="font-size:16px">'+icon+'</span>'
+      +'<span style="font-weight:700;color:#fff;font-size:13px;letter-spacing:.5px">'+nome.toUpperCase()+'</span>'
+      +'<span style="margin-left:auto;background:rgba(255,255,255,.2);color:#B3DD64;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">'+inds.length+' indicador'+(inds.length>1?'es':'')+'</span>'
+      +'</div>'
+      +'<div style="overflow-x:auto"><table class="ind-table" style="border:1px solid #e0f0e8;border-top:none"><thead><tr>'
+      +'<th>Indicador</th><th>Tipo</th><th>Peso</th><th>Previsto</th><th>Realizado / Nota</th><th>Pont.</th><th>Comentário</th><th>Evidência</th>'
+      +'</tr></thead><tbody>'+inds.map(linhaIndicador).join('')+'</tbody></table></div>'
+      +'</div>';
+  }
+
+  const grupos={};
+  indsGer.forEach(ind=>{const b=ind.bloco||'Outros';if(!grupos[b])grupos[b]=[];grupos[b].push(ind);});
+  let corpoHTML='';
+  BLOCOS_ORD.forEach(bloco=>{
+    const inds=grupos[bloco]; if(!inds||!inds.length) return;
+    corpoHTML+=blocoHTML(bloco, ICONS_RI[bloco]||'📋', inds);
+  });
+  // Indicadores com bloco fora da lista padrão (segurança)
+  const blocosCobertos=new Set(BLOCOS_ORD);
+  Object.keys(grupos).forEach(b=>{
+    if(blocosCobertos.has(b)) return;
+    corpoHTML+=blocoHTML(b, '📋', grupos[b]);
+  });
+  return corpoHTML;
+}
+
+async function renderIndTable(){
+  const gerId=parseInt(document.getElementById('sel-gerencia')?.value)||0;
+  const safraId=parseInt(document.getElementById('sel-safra')?.value)||0;
+  const tw=document.getElementById('ind-table-wrap');
+  if(!gerId){if(tw)tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Selecione uma gerência para ver os indicadores.</p>';return;}
+  _cachedGerId=null;_cachedSafraId=null;_cachedIndsGer=[];
+  const indsGer=await getIndsGerencia(gerId,safraId);
+  _cachedIndsGer=indsGer;_cachedGerId=gerId;_cachedSafraId=safraId;
+  if(!indsGer.length){
+    if(tw)tw.innerHTML='<div class="alert alert-warn">⚠️ Nenhum indicador configurado para esta gerência nesta safra. Vá em <b>Gerências → ⚙️ Indicadores</b> para configurar.</div>';
+    return;
+  }
+  const totalPeso=indsGer.reduce((s,i)=>s+(i.peso||0),0);
+  const aviso=totalPeso!==100?'<div class="alert alert-warn">⚠️ Soma dos pesos: <b>'+totalPeso+'%</b>. Deve somar 100%. Ajuste na aba Indicadores.</div>':'';
+
+  if(tw)tw.innerHTML=aviso+montarHTMLIndicadoresAgrupados(indsGer);
 
   // Carrega evidências já anexadas (se o lançamento já existir para gerência+mês)
   carregarEvidenciasExistentes(gerId);
@@ -2588,18 +2619,12 @@ async function editarLancamento(lancId) {
   const indsGer=await getIndsGerencia(gerId, safraId);
   _cachedIndsGer=indsGer; _cachedGerId=gerId; _cachedSafraId=safraId;
 
-  // Renderiza tabela de indicadores sem chamar onGerenciaChange
+  // Renderiza tabela de indicadores agrupada por bloco, sem chamar onGerenciaChange
   if(tw){
     if(!indsGer.length){
       tw.innerHTML='<p style="color:var(--muted);font-size:13px;">Nenhum indicador configurado para esta gerência/safra.</p>';
     } else {
-      tw.innerHTML='<table><thead><tr><th>Indicador</th><th>Tipo</th><th>Peso</th><th colspan="2">Valor</th><th>Pontuação</th><th>Comentário</th><th>Evidência</th></tr></thead><tbody>'+
-        indsGer.map(ind=>{
-          if(ind.tipo==='previsto_realizado')return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-blue" style="font-size:10px">Prev×Real</span></td><td class="mono">${ind.peso}%</td><td><input type="number" id="prev_${ind.id}" min="0" placeholder="Previsto" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td><input type="number" id="real_${ind.id}" min="0" placeholder="Realizado" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:90px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td><td>${renderCelulaEvidencia(ind.id)}</td></tr>`;
-          if(ind.tipo==='nota')return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-green" style="font-size:10px">Nota</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><input type="number" id="nota_${ind.id}" min="0" max="100" placeholder="0–100" oninput="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td><td>${renderCelulaEvidencia(ind.id)}</td></tr>`;
-          return`<tr data-ind-nome="${ind.nome}"><td><b>${ind.nome}</b></td><td><span class="badge badge-yellow" style="font-size:10px">Sim/Não</span></td><td class="mono">${ind.peso}%</td><td colspan="2"><select id="bin_${ind.id}" onchange="calcPreview()" style="padding:4px 7px;font-size:12px;width:120px"><option value="">—</option><option value="sim">✓ Sim</option><option value="nao">✗ Não</option></select></td><td id="pont_${ind.id}" class="mono" style="color:var(--muted)">—</td><td><input type="text" id="coment_${ind.id}" placeholder="Comentário" style="padding:4px 7px;font-size:11px;width:150px"></td><td>${renderCelulaEvidencia(ind.id)}</td></tr>`;
-        }).join('')+
-      '</tbody></table>';
+      tw.innerHTML=montarHTMLIndicadoresAgrupados(indsGer);
     }
   }
 
@@ -3316,7 +3341,7 @@ async function getIndsGerencia(gerId, safraId) {
   if(!gerId) return [];
   try {
     let q = sb.from('ind_gerencia_safra')
-      .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+      .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte, bloco)')
       .eq('gerencia_id', gerId)
       .eq('ativo', true);
     if(safraId) q = q.eq('safra_id', safraId);
@@ -3328,7 +3353,7 @@ async function getIndsGerencia(gerId, safraId) {
     if(safraId) {
       const { data: cfgAll } = await withTimeout(
         sb.from('ind_gerencia_safra')
-          .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte)')
+          .select('indicador_id, peso, ativo, indicadores(id, nome, tipo, fonte, bloco)')
           .eq('gerencia_id', gerId).eq('ativo', true),
         10000, 'getIndsGerencia fallback'
       );

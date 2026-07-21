@@ -3292,7 +3292,8 @@ async function abrirImpressao(){
     </div>`;
   }).join('');
 
-  content.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#07583C"><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">GERÊNCIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">UNIDADE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">DIRETORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">PONT.GER.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">MÉD.DIR.</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AUDITORIA</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">AJUSTE</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">ÍNDICE IP</th><th style="padding:10px 14px;color:#fff;text-align:left;font-size:11px">STATUS</th></tr></thead><tbody>${rows}</tbody></table>${blocosIndicadores}`;
+  const thStyle='padding:8px 14px;font-size:10px;font-family:\'DM Mono\',monospace;color:#07583C;text-align:left;letter-spacing:0.5px;';
+  content.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f0f9f0"><th style="${thStyle}">GERÊNCIA</th><th style="${thStyle}">UNIDADE</th><th style="${thStyle}">DIRETORIA</th><th style="${thStyle}">PONT.GER.</th><th style="${thStyle}">MÉD.DIR.</th><th style="${thStyle}">AUDITORIA</th><th style="${thStyle}">AJUSTE</th><th style="${thStyle}">ÍNDICE IP</th><th style="${thStyle}">STATUS</th></tr></thead><tbody>${rows}</tbody></table>${blocosIndicadores}`;
 }
 function fecharImpressao(){document.getElementById('print-overlay').style.display='none';}
 

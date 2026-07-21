@@ -3279,7 +3279,7 @@ async function abrirImpressao(){
     if(!itens.length) return '';
     const linhas=itens.map(it=>{
       const pts=Number(it.pontuacao)||0;
-      const corP=pts>=90?'#07583C':pts>=70?'#c47d0e':'#d93025';
+      const corP=pts>=100?'#07583C':pts>=80?'#c47d0e':'#d93025';
       const comt=it.comentario?'<div style="font-size:10px;color:#c47d0e;margin-top:2px">💬 '+it.comentario+'</div>':'';
       return `<tr><td style="padding:6px 10px;font-size:12px;border-bottom:1px solid #eee">${it.indicadores?.nome||'—'}${comt}</td><td style="padding:6px 10px;font-size:12px;color:#5a7a5a;border-bottom:1px solid #eee">${valorTexto(it)}</td><td style="padding:6px 10px;font-size:12px;font-weight:700;color:${corP};border-bottom:1px solid #eee;text-align:right">${pts.toFixed(1)}</td></tr>`;
     }).join('');
@@ -4483,6 +4483,7 @@ ativarWakeLock();
 
 <style>
 @media print {
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
   body > *:not(#print-overlay):not(#apresentacao-print-area){display:none !important;}
   #print-overlay{position:static !important;padding:0 !important;}
   #print-overlay > div > div:first-child button{display:none !important;}

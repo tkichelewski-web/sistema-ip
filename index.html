@@ -3344,6 +3344,63 @@ function agregarPorDiretoria(dadosNA){
 }
 
 // ── EXPORTAR DADOS PARA GERAR APRESENTAÇÃO NO CHAT COM CLAUDE ──
+// ── SLIDES COM EVIDÊNCIA (sem IA — montado direto dos dados) ───
+function gerarSlidesComEvidencia(){
+  if(!_naDadosAtuais || !_naDadosAtuais.gerencias.length){
+    alert('Nenhuma gerência com indicador não atingido nos filtros atuais. Ajuste os filtros e tente novamente.');
+    return;
+  }
+  const f = _naDadosAtuais.filtros;
+  const r = _naDadosAtuais.resumo;
+  const slides = [];
+
+  slides.push({
+    tipo: 'capa',
+    titulo: 'Indicadores Não Atingidos — Evidências',
+    subtitulo: f.diretoria + ' · ' + f.gerencia + ' · ' + f.mes
+  });
+
+  slides.push({
+    tipo: 'resumo',
+    titulo: 'Resumo',
+    bullets: [
+      r.totalGerenciasComPerda + ' gerência(s) com perda de pontuação, de ' + r.totalLancamentos + ' lançamento(s)',
+      'Total perdido: ' + r.totalPerdaGlobal + ' pontos de pontuação da gerência',
+      'Pontuação média das gerências: ' + r.mediaGerPont,
+      r.totalIndicadoresAvaliados + ' indicadores avaliados no período'
+    ]
+  });
+
+  _naDadosAtuais.gerencias.forEach(g=>{
+    g.indicadoresNaoAtingidos.forEach(it=>{
+      const url = it.evidenciaUrl || '';
+      const isPdf = url.toLowerCase().endsWith('.pdf');
+      slides.push({
+        tipo: 'evidencia',
+        gerenciaLabel: g.nome + (g.unidade&&g.unidade!=='—'?' · '+g.unidade:'') + ' · ' + g.diretoria + ' · ' + g.mes,
+        indicador: it.indicador,
+        pctLabel: it.pontuacaoAtingida.toFixed(0) + '%',
+        corPct: it.pontuacaoAtingida>=80 ? '#c47d0e' : '#d93025',
+        perdaLabel: it.perdaPontos.toFixed(2),
+        comentario: it.comentario,
+        imagemUrl: (!isPdf && url) ? url : null,
+        pdfUrl: isPdf ? url : null,
+        pdfNome: it.evidenciaNome,
+      });
+    });
+  });
+
+  slides.push({
+    tipo: 'fechamento',
+    titulo: 'Fim do Relatório',
+    bullets: ['Gerado automaticamente pelo Sistema IP — VIDAS', 'Usina Santa Adélia · Área de SSMA']
+  });
+
+  _apresentacaoSlides = slides;
+  _apresentacaoSlideAtual = 0;
+  abrirApresentacao();
+}
+
 async function exportarDadosParaIA(){
   if(!_naDadosAtuais || !_naDadosAtuais.gerencias.length){
     alert('Nenhuma gerência com indicador não atingido nos filtros atuais. Ajuste os filtros e tente novamente.');
@@ -3583,6 +3640,25 @@ function renderConteudoSlide(s){
       +'<div style="flex:1;overflow-y:auto;">'+(s.tabelaHTML||'')+'</div>'
       +'</div>';
   }
+  if(s.tipo==='evidencia'){
+    const ladoImagem = s.imagemUrl
+      ? '<img src="'+s.imagemUrl+'" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />'
+      : s.pdfUrl
+        ? '<a href="'+s.pdfUrl+'" target="_blank" style="display:flex;flex-direction:column;align-items:center;gap:10px;color:#1a73e8;text-decoration:none;"><div style="font-size:60px;">📄</div><div style="font-size:14px;font-weight:600;max-width:220px;text-align:center;word-break:break-word;">'+(s.pdfNome||'Ver PDF anexado')+'</div></a>'
+        : '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;color:#d93025;"><div style="font-size:50px;">⚠️</div><div style="font-size:15px;font-weight:700;">Sem evidência anexada</div></div>';
+    return '<div style="display:grid;grid-template-columns:1.3fr 1fr;height:100%;">'
+      +'<div style="background:#f4f6f4;display:flex;align-items:center;justify-content:center;padding:24px;overflow:hidden;">'+ladoImagem+'</div>'
+      +'<div style="padding:36px 32px;display:flex;flex-direction:column;overflow-y:auto;">'
+        +'<div style="font-size:11px;color:#5a7a5a;font-family:\'DM Mono\',monospace;text-transform:uppercase;letter-spacing:1px;">'+(s.gerenciaLabel||'')+'</div>'
+        +'<div style="font-size:22px;font-weight:800;color:#07583C;margin-top:6px;margin-bottom:18px;">'+(s.indicador||'')+'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:16px;">'
+          +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">% ATINGIDO</div><div style="font-size:28px;font-weight:800;color:'+(s.corPct||'#d93025')+';">'+(s.pctLabel||'')+'</div></div>'
+          +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">PONTOS PERDIDOS</div><div style="font-size:22px;font-weight:800;color:#d93025;">-'+(s.perdaLabel||'')+'</div></div>'
+          +(s.comentario?'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">COMENTÁRIO</div><div style="font-size:13px;color:#1a2e1a;margin-top:4px;line-height:1.4;">'+s.comentario+'</div></div>':'')
+        +'</div>'
+      +'</div>'
+      +'</div>';
+  }
   const bullets=(s.bullets||[]).map(b=>'<li style="margin-bottom:14px;font-size:17px;line-height:1.5;color:#1a2e1a;">'+b+'</li>').join('');
   return '<div style="padding:44px 54px;height:100%;display:flex;flex-direction:column;">'
     +'<div style="font-size:24px;font-weight:800;color:#07583C;border-bottom:3px solid #B3DD64;padding-bottom:14px;margin-bottom:6px;">'+(s.titulo||'')+'</div>'
@@ -3627,7 +3703,21 @@ function imprimirApresentacao(){
   area.innerHTML=_apresentacaoSlides.map(function(s){
     return '<div class="apres-print-slide" style="width:100%;min-height:90vh;border:1px solid #e0f0e8;border-radius:10px;margin-bottom:18px;box-sizing:border-box;">'+renderConteudoSlide(s)+'</div>';
   }).join('');
-  window.print();
+  const imgs = area.querySelectorAll('img');
+  if(!imgs.length){ window.print(); return; }
+  let carregadas=0;
+  const total=imgs.length;
+  let impresso=false;
+  const tentarImprimir=()=>{
+    carregadas++;
+    if(carregadas>=total && !impresso){ impresso=true; window.print(); }
+  };
+  imgs.forEach(img=>{
+    if(img.complete) tentarImprimir();
+    else { img.onload=tentarImprimir; img.onerror=tentarImprimir; }
+  });
+  // Segurança: se alguma imagem travar (ex.: link quebrado), imprime mesmo assim após 4s
+  setTimeout(()=>{ if(!impresso){ impresso=true; window.print(); } }, 4000);
 }
 
 async function carregarDadosNA() {
@@ -4106,6 +4196,7 @@ ativarWakeLock();
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <button class="btn btn-secondary" id="btn-exportar-ia" onclick="exportarDadosParaIA()" style="font-size:13px;">⬇️ Exportar Dados para IA</button>
+        <button class="btn btn-primary" id="btn-slides-evidencia" onclick="gerarSlidesComEvidencia()" style="font-size:13px;background:#1a73e8;">🖼️ Slides com Evidências</button>
         <button class="btn btn-primary" id="btn-gerar-apres-ger" onclick="gerarApresentacaoIA('gerencia')" style="font-size:13px;background:#07583C;">🎤 Apresentação por Gerência</button>
         <button class="btn btn-primary" id="btn-gerar-apres-dir" onclick="gerarApresentacaoIA('diretoria')" style="font-size:13px;background:#0a7a54;">🏢 Apresentação por Diretoria</button>
         <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')" style="font-size:13px;">✕ Fechar</button>

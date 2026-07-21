@@ -3354,24 +3354,54 @@ function gerarSlidesComEvidencia(){
   const r = _naDadosAtuais.resumo;
   const slides = [];
 
+  // Só mostra no subtítulo o que realmente foi filtrado (ignora "Todas as..." / "Todos os...")
+  const partesFiltro = [f.diretoria, f.gerencia, f.mes].filter(v => v && !/^(Todas|Todos)\s/.test(v));
   slides.push({
     tipo: 'capa',
     titulo: 'Indicadores Não Atingidos — Evidências',
-    subtitulo: f.diretoria + ' · ' + f.gerencia + ' · ' + f.mes
+    subtitulo: partesFiltro.join(' · ') || 'Todos os períodos e unidades'
   });
 
-  slides.push({
-    tipo: 'resumo',
-    titulo: 'Resumo',
-    bullets: [
-      r.totalGerenciasComPerda + ' gerência(s) com perda de pontuação, de ' + r.totalLancamentos + ' lançamento(s)',
-      'Total perdido: ' + r.totalPerdaGlobal + ' pontos de pontuação da gerência',
-      'Pontuação média das gerências: ' + r.mediaGerPont,
-      r.totalIndicadoresAvaliados + ' indicadores avaliados no período'
-    ]
-  });
+  // Resumo geral — mais direto quando é 1 gerência só, agregado quando é mais de uma
+  if(_naDadosAtuais.gerencias.length === 1){
+    const g = _naDadosAtuais.gerencias[0];
+    slides.push({
+      tipo: 'resumo',
+      titulo: 'Resumo — ' + g.nome,
+      bullets: [
+        'Pontuação dos indicadores: ' + g.pontuacaoGerencia,
+        'Deflator / Ajuste (acidentes, regras): ' + (g.ajustePontos>=0?'+':'') + g.ajustePontos + ' pontos',
+        'Índice de Prevenção final: ' + (g.indicePrevencao!=null ? g.indicePrevencao : '—'),
+        g.indicadoresNaoAtingidos.length + ' indicador(es) não atingido(s), perdendo ' + g.perdaTotal + ' pontos na pontuação da gerência'
+      ]
+    });
+  } else {
+    slides.push({
+      tipo: 'resumo',
+      titulo: 'Resumo',
+      bullets: [
+        r.totalGerenciasComPerda + ' gerência(s) com perda de pontuação, de ' + r.totalLancamentos + ' lançamento(s) no período',
+        'Total perdido: ' + r.totalPerdaGlobal + ' pontos de pontuação da gerência (somado entre as gerências)',
+        'Pontuação média dos indicadores entre as gerências: ' + r.mediaGerPont,
+        r.totalIndicadoresAvaliados + ' indicadores avaliados no período'
+      ]
+    });
+  }
 
   _naDadosAtuais.gerencias.forEach(g=>{
+    // Slide de resumo da gerência: pontuação, deflator e índice final — pro líder entender a nota completa
+    slides.push({
+      tipo: 'resumo',
+      titulo: g.nome + ' — Pontuação Final',
+      subtitulo: (g.unidade&&g.unidade!=='—'?g.unidade+' · ':'') + g.diretoria + ' · ' + g.mes,
+      bullets: [
+        'Pontuação dos indicadores: ' + g.pontuacaoGerencia,
+        'Deflator / Ajuste (acidentes, incidentes, regras que salvam vidas): ' + (g.ajustePontos>=0?'+':'') + g.ajustePontos + ' pontos',
+        'Nota de auditoria: ' + g.notaAuditoria + (g.mediaDiretoria!=null ? ' · Média da diretoria: ' + g.mediaDiretoria : ''),
+        'Índice de Prevenção final: ' + (g.indicePrevencao!=null ? g.indicePrevencao : '—'),
+        g.indicadoresNaoAtingidos.length + ' indicador(es) não atingido(s) (perda de ' + g.perdaTotal + ' pontos na pontuação da gerência)'
+      ]
+    });
     g.indicadoresNaoAtingidos.forEach(it=>{
       const url = it.evidenciaUrl || '';
       const isPdf = url.toLowerCase().endsWith('.pdf');
@@ -3892,6 +3922,10 @@ function renderModalNA() {
         diretoria: lanc.gerencias?.diretorias?.nome || '—',
         mes: mesLanc,
         pontGer: pontGer,
+        ajustePontos: lanc.ajuste_pontos ?? 0,
+        mediaDiretoria: lanc.media_diretoria,
+        notaAuditoria: lanc.nota_auditoria ?? 0,
+        indicePrevencao: lanc.indice_prevencao ?? null,
         perdaTotalGer: itensComPerda.reduce((s, i) => s + i.perdaPont, 0),
         itensComPerda: itensComPerda.sort((a,b) => b.perdaPont - a.perdaPont),
       });
@@ -3977,6 +4011,10 @@ function renderModalNA() {
     gerencias: gersOrdenadas.map(g => ({
       nome: g.gerencia, unidade: g.unidade, diretoria: g.diretoria, mes: fmtMes(g.mes),
       pontuacaoGerencia: parseFloat(g.pontGer.toFixed(1)),
+      ajustePontos: parseFloat((g.ajustePontos||0).toFixed(1)),
+      notaAuditoria: parseFloat((g.notaAuditoria||0).toFixed(1)),
+      mediaDiretoria: g.mediaDiretoria!=null ? parseFloat(g.mediaDiretoria.toFixed(1)) : null,
+      indicePrevencao: g.indicePrevencao!=null ? parseFloat(g.indicePrevencao.toFixed(1)) : null,
       perdaTotal: parseFloat(g.perdaTotalGer.toFixed(2)),
       indicadoresNaoAtingidos: g.itensComPerda.map(it => ({
         indicador: it.indicador,
@@ -4195,10 +4233,7 @@ ativarWakeLock();
         <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Pontuação da gerência perdida por indicador</div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <button class="btn btn-secondary" id="btn-exportar-ia" onclick="exportarDadosParaIA()" style="font-size:13px;">⬇️ Exportar Dados para IA</button>
         <button class="btn btn-primary" id="btn-slides-evidencia" onclick="gerarSlidesComEvidencia()" style="font-size:13px;background:#1a73e8;">🖼️ Slides com Evidências</button>
-        <button class="btn btn-primary" id="btn-gerar-apres-ger" onclick="gerarApresentacaoIA('gerencia')" style="font-size:13px;background:#07583C;">🎤 Apresentação por Gerência</button>
-        <button class="btn btn-primary" id="btn-gerar-apres-dir" onclick="gerarApresentacaoIA('diretoria')" style="font-size:13px;background:#0a7a54;">🏢 Apresentação por Diretoria</button>
         <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')" style="font-size:13px;">✕ Fechar</button>
       </div>
     </div>

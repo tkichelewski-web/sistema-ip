@@ -3254,21 +3254,31 @@ async function abrirImpressao(){
     return '—';
   }
 
+  const wPG=Number(config?.peso_gerencia)||0.5;
+  const wMD=Number(config?.peso_diretoria)||0.2;
+  const wAUD=Number(config?.peso_auditoria)||0.3;
+
   const rows=lista.map(l=>{
     const idx=l.indice_prevencao||0,st=getStatus(idx),cor=getColor(idx);
-    const pg=l.pontuacao_gerencia||0, corPG=getColor(pg);
-    const md=l.media_diretoria, corMD=md!=null?getColor(md):'#1a2e1a';
-    const aud=l.nota_auditoria||0, corAud=getColor(aud);
-    return `<tr>
-      <td style="padding:10px 14px;font-size:13px;font-weight:800;color:#07583C;background:#f0f9f0;border-bottom:1px solid #e0f0e8">${l.gerencias?.nome||'—'}</td>
-      <td style="padding:10px 14px;font-size:12px;font-weight:700;color:#07583C;background:#f0f9f0;border-bottom:1px solid #e0f0e8">${l.gerencias?.unidades?.nome||'—'}</td>
-      <td style="padding:10px 14px;font-size:12px;font-weight:700;color:#07583C;background:#f0f9f0;border-bottom:1px solid #e0f0e8">${l.gerencias?.diretorias?.nome||'—'}</td>
-      <td style="padding:10px 14px;font-size:13px;font-family:monospace;font-weight:700;color:${corPG};border-bottom:1px solid #e0f0e8">${pg.toFixed(1)}</td>
-      <td style="padding:10px 14px;font-size:13px;font-family:monospace;font-weight:700;color:${corMD};border-bottom:1px solid #e0f0e8">${md!=null?md.toFixed(1):'—'}</td>
-      <td style="padding:10px 14px;font-size:13px;font-family:monospace;font-weight:700;color:${corAud};border-bottom:1px solid #e0f0e8">${aud.toFixed(1)}</td>
-      <td style="padding:10px 14px;font-size:13px;font-family:monospace;color:${(l.ajuste_pontos||0)>=0?'#07583C':'#d93025'};border-bottom:1px solid #e0f0e8">${(l.ajuste_pontos||0)>0?'+':''}${l.ajuste_pontos||0}</td>
-      <td style="padding:10px 14px;font-size:18px;font-weight:800;font-family:monospace;color:${cor};border-bottom:1px solid #e0f0e8">${idx.toFixed(1)}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid #e0f0e8"><span style="background:${cor}22;color:${cor};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700">${st.label}</span></td>
+    const aj=l.ajuste_pontos||0;
+    const pg=l.pontuacao_gerencia||0;
+    const md=l.media_diretoria;
+    const aud=l.nota_auditoria||0;
+    const mdVal=md!=null?md:pg;
+    const parcPG=(pg*wPG).toFixed(1);
+    const parcMD=(mdVal*wMD).toFixed(1);
+    const parcAUD=(aud*wAUD).toFixed(1);
+    const ajCor=aj>=0?'#07583C':'#d93025';
+    return `<tr style="border-bottom:1px solid #e0f0e8">
+      <td style="padding:10px 14px;"><b style="color:#07583C;font-size:14px;">${l.gerencias?.nome||'—'}</b></td>
+      <td style="padding:10px 14px;font-size:11px;color:#1a73e8;">${l.gerencias?.unidades?.nome||'—'}</td>
+      <td style="padding:10px 14px;font-size:11px;color:#5a7a5a;">${l.gerencias?.diretorias?.nome||'—'}</td>
+      <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:14px;color:#07583C;">${pg.toFixed(1)} <span style="font-size:10px;color:#5a7a5a">×${wPG}=${parcPG}</span></td>
+      <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:14px;color:#1a73e8;">${md!=null?md.toFixed(1):'—'} <span style="font-size:10px;color:#5a7a5a">×${wMD}=${parcMD}</span></td>
+      <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:14px;color:#7c3aed;">${aud.toFixed(1)} <span style="font-size:10px;color:#5a7a5a">×${wAUD}=${parcAUD}</span></td>
+      <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:14px;color:${ajCor};font-weight:700;">${aj>=0?'+':''}${aj}</td>
+      <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:15px;font-weight:800;color:${cor};">${idx.toFixed(1)}</td>
+      <td style="padding:10px 14px;"><span style="background:${cor}22;color:${cor};padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;">${st.label}</span></td>
     </tr>`;
   }).join('');
   const media=lista.reduce((s,l)=>s+(l.indice_prevencao||0),0)/lista.length;
@@ -3286,14 +3296,14 @@ async function abrirImpressao(){
     return `<div style="margin-top:18px;page-break-inside:avoid">
       <div style="font-size:13px;font-weight:700;color:#07583C;margin-bottom:6px;padding-bottom:5px;border-bottom:2px solid #B3DD64">${l.gerencias?.nome||'—'} — Indicadores Preenchidos</div>
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="background:#f0f9f0"><th style="padding:6px 10px;font-size:10px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">INDICADOR</th><th style="padding:6px 10px;font-size:10px;font-family:'DM Mono',monospace;color:#07583C;text-align:left">VALOR</th><th style="padding:6px 10px;font-size:10px;font-family:'DM Mono',monospace;color:#07583C;text-align:right">PONTUAÇÃO</th></tr></thead>
+        <thead><tr style="background:#e8f5ee"><th style="padding:9px 14px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;font-weight:600;text-align:left">Indicador</th><th style="padding:9px 14px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;font-weight:600;text-align:left">Valor</th><th style="padding:9px 14px;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;font-weight:600;text-align:right">Pontuação</th></tr></thead>
         <tbody>${linhas}</tbody>
       </table>
     </div>`;
   }).join('');
 
-  const thStyle='padding:8px 14px;font-size:10px;font-family:\'DM Mono\',monospace;color:#07583C;text-align:left;letter-spacing:0.5px;';
-  content.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f0f9f0"><th style="${thStyle}">GERÊNCIA</th><th style="${thStyle}">UNIDADE</th><th style="${thStyle}">DIRETORIA</th><th style="${thStyle}">PONT.GER.</th><th style="${thStyle}">MÉD.DIR.</th><th style="${thStyle}">AUDITORIA</th><th style="${thStyle}">AJUSTE</th><th style="${thStyle}">ÍNDICE IP</th><th style="${thStyle}">STATUS</th></tr></thead><tbody>${rows}</tbody></table>${blocosIndicadores}`;
+  const thStyle='padding:9px 14px;font-size:11px;font-family:\'DM Mono\',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;font-weight:600;text-align:left;';
+  content.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#e8f5ee"><th style="${thStyle}">Gerência</th><th style="${thStyle}">Unidade</th><th style="${thStyle}">Diretoria</th><th style="${thStyle}">Pont. Ger.</th><th style="${thStyle}">Méd. Dir.</th><th style="${thStyle}">Auditoria</th><th style="${thStyle}">Ajuste</th><th style="${thStyle}">IP Final</th><th style="${thStyle}">Status</th></tr></thead><tbody>${rows}</tbody></table>${blocosIndicadores}`;
 }
 function fecharImpressao(){document.getElementById('print-overlay').style.display='none';}
 

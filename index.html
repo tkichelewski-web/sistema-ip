@@ -5097,6 +5097,14 @@ async function gravarImportacaoWecheck(prontos) {
 // (campo, montarMes, normaliza, baseNomeGerencia, SINONIMOS_UNIDADE, ALIASES_GERENCIA,
 // calcPontGer, calcIndice) — não redeclara nada disso aqui.
 
+// baseNomeGerencia não é global (só existe dentro do importador de Inspeção), então
+// repete aqui a mesma lógica: tira sufixo "- JB"/"- PB" e o prefixo "Gerência".
+function baseNomeGerencia(nome) {
+  return (nome || '').toString().trim()
+    .replace(/\s*-\s*(JB|PB)\s*$/i, '')
+    .replace(/^ger[eê]ncia\s+/i, '');
+}
+
 const NOME_IND_OBS_MENSAL     = 'Nº de Observações Comportamentais - Mensal';
 const NOME_IND_OBS_QUINZENAL  = 'Nº de Observações Comportamentais - Quinzenal'; // 1 indicador só (soma as 2 quinzenas)
 const NOME_IND_OBS_TRIMESTRAL = 'Nº de Observações Comportamentais - Trimestral';

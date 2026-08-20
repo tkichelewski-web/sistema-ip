@@ -4819,9 +4819,15 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       const meta = parseFloat(campo(l, ['META', 'Meta Dinamica Safra total geral', 'Meta'])) || 0;
       const real = parseFloat(campo(l, ['REALIZADO', 'Realizado_AteHoje', 'Realizado'])) || 0;
       const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + nomeIndicador;
-      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador, previsto: 0, realizado: 0 };
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador, previsto: 0, realizado: 0, pessoas: [] };
       grupos[chave].previsto += meta;
       grupos[chave].realizado += real;
+      grupos[chave].pessoas.push({
+        nome: (campo(l, ['NOME']) || '').toString().trim(),
+        cargo: (campo(l, ['CARGO']) || '').toString().trim(),
+        matricula: (campo(l, ['MATRICULA', 'Matrícula']) || '').toString().trim(),
+        status: (campo(l, ['STATUS']) || '').toString().replace(/^●\s*/, '').trim()
+      });
     });
 
     if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s) (sem GERENCIA/UNIDADE/Mês/Frequência reconhecível, ou Quinzenal sem Quinzena):', linhasIgnoradas.slice(0, 20));
@@ -4893,7 +4899,11 @@ async function importarPlanilhaWecheckInspecoes(evento) {
     prontosBrutos.forEach(p => {
       const chave = p.gerId + '|' + p.safraTxt + '|' + p.mes + '|' + p.indicadorId;
       if (!mesclados[chave]) mesclados[chave] = { ...p };
-      else { mesclados[chave].previsto += p.previsto; mesclados[chave].realizado += p.realizado; }
+      else {
+        mesclados[chave].previsto += p.previsto;
+        mesclados[chave].realizado += p.realizado;
+        mesclados[chave].pessoas = (mesclados[chave].pessoas || []).concat(p.pessoas || []);
+      }
     });
     const prontos = Object.values(mesclados);
 
@@ -5001,7 +5011,7 @@ async function gravarImportacaoWecheck(prontos) {
     if (!safraId) { semSafra.push(g); return; }
     const chave = g.gerId + '|' + safraId + '|' + g.mes;
     if (!porLancamento[chave]) porLancamento[chave] = { gerId: g.gerId, safraId, mes: g.mes, itens: [] };
-    porLancamento[chave].itens.push({ indicador_id: g.indicadorId, previsto: g.previsto, realizado: g.realizado, peso: g.peso });
+    porLancamento[chave].itens.push({ indicador_id: g.indicadorId, previsto: g.previsto, realizado: g.realizado, peso: g.peso, pessoas: g.pessoas || [] });
   });
 
   if (semSafra.length) {
@@ -5035,6 +5045,23 @@ async function gravarImportacaoWecheck(prontos) {
       }));
       const { error: eItens } = await sb.from('lancamento_itens').insert(novasLinhas);
       if (eItens) throw eItens;
+
+      // 2b. Grava o detalhe por pessoa (nome, cargo, status) — pra dar pra ver
+      // "quem não fez" depois, sem precisar abrir a planilha anexada.
+      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      const linhasPessoas = [];
+      grupo.itens.forEach(it => {
+        (it.pessoas || []).forEach(p => {
+          linhasPessoas.push({
+            lancamento_id: lancId, indicador_id: it.indicador_id,
+            nome: p.nome, cargo: p.cargo, matricula: p.matricula, status: p.status
+          });
+        });
+      });
+      if (linhasPessoas.length) {
+        const { error: ePess } = await sb.from('lancamento_pendencias').insert(linhasPessoas);
+        if (ePess) console.warn('Não consegui gravar o detalhe por pessoa (itens de previsto/realizado gravaram normal):', ePess.message);
+      }
 
       // 3. Recalcula a pontuação da gerência usando TODOS os itens do lançamento
       const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);

@@ -4627,39 +4627,67 @@ async function importarPlanilhaWecheckInspecoes(evento) {
 
     todasLinhas.forEach(l => {
       const gerNome = (campo(l, ['GERENCIA']) || '').trim();
+      const unidadeNome = (campo(l, ['UNIDADE']) || '').trim();
       const mes = montarMes(l);
       const freq = campo(l, ['FREQUENCIA', 'Frequência Inspeção', 'Frequencia Inspecao']);
-      if (!gerNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, mes, freq }); return; }
+      if (!gerNome || !unidadeNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq }); return; }
 
       const quinzenaLinha = campo(l, ['QUINZENA', 'Quinzena']);
       const nomeIndicador = acharIndicadorDaLinha(freq, quinzenaLinha);
-      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, mes, freq }); return; }
+      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq }); return; }
 
       const meta = parseFloat(campo(l, ['META', 'Meta Dinamica Safra total geral', 'Meta'])) || 0;
       const real = parseFloat(campo(l, ['REALIZADO', 'Realizado_AteHoje', 'Realizado'])) || 0;
-      const chave = gerNome + '|' + mes + '|' + nomeIndicador;
-      if (!grupos[chave]) grupos[chave] = { gerNome, mes, nomeIndicador, previsto: 0, realizado: 0 };
+      const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + nomeIndicador;
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, nomeIndicador, previsto: 0, realizado: 0 };
       grupos[chave].previsto += meta;
       grupos[chave].realizado += real;
     });
 
-    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s) (sem GERENCIA/Mês/Frequência reconhecível, ou Quinzenal sem Quinzena):', linhasIgnoradas.slice(0, 20));
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s) (sem GERENCIA/UNIDADE/Mês/Frequência reconhecível, ou Quinzenal sem Quinzena):', linhasIgnoradas.slice(0, 20));
 
     const listaGrupos = Object.values(grupos);
     if (!listaGrupos.length) {
-      alert('Não encontrei nenhuma linha válida. Confira se cada tabela tem as colunas GERENCIA, Mês/Ano (ou MES), "Frequência Inspeção", "Meta Dinamica Safra total geral", "Realizado_AteHoje" — e, para Quinzenal, uma coluna Quinzena.');
+      alert('Não encontrei nenhuma linha válida. Confira se cada tabela tem as colunas GERENCIA, UNIDADE, Mês/Ano (ou MES), "Frequência Inspeção", "Meta Dinamica Safra total geral", "Realizado_AteHoje" — e, para Quinzenal, uma coluna Quinzena.');
       return;
     }
 
-    // 2. Busca gerências e indicadores cadastrados
-    const [{ data: gers }, { data: inds }] = await Promise.all([
-      sb.from('gerencias').select('id,nome'),
+    // 2. Busca gerências (só ativas), unidades e indicadores cadastrados
+    const [{ data: gers }, { data: unids }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
       sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
     ]);
 
-    const acharGerId = nome => {
-      const g = (gers || []).find(g => normaliza(g.nome) === normaliza(nome));
-      return g ? g.id : null;
+    // Tira sufixo "- JB" / "- PB" do nome, se tiver, pra comparar só o nome-base.
+    // Algumas gerências têm esse sufixo no nome (Industrial, Agrícola CTT e PPT),
+    // outras diferenciam JB de PB só pelo unidade_id (mesmo nome, 2 registros).
+    const baseNomeGerencia = nome => (nome || '').toString().trim()
+      .replace(/\s*-\s*(JB|PB)\s*$/i, '')
+      .replace(/^ger[eê]ncia\s+/i, '');
+
+    const acharUnidadeId = nome => {
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(nome));
+      return u ? u.id : null;
+    };
+    const acharGerId = (gerNome, unidadeNome) => {
+      const base = normaliza(baseNomeGerencia(gerNome));
+      const unidadeId = acharUnidadeId(unidadeNome);
+
+      if (unidadeId) {
+        const porNomeEUnidade = (gers || []).filter(g =>
+          normaliza(baseNomeGerencia(g.nome)) === base && g.unidade_id === unidadeId
+        );
+        if (porNomeEUnidade.length === 1) return { id: porNomeEUnidade[0].id };
+        if (porNomeEUnidade.length > 1) return { erro: 'gerência ambígua (' + porNomeEUnidade.length + ' registros nome+unidade)' };
+      }
+
+      // Sem match por nome+unidade: tenta só pelo nome (cobre gerências corporativas,
+      // com 1 registro só, que atendem colaboradores de mais de uma unidade).
+      const porNome = (gers || []).filter(g => normaliza(baseNomeGerencia(g.nome)) === base);
+      if (porNome.length === 1) return { id: porNome[0].id };
+      if (porNome.length > 1) return { erro: 'gerência ambígua (' + porNome.length + ' registros só de nome, unidade "' + unidadeNome + '" não bateu com nenhum)' };
+      return { erro: 'gerência não encontrada' };
     };
     const acharIndicadorPorNome = nome =>
       (inds || []).find(i => normaliza(i.nome) === normaliza(nome)) || null;
@@ -4668,15 +4696,15 @@ async function importarPlanilhaWecheckInspecoes(evento) {
     const prontos = [];
     const semMatch = [];
     listaGrupos.forEach(gr => {
-      const gerId = acharGerId(gr.gerNome);
+      const resGer = acharGerId(gr.gerNome, gr.unidadeNome);
       const ind = acharIndicadorPorNome(gr.nomeIndicador);
-      if (!gerId || !ind) { semMatch.push({ ...gr, gerId, ind }); return; }
-      prontos.push({ ...gr, gerId, indicadorId: ind.id, peso: ind.peso });
+      if (resGer.erro || !ind) { semMatch.push({ ...gr, erroGer: resGer.erro, ind }); return; }
+      prontos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
     });
 
     if (semMatch.length) {
       const detalhe = semMatch.slice(0, 10).map(s =>
-        `- ${s.gerNome} / ${s.nomeIndicador} (${!s.gerId ? 'gerência não encontrada' : ''}${!s.gerId && !s.ind ? ' e ' : ''}${!s.ind ? 'indicador não encontrado' : ''})`
+        `- ${s.gerNome} (${s.unidadeNome}) / ${s.nomeIndicador} (${s.erroGer || ''}${s.erroGer && !s.ind ? ' e ' : ''}${!s.ind ? 'indicador não encontrado' : ''})`
       ).join('\n');
       const seguir = confirm(
         'Não encontrei correspondência para ' + semMatch.length + ' grupo(s):\n\n' + detalhe +

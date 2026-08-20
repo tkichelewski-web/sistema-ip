@@ -4653,6 +4653,7 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       const gerNome = (campo(l, ['GERENCIA']) || '').trim();
       const unidadeNome = (campo(l, ['UNIDADE']) || '').trim();
       const mes = montarMes(l);
+      const safraTxt = (campo(l, ['ANO/SAFRA', 'Ano Safra', 'ANO_SAFRA', 'SAFRA']) || '').toString().trim();
       const freq = campo(l, ['FREQUENCIA', 'Frequência Inspeção', 'Frequencia Inspecao']);
       if (!gerNome || !unidadeNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq }); return; }
 
@@ -4664,7 +4665,7 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       const meta = parseFloat(campo(l, ['META', 'Meta Dinamica Safra total geral', 'Meta'])) || 0;
       const real = parseFloat(campo(l, ['REALIZADO', 'Realizado_AteHoje', 'Realizado'])) || 0;
       const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + nomeIndicador;
-      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, nomeIndicador, previsto: 0, realizado: 0 };
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador, previsto: 0, realizado: 0 };
       grupos[chave].previsto += meta;
       grupos[chave].realizado += real;
     });
@@ -4722,14 +4723,25 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       (inds || []).find(i => normaliza(i.nome) === normaliza(nome)) || null;
 
     // 3. Resolve tudo; separa o que não deu match pra avisar antes de gravar
-    const prontos = [];
+    const prontosBrutos = [];
     const semMatch = [];
     listaGrupos.forEach(gr => {
       const resGer = acharGerId(gr.gerNome, gr.unidadeNome);
       const ind = acharIndicadorPorNome(gr.nomeIndicador);
       if (resGer.erro || !ind) { semMatch.push({ ...gr, erroGer: resGer.erro, ind }); return; }
-      prontos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
+      prontosBrutos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
     });
+
+    // Gerências corporativas (JB/PB) aparecem na planilha em 2 leituras separadas
+    // (colaboradores de "Jaboticabal" e de "Pereira Barreto"), mas resolvem pro MESMO
+    // gerId — sem isso, o mesmo indicador entraria 2x pro mesmo lançamento em vez de somado.
+    const mesclados = {};
+    prontosBrutos.forEach(p => {
+      const chave = p.gerId + '|' + p.safraTxt + '|' + p.mes + '|' + p.indicadorId;
+      if (!mesclados[chave]) mesclados[chave] = { ...p };
+      else { mesclados[chave].previsto += p.previsto; mesclados[chave].realizado += p.realizado; }
+    });
+    const prontos = Object.values(mesclados);
 
     if (semMatch.length) {
       const detalhe = semMatch.slice(0, 10).map(s =>
@@ -4815,26 +4827,45 @@ async function mostrarPreviaImportacaoV2(prontos, nomeArquivo) {
 // que vieram da planilha (preserva outros indicadores já lançados manualmente),
 // e recalcula a pontuação da gerência com TODOS os itens daquele lançamento.
 async function gravarImportacaoWecheck(prontos) {
+  // Resolve o safra_id de cada linha pela própria planilha (ANO/SAFRA, ex: "2026/2027"),
+  // comparando com ano_ini/ano_fim cadastrados em `safras` — não depende de nenhum
+  // campo da tela (sel-safra só existe na tela de Lançamento; o import pode ser feito
+  // de qualquer tela).
+  const { data: safrasBanco } = await sb.from('safras').select('id,nome,ano_ini,ano_fim');
+  const acharSafraId = safraTxt => {
+    const m = (safraTxt || '').match(/(\d{4})\s*\/\s*(\d{4})/);
+    if (!m) return null;
+    const ini = parseInt(m[1], 10), fim = parseInt(m[2], 10);
+    const s = (safrasBanco || []).find(s => s.ano_ini === ini && s.ano_fim === fim);
+    return s ? s.id : null;
+  };
+
   const porLancamento = {};
+  const semSafra = [];
   prontos.forEach(g => {
-    const chave = g.gerId + '|' + g.mes;
-    if (!porLancamento[chave]) porLancamento[chave] = { gerId: g.gerId, mes: g.mes, itens: [] };
+    const safraId = acharSafraId(g.safraTxt);
+    if (!safraId) { semSafra.push(g); return; }
+    const chave = g.gerId + '|' + safraId + '|' + g.mes;
+    if (!porLancamento[chave]) porLancamento[chave] = { gerId: g.gerId, safraId, mes: g.mes, itens: [] };
     porLancamento[chave].itens.push({ indicador_id: g.indicadorId, previsto: g.previsto, realizado: g.realizado, peso: g.peso });
   });
 
-  const safraAtualId = parseInt(document.getElementById('sel-safra')?.value) || (safrasData[0]?.id || null);
+  if (semSafra.length) {
+    console.warn(semSafra.length + ' grupo(s) sem safra reconhecida (confira a coluna ANO/SAFRA na planilha):', semSafra);
+  }
+
   let ok = 0; const erros = [];
 
   for (const chave in porLancamento) {
     const grupo = porLancamento[chave];
     try {
-      // 1. Acha ou cria o lançamento do mês/gerência
+      // 1. Acha ou cria o lançamento do mês/gerência/safra
       const { data: ex } = await sb.from('lancamentos').select('id')
-        .eq('gerencia_id', grupo.gerId).eq('mes', grupo.mes).limit(1);
+        .eq('gerencia_id', grupo.gerId).eq('safra_id', grupo.safraId).eq('mes', grupo.mes).limit(1);
       let lancId = ex?.[0]?.id || null;
       if (!lancId) {
         const { data: ins, error: eIns } = await sb.from('lancamentos').insert({
-          gerencia_id: grupo.gerId, safra_id: safraAtualId, mes: grupo.mes, periodo: grupo.mes,
+          gerencia_id: grupo.gerId, safra_id: grupo.safraId, mes: grupo.mes, periodo: grupo.mes,
           atualizado_em: new Date().toISOString()
         }).select('id');
         if (eIns) throw eIns;

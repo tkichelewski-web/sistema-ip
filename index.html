@@ -4545,13 +4545,30 @@ function campo(l, chaves) {
   return null;
 }
 
+function anoDaSafraParaMes(safraTxt, mesNum) {
+  // "2026/2027" -> ano_ini=2026, ano_fim=2027. Meses >= abril usam ano_ini, os demais ano_fim
+  // (mesma regra que o Power BI/sistema já usam pra safra).
+  const m = (safraTxt || '').toString().match(/(\d{4})\s*\/\s*(\d{4})/);
+  if (!m) return null;
+  const anoIni = parseInt(m[1], 10), anoFim = parseInt(m[2], 10);
+  return mesNum >= 4 ? anoIni : anoFim;
+}
+
 function montarMes(l) {
   const direto = campo(l, ['MES', 'Mes', 'Mês/Ano', 'AnoMes']);
   if (direto && /^\d{4}-\d{2}$/.test(direto.trim())) return direto.trim();
-  const mesNome = (campo(l, ['Mês', 'MES_NOME', 'Mes_Nome']) || '').toString().trim().toLowerCase();
-  const ano = (campo(l, ['Ano', 'ANO']) || '').toString().trim();
-  const num = MESES_PT[mesNome];
-  if (num && /^\d{4}$/.test(ano)) return ano + '-' + num;
+
+  const mesTexto = (campo(l, ['Mês', 'MES', 'MES_NOME', 'Mes_Nome']) || '').toString().trim().toLowerCase();
+  const num = MESES_PT[mesTexto];
+  if (!num) return null;
+
+  const anoDireto = (campo(l, ['Ano', 'ANO']) || '').toString().trim();
+  if (/^\d{4}$/.test(anoDireto)) return anoDireto + '-' + num;
+
+  const safraTxt = campo(l, ['ANO/SAFRA', 'Ano Safra', 'ANO_SAFRA', 'SAFRA']);
+  const ano = anoDaSafraParaMes(safraTxt, parseInt(num, 10));
+  if (ano) return ano + '-' + num;
+
   return null;
 }
 const NOME_IND_QUINZENA_1 = 'Nº de Inspeções SSMA -1º quinzena';
@@ -4618,8 +4635,8 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       const nomeIndicador = acharIndicadorDaLinha(freq, quinzenaLinha);
       if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, mes, freq }); return; }
 
-      const meta = parseFloat(campo(l, ['Meta Dinamica Safra total geral'])) || 0;
-      const real = parseFloat(campo(l, ['Realizado_AteHoje'])) || 0;
+      const meta = parseFloat(campo(l, ['META', 'Meta Dinamica Safra total geral', 'Meta'])) || 0;
+      const real = parseFloat(campo(l, ['REALIZADO', 'Realizado_AteHoje', 'Realizado'])) || 0;
       const chave = gerNome + '|' + mes + '|' + nomeIndicador;
       if (!grupos[chave]) grupos[chave] = { gerNome, mes, nomeIndicador, previsto: 0, realizado: 0 };
       grupos[chave].previsto += meta;
@@ -4802,6 +4819,7 @@ async function gravarImportacaoWecheck(prontos) {
   }
   return { ok, erros };
 }
+
 </script>
 </body>
 </html>

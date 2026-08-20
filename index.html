@@ -182,7 +182,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="user-info">
       <span>Olá, <strong id="user-nome"></strong> <span id="user-perfil-badge"></span></span>
       <button class="btn btn-sm" id="btn-importar-planilha" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha').click()">📥 Importar Planilha (piloto)</button>
-      <input type="file" id="input-importar-planilha" accept=".xlsx,.xls" style="display:none" onchange="importarPlanilhaWecheckInspecoes(event)">
+      <input type="file" id="input-importar-planilha" accept=".xlsx,.xls" multiple style="display:none" onchange="importarPlanilhaWecheckInspecoes(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -4532,56 +4532,165 @@ ativarWakeLock();
 }
 </style>
 <script>
-// ===== Importação local de planilha (piloto: WeCheck Inspeções) =====
-// Mapeia o nome da coluna GERENCIA da planilha para o gerencia_id do sistema.
-// Preencher esse mapa depois de conferir os nomes das gerências cadastradas no sistema.
-const MAPA_GERENCIAS_WECHECK = {
-  // "Nome exato na planilha": "gerencia_id no sistema"
+// ===== Importação de planilha WeCheck Inspeções -> lançamentos reais no IP =====
+
+const MESES_PT = {
+  'janeiro':'01','fevereiro':'02','março':'03','marco':'03','abril':'04','maio':'05','junho':'06',
+  'julho':'07','agosto':'08','setembro':'09','outubro':'10','novembro':'11','dezembro':'12'
 };
 
-function importarPlanilhaWecheckInspecoes(evento) {
-  const arquivo = evento.target.files[0];
-  if (!arquivo) return;
-  const leitor = new FileReader();
-  leitor.onload = function(e) {
-    try {
-      const dados = new Uint8Array(e.target.result);
-      const wb = XLSX.read(dados, { type: 'array' });
-      const abaNome = wb.SheetNames[0];
-      const linhas = XLSX.utils.sheet_to_json(wb.Sheets[abaNome], { defval: null });
-
-      if (linhas.length === 0) { alert('A planilha está vazia.'); return; }
-
-      // Agrupa por GERENCIA, somando Meta Dinâmica Safra total geral (Previsto) e Realizado_AteHoje
-      const porGerencia = {};
-      linhas.forEach(l => {
-        const gerencia = l['GERENCIA'];
-        if (!gerencia) return;
-        const meta = parseFloat(l['Meta Dinamica Safra total geral']) || 0;
-        const real = parseFloat(l['Realizado_AteHoje']) || 0;
-        if (!porGerencia[gerencia]) porGerencia[gerencia] = { previsto: 0, realizado: 0, unidade: l['UNIDADE'] || '', diretoria: l['DIRETORIA'] || '' };
-        porGerencia[gerencia].previsto += meta;
-        porGerencia[gerencia].realizado += real;
-      });
-
-      mostrarPreviaImportacao(porGerencia, arquivo.name);
-    } catch (err) {
-      console.error(err);
-      alert('Erro ao ler a planilha: ' + err.message + '\nConfira se o arquivo tem as colunas GERENCIA, "Meta Dinamica Safra total geral" e "Realizado_AteHoje".');
-    } finally {
-      evento.target.value = '';
-    }
-  };
-  leitor.readAsArrayBuffer(arquivo);
+// Lê um campo aceitando variações de nome de coluna (acento/maiúsculas podem mudar no export)
+function campo(l, chaves) {
+  for (const k of chaves) if (l[k] != null && l[k] !== '') return l[k];
+  return null;
 }
 
-function mostrarPreviaImportacao(porGerencia, nomeArquivo) {
-  const linhasHtml = Object.entries(porGerencia).map(([ger, v]) => {
-    const pct = v.previsto > 0 ? Math.min((v.realizado / v.previsto) * 100, 100) : (v.realizado === 0 ? 100 : 0);
+function montarMes(l) {
+  const direto = campo(l, ['MES', 'Mes', 'Mês/Ano', 'AnoMes']);
+  if (direto && /^\d{4}-\d{2}$/.test(direto.trim())) return direto.trim();
+  const mesNome = (campo(l, ['Mês', 'MES_NOME', 'Mes_Nome']) || '').toString().trim().toLowerCase();
+  const ano = (campo(l, ['Ano', 'ANO']) || '').toString().trim();
+  const num = MESES_PT[mesNome];
+  if (num && /^\d{4}$/.test(ano)) return ano + '-' + num;
+  return null;
+}
+const NOME_IND_QUINZENA_1 = 'Nº de Inspeções SSMA -1º quinzena';
+const NOME_IND_QUINZENA_2 = 'Nº de Inspeções SSMA -2º quinzena';
+const NOME_IND_TRIMESTRAL = 'Nº de Inspeções SSMA - Trimestral';
+const NOME_IND_MENSAL     = 'Nº de Inspeções SSMA - Mensal';
+const NOME_IND_SEMANAL    = 'Nº de Inspeções SSMA - Semanal';
+
+// Aba (frequência de origem) -> indicador de destino.
+// Só QUINZENAL precisa de uma coluna Quinzena por linha (pra saber 1º ou 2º);
+// as outras três já têm indicador próprio, sem precisar rotear.
+const ABA_INDICADOR_DIRETO = {
+  'MENSAL':    NOME_IND_MENSAL,
+  'SEMANAL':   NOME_IND_SEMANAL,
+  'TRIMESTRAL':NOME_IND_TRIMESTRAL
+};
+
+function acharIndicadorDaLinha(freq, quinzenaLinha) {
+  const f = normaliza(freq);
+  if (ABA_INDICADOR_DIRETO[f]) return ABA_INDICADOR_DIRETO[f];
+  if (f === 'QUINZENAL') {
+    const q = (quinzenaLinha || '').trim();
+    if (q.startsWith('1')) return NOME_IND_QUINZENA_1;
+    if (q.startsWith('2')) return NOME_IND_QUINZENA_2;
+  }
+  return null; // frequência não reconhecida, ou Quinzenal sem Quinzena legível
+}
+
+function normaliza(s) {
+  return (s || '').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+async function importarPlanilhaWecheckInspecoes(evento) {
+  const arquivos = Array.from(evento.target.files || []);
+  if (!arquivos.length) return;
+
+  try {
+    // Lê todos os arquivos selecionados (pode ser 1 arquivo com 4 abas, ou até 4 arquivos
+    // separados — um por tabela exportada do Power BI). Junta todas as linhas de todas
+    // as abas de todos os arquivos antes de processar.
+    const todasLinhas = [];
+    for (const arquivo of arquivos) {
+      const buffer = await arquivo.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      wb.SheetNames.forEach(nomeAba => {
+        const linhasAba = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null });
+        todasLinhas.push(...linhasAba);
+      });
+    }
+
+    // Cada LINHA já diz sua própria frequência (coluna Frequência Inspeção) e,
+    // se for Quinzenal, também a Quinzena (1ª/2ª). As outras frequências (Mensal,
+    // Semanal, Trimestral) já têm indicador próprio, sem precisar de Quinzena.
+    const grupos = {};
+    const linhasIgnoradas = [];
+
+    todasLinhas.forEach(l => {
+      const gerNome = (campo(l, ['GERENCIA']) || '').trim();
+      const mes = montarMes(l);
+      const freq = campo(l, ['FREQUENCIA', 'Frequência Inspeção', 'Frequencia Inspecao']);
+      if (!gerNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, mes, freq }); return; }
+
+      const quinzenaLinha = campo(l, ['QUINZENA', 'Quinzena']);
+      const nomeIndicador = acharIndicadorDaLinha(freq, quinzenaLinha);
+      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, mes, freq }); return; }
+
+      const meta = parseFloat(campo(l, ['Meta Dinamica Safra total geral'])) || 0;
+      const real = parseFloat(campo(l, ['Realizado_AteHoje'])) || 0;
+      const chave = gerNome + '|' + mes + '|' + nomeIndicador;
+      if (!grupos[chave]) grupos[chave] = { gerNome, mes, nomeIndicador, previsto: 0, realizado: 0 };
+      grupos[chave].previsto += meta;
+      grupos[chave].realizado += real;
+    });
+
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s) (sem GERENCIA/Mês/Frequência reconhecível, ou Quinzenal sem Quinzena):', linhasIgnoradas.slice(0, 20));
+
+    const listaGrupos = Object.values(grupos);
+    if (!listaGrupos.length) {
+      alert('Não encontrei nenhuma linha válida. Confira se cada tabela tem as colunas GERENCIA, Mês/Ano (ou MES), "Frequência Inspeção", "Meta Dinamica Safra total geral", "Realizado_AteHoje" — e, para Quinzenal, uma coluna Quinzena.');
+      return;
+    }
+
+    // 2. Busca gerências e indicadores cadastrados
+    const [{ data: gers }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome'),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const acharGerId = nome => {
+      const g = (gers || []).find(g => normaliza(g.nome) === normaliza(nome));
+      return g ? g.id : null;
+    };
+    const acharIndicadorPorNome = nome =>
+      (inds || []).find(i => normaliza(i.nome) === normaliza(nome)) || null;
+
+    // 3. Resolve tudo; separa o que não deu match pra avisar antes de gravar
+    const prontos = [];
+    const semMatch = [];
+    listaGrupos.forEach(gr => {
+      const gerId = acharGerId(gr.gerNome);
+      const ind = acharIndicadorPorNome(gr.nomeIndicador);
+      if (!gerId || !ind) { semMatch.push({ ...gr, gerId, ind }); return; }
+      prontos.push({ ...gr, gerId, indicadorId: ind.id, peso: ind.peso });
+    });
+
+    if (semMatch.length) {
+      const detalhe = semMatch.slice(0, 10).map(s =>
+        `- ${s.gerNome} / ${s.nomeIndicador} (${!s.gerId ? 'gerência não encontrada' : ''}${!s.gerId && !s.ind ? ' e ' : ''}${!s.ind ? 'indicador não encontrado' : ''})`
+      ).join('\n');
+      const seguir = confirm(
+        'Não encontrei correspondência para ' + semMatch.length + ' grupo(s):\n\n' + detalhe +
+        (semMatch.length > 10 ? '\n... e mais ' + (semMatch.length - 10) : '') +
+        '\n\nEsses grupos NÃO serão importados. Continuar só com os ' + prontos.length + ' que deram certo?'
+      );
+      if (!seguir) return;
+    }
+    if (!prontos.length) { alert('Nenhum grupo pôde ser importado.'); return; }
+
+    const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
+    await mostrarPreviaImportacaoV2(prontos, nomeResumo);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler a(s) planilha(s): ' + err.message +
+      '\nConfira se cada tabela tem as colunas GERENCIA, Mês/Ano (ou MES), "Frequência Inspeção", "Meta Dinamica Safra total geral" e "Realizado_AteHoje".');
+  } finally {
+    evento.target.value = '';
+  }
+}
+
+// Mostra a prévia; só grava quando o usuário confirma
+async function mostrarPreviaImportacaoV2(prontos, nomeArquivo) {
+  const linhasHtml = prontos.map(g => {
+    const pct = g.previsto > 0 ? Math.min((g.realizado / g.previsto) * 100, 100) : (g.realizado === 0 ? 100 : 0);
     return `<tr>
-      <td style="padding:6px 10px;border-bottom:1px solid #eee">${ger}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${v.previsto}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${v.realizado}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.gerNome}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.mes}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.nomeIndicador}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.previsto}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.realizado}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;font-weight:600">${pct.toFixed(1)}%</td>
     </tr>`;
   }).join('');
@@ -4589,25 +4698,109 @@ function mostrarPreviaImportacao(porGerencia, nomeArquivo) {
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
   overlay.innerHTML = `
-    <div style="background:#fff;border-radius:10px;max-width:700px;width:90%;max-height:80vh;overflow:auto;padding:24px;">
+    <div style="background:#fff;border-radius:10px;max-width:800px;width:90%;max-height:80vh;overflow:auto;padding:24px;">
       <h3 style="margin:0 0 4px">Prévia da importação — ${nomeArquivo}</h3>
-      <p style="color:#666;font-size:13px;margin:0 0 16px">Confira se os valores batem com o que você lançaria manualmente. Esta é só uma prévia — nada foi salvo no sistema ainda.</p>
+      <p style="color:#666;font-size:13px;margin:0 0 16px">${prontos.length} lançamento(s) de indicador serão gravados/atualizados. Nada foi salvo ainda.</p>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="background:#f5f5f5">
           <th style="padding:6px 10px;text-align:left">Gerência</th>
+          <th style="padding:6px 10px;text-align:left">Mês</th>
+          <th style="padding:6px 10px;text-align:left">Frequência</th>
           <th style="padding:6px 10px">Previsto</th>
           <th style="padding:6px 10px">Realizado</th>
-          <th style="padding:6px 10px">% calculado</th>
+          <th style="padding:6px 10px">%</th>
         </tr></thead>
         <tbody>${linhasHtml}</tbody>
       </table>
       <div style="text-align:right;margin-top:16px">
-        <button onclick="this.closest('div[style*=fixed]')?.remove(); document.querySelector('.overlay-previa-importacao')?.remove()" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer" id="btn-fechar-previa">Fechar</button>
+        <button id="btn-cancelar-previa" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+        <button id="btn-confirmar-previa" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Confirmar e Gravar</button>
       </div>
     </div>`;
-  overlay.classList.add('overlay-previa-importacao');
   document.body.appendChild(overlay);
-  document.getElementById('btn-fechar-previa').onclick = () => overlay.remove();
+  document.getElementById('btn-cancelar-previa').onclick = () => overlay.remove();
+  document.getElementById('btn-confirmar-previa').onclick = async () => {
+    const btn = document.getElementById('btn-confirmar-previa');
+    btn.disabled = true; btn.textContent = 'Gravando...';
+    try {
+      const resumo = await gravarImportacaoWecheck(prontos);
+      overlay.remove();
+      alert('Importação concluída.\n' + resumo.ok + ' lançamento(s) atualizado(s) com sucesso.' +
+        (resumo.erros.length ? '\n' + resumo.erros.length + ' com erro (veja o console).' : ''));
+      if (resumo.erros.length) console.error('Erros na importação:', resumo.erros);
+      // Se a tela de lançamento estiver aberta, recarrega os dados na tela
+      if (typeof onPeriodoLancarChange === 'function') onPeriodoLancarChange();
+    } catch (err) {
+      alert('Erro ao gravar: ' + err.message);
+      btn.disabled = false; btn.textContent = 'Confirmar e Gravar';
+    }
+  };
+}
+
+// Grava de fato: para cada (gerência, mês), atualiza SÓ os itens dos indicadores
+// que vieram da planilha (preserva outros indicadores já lançados manualmente),
+// e recalcula a pontuação da gerência com TODOS os itens daquele lançamento.
+async function gravarImportacaoWecheck(prontos) {
+  const porLancamento = {};
+  prontos.forEach(g => {
+    const chave = g.gerId + '|' + g.mes;
+    if (!porLancamento[chave]) porLancamento[chave] = { gerId: g.gerId, mes: g.mes, itens: [] };
+    porLancamento[chave].itens.push({ indicador_id: g.indicadorId, previsto: g.previsto, realizado: g.realizado, peso: g.peso });
+  });
+
+  const safraAtualId = parseInt(document.getElementById('sel-safra')?.value) || (safrasData[0]?.id || null);
+  let ok = 0; const erros = [];
+
+  for (const chave in porLancamento) {
+    const grupo = porLancamento[chave];
+    try {
+      // 1. Acha ou cria o lançamento do mês/gerência
+      const { data: ex } = await sb.from('lancamentos').select('id')
+        .eq('gerencia_id', grupo.gerId).eq('mes', grupo.mes).limit(1);
+      let lancId = ex?.[0]?.id || null;
+      if (!lancId) {
+        const { data: ins, error: eIns } = await sb.from('lancamentos').insert({
+          gerencia_id: grupo.gerId, safra_id: safraAtualId, mes: grupo.mes, periodo: grupo.mes,
+          atualizado_em: new Date().toISOString()
+        }).select('id');
+        if (eIns) throw eIns;
+        lancId = ins?.[0]?.id;
+      }
+
+      // 2. Remove só os itens dos indicadores que estamos atualizando (preserva os demais)
+      const idsIndicadores = grupo.itens.map(it => it.indicador_id);
+      await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      const novasLinhas = grupo.itens.map(it => ({
+        lancamento_id: lancId, indicador_id: it.indicador_id,
+        previsto: it.previsto, realizado: it.realizado
+      }));
+      const { error: eItens } = await sb.from('lancamento_itens').insert(novasLinhas);
+      if (eItens) throw eItens;
+
+      // 3. Recalcula a pontuação da gerência usando TODOS os itens do lançamento
+      const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
+      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
+      const pg = calcPontGer(todosItens || [], indsTodos || []);
+
+      const { data: lancAtual } = await sb.from('lancamentos')
+        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
+      const md = lancAtual?.[0]?.media_diretoria ?? null;
+      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const aj = lancAtual?.[0]?.ajuste_pontos || 0;
+      const indBase = calcIndice(pg, md, aud, 0);
+      const indFinal = calcIndice(pg, md, aud, aj);
+
+      await sb.from('lancamentos').update({
+        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        atualizado_em: new Date().toISOString()
+      }).eq('id', lancId);
+
+      ok++;
+    } catch (err) {
+      erros.push({ chave, erro: err.message });
+    }
+  }
+  return { ok, erros };
 }
 </script>
 </body>

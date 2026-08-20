@@ -4589,18 +4589,23 @@ const NOME_IND_QUINZENA_1 = 'Nº de Inspeções SSMA -1º quinzena';
 const NOME_IND_QUINZENA_2 = 'Nº de Inspeções SSMA -2º quinzena';
 const NOME_IND_TRIMESTRAL = 'Nº de Inspeções SSMA - Trimestral';
 const NOME_IND_MENSAL     = 'Nº de Inspeções SSMA - Mensal';
-const NOME_IND_SEMANAL    = 'Nº de Inspeções SSMA - Semanal';
+// Semanal tem 1 indicador por semana do mês (não um "Semanal" único).
+const NOME_IND_SEMANA = {
+  1: 'Nº de Inspeções SSMA - Semana 1',
+  2: 'Nº de Inspeções SSMA - Semana 2',
+  3: 'Nº de Inspeções SSMA - Semana 3',
+  4: 'Nº de Inspeções SSMA - Semana 4'
+};
 
 // Aba (frequência de origem) -> indicador de destino.
-// Só QUINZENAL precisa de uma coluna Quinzena por linha (pra saber 1º ou 2º);
-// as outras três já têm indicador próprio, sem precisar rotear.
+// QUINZENAL precisa da coluna Quinzena, SEMANAL precisa da coluna Semana;
+// MENSAL e TRIMESTRAL já têm indicador único, sem precisar rotear.
 const ABA_INDICADOR_DIRETO = {
   'MENSAL':    NOME_IND_MENSAL,
-  'SEMANAL':   NOME_IND_SEMANAL,
   'TRIMESTRAL':NOME_IND_TRIMESTRAL
 };
 
-function acharIndicadorDaLinha(freq, quinzenaLinha) {
+function acharIndicadorDaLinha(freq, quinzenaLinha, semanaLinha) {
   const f = normaliza(freq);
   if (ABA_INDICADOR_DIRETO[f]) return ABA_INDICADOR_DIRETO[f];
   if (f === 'QUINZENAL') {
@@ -4608,7 +4613,12 @@ function acharIndicadorDaLinha(freq, quinzenaLinha) {
     if (q.startsWith('1')) return NOME_IND_QUINZENA_1;
     if (q.startsWith('2')) return NOME_IND_QUINZENA_2;
   }
-  return null; // frequência não reconhecida, ou Quinzenal sem Quinzena legível
+  if (f === 'SEMANAL') {
+    const m = (semanaLinha || '').toString().match(/(\d+)/);
+    const num = m ? parseInt(m[1], 10) : null;
+    if (num && NOME_IND_SEMANA[num]) return NOME_IND_SEMANA[num];
+  }
+  return null; // frequência não reconhecida, ou faltou a coluna de período correspondente
 }
 
 function normaliza(s) {
@@ -4647,8 +4657,9 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       if (!gerNome || !unidadeNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq }); return; }
 
       const quinzenaLinha = campo(l, ['QUINZENA', 'Quinzena']);
-      const nomeIndicador = acharIndicadorDaLinha(freq, quinzenaLinha);
-      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq }); return; }
+      const semanaLinha = campo(l, ['SEMANA', 'Semana']);
+      const nomeIndicador = acharIndicadorDaLinha(freq, quinzenaLinha, semanaLinha);
+      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq, semanaLinha }); return; }
 
       const meta = parseFloat(campo(l, ['META', 'Meta Dinamica Safra total geral', 'Meta'])) || 0;
       const real = parseFloat(campo(l, ['REALIZADO', 'Realizado_AteHoje', 'Realizado'])) || 0;
@@ -4662,7 +4673,7 @@ async function importarPlanilhaWecheckInspecoes(evento) {
 
     const listaGrupos = Object.values(grupos);
     if (!listaGrupos.length) {
-      alert('Não encontrei nenhuma linha válida. Confira se cada tabela tem as colunas GERENCIA, UNIDADE, Mês/Ano (ou MES), "Frequência Inspeção", "Meta Dinamica Safra total geral", "Realizado_AteHoje" — e, para Quinzenal, uma coluna Quinzena.');
+      alert('Não encontrei nenhuma linha válida. Confira se cada tabela tem as colunas GERENCIA, UNIDADE, Mês/Ano (ou MES), "Frequência Inspeção", META, REALIZADO — e, para Quinzenal, coluna Quinzena, ou para Semanal, coluna Semana (Semana 1 a 4).');
       return;
     }
 

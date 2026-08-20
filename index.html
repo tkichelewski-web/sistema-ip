@@ -4571,6 +4571,20 @@ function montarMes(l) {
 
   return null;
 }
+// A planilha exporta a Unidade por extenso; o sistema usa sigla. Traduz antes de comparar.
+const SINONIMOS_UNIDADE = {
+  'JABOTICABAL': 'JB',
+  'PEREIRA BARRETO': 'PB'
+};
+
+// Áreas que não têm gerência própria na planilha (reportam direto à diretoria/superintendência)
+// -> gerência real que representa essa área no sistema.
+const ALIASES_GERENCIA = {
+  'DIRETORIA DE PESSOAS': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'SUPERINTENDENCIA': 'Supervisão Excelência e Projetos',
+  'SUPERINTENDÊNCIA': 'Supervisão Excelência e Projetos'
+};
+
 const NOME_IND_QUINZENA_1 = 'Nº de Inspeções SSMA -1º quinzena';
 const NOME_IND_QUINZENA_2 = 'Nº de Inspeções SSMA -2º quinzena';
 const NOME_IND_TRIMESTRAL = 'Nº de Inspeções SSMA - Trimestral';
@@ -4666,11 +4680,15 @@ async function importarPlanilhaWecheckInspecoes(evento) {
       .replace(/\s*-\s*(JB|PB)\s*$/i, '')
       .replace(/^ger[eê]ncia\s+/i, '');
 
-    const acharUnidadeId = nome => {
-      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(nome));
+    const acharUnidadeId = nomeExport => {
+      const norm = normaliza(nomeExport);
+      const alvo = SINONIMOS_UNIDADE[norm] || nomeExport;
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(alvo));
       return u ? u.id : null;
     };
-    const acharGerId = (gerNome, unidadeNome) => {
+    const acharGerId = (gerNomeOriginal, unidadeNome) => {
+      const apelido = ALIASES_GERENCIA[normaliza(gerNomeOriginal)];
+      const gerNome = apelido || gerNomeOriginal;
       const base = normaliza(baseNomeGerencia(gerNome));
       const unidadeId = acharUnidadeId(unidadeNome);
 

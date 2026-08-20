@@ -193,6 +193,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="tab" onclick="showTab('ranking')" id="tab-ranking">Ranking</div>
     <div class="tab" onclick="showTab('lancar')" id="tab-lancar">Lançar Dados</div>
     <div class="tab" onclick="showTab('historico')" id="tab-historico">Histórico</div>
+    <div class="tab" onclick="showTab('pendencias')" id="tab-pendencias">Pendências</div>
     <div class="tab hidden" onclick="showTab('indicadores')" id="tab-indicadores">Indicadores</div>
     <div class="tab hidden" onclick="showTab('gerencias')" id="tab-gerencias">Gerências</div>
     <div class="tab hidden" onclick="showTab('usuarios')" id="tab-usuarios">Usuários</div>
@@ -427,6 +428,21 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="table-wrap">
         <div class="table-header"><span class="table-title">Histórico de Lançamentos</span></div>
         <div id="hist-table"><div class="loading">Selecione os filtros acima.</div></div>
+      </div>
+    </div>
+
+    <!-- PENDÊNCIAS -->
+    <div class="section" id="sec-pendencias">
+      <div class="flex-row" style="margin-bottom:16px;flex-wrap:wrap;">
+        <select id="pend-diretoria" style="width:auto;padding:6px 10px;font-size:13px;" onchange="filtrarGerenciasPendencias();carregarPendencias()"><option value="">Todas as Diretorias</option></select>
+        <select id="pend-gerencia" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Todas as Gerências</option></select>
+        <select id="pend-mes" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Mês atual</option></select>
+        <select id="pend-indicador" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Todos os indicadores</option></select>
+        <button class="btn btn-secondary btn-sm" onclick="exportarPendenciasExcel()">⬇ Excel</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-header"><span class="table-title">Quem ainda não fez</span></div>
+        <div id="pend-table"><div class="loading">Selecione os filtros acima.</div></div>
       </div>
     </div>
 
@@ -733,6 +749,7 @@ async function mostrarApp() {
   if(spEl) spEl.value=periodo;
   if(perfil==='gerencia'&&usuario.gerencias) preencherGerencia();
   preencherHistoricoFiltros();
+  preencherPendenciasFiltros();
   showTab('dashboard');
   // Garante que o campo período está preenchido antes de carregar
   await new Promise(r=>setTimeout(r,50));
@@ -1449,6 +1466,7 @@ function showTab(id) {
   if(id==='gerencias') renderGerencias();
   if(id==='usuarios') renderUsuarios();
   if(id==='historico') carregarHistorico();
+  if(id==='pendencias') carregarPendencias();
   if(id==='config') carregarConfigForm();
   if(id==='acum'){setTimeout(renderAcumChart,80);setTimeout(renderAcumChartMensal,130);}
 }
@@ -3070,9 +3088,11 @@ async function verDetalheGerencia(lancId){
       .eq('lancamento_id', lancId)
       .order('id');
     var itens = r2.data || [];
+    var r3 = await sb.from('lancamento_pendencias').select('*').eq('lancamento_id', lancId);
+    var pendencias = r3.data || [];
     var titleEl = document.getElementById('modal-detalhe-title');
     if(titleEl) titleEl.textContent = 'Detalhes — '+(lanc.gerencias ? lanc.gerencias.nome : '')+' ('+( lanc.mes || lanc.periodo || '')+')';
-    var html = gerarDetalheHTML(lanc, itens);
+    var html = gerarDetalheHTML(lanc, itens, pendencias);
     contentEl.innerHTML = html;
     window._detalheHTMLAtual = html;
   } catch(err) {
@@ -3080,7 +3100,8 @@ async function verDetalheGerencia(lancId){
   }
 }
 
-function gerarDetalheHTML(lanc, itens){
+function gerarDetalheHTML(lanc, itens, pendencias){
+  pendencias = pendencias || [];
   var wPG  = Number(config && config.peso_gerencia)  || 0.5;
   var wMD  = Number(config && config.peso_diretoria) || 0.2;
   var wAUD = Number(config && config.peso_auditoria) || 0.3;
@@ -3209,9 +3230,31 @@ function gerarDetalheHTML(lanc, itens){
       var evidCel = item.evidencia_url
         ? '<a href="'+item.evidencia_url+'" target="_blank" style="font-size:11px;color:#1a73e8;text-decoration:none;background:#e8f0fe;padding:3px 8px;border-radius:12px;font-weight:600;white-space:nowrap">📎 Ver</a>'
         : '<span style="font-size:11px;color:#aaa">—</span>';
+
+      // Lista de pessoas desse indicador (se o import trouxe o detalhe)
+      var pessoasInd = pendencias.filter(function(p){ return p.indicador_id === item.indicador_id; });
+      var pendentesInd = pessoasInd.filter(function(p){ return /pendente/i.test(p.status||''); });
+      var togglePessoas = '';
+      if(pessoasInd.length){
+        var toggleId = 'pend-'+lanc.id+'-'+item.indicador_id;
+        var linhasPessoasHTML = pessoasInd.map(function(p){
+          var okStatus = /realizado/i.test(p.status||'');
+          var corSt = okStatus ? '#07583C' : /pendente/i.test(p.status||'') ? '#d93025' : '#888';
+          return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #eef5ee;font-size:12px">'+
+            '<span>'+(p.nome||'—')+(p.cargo?' <span style="color:#999">— '+p.cargo+'</span>':'')+'</span>'+
+            '<span style="color:'+corSt+';font-weight:600;white-space:nowrap">'+(p.status||'—')+'</span></div>';
+        }).join('');
+        togglePessoas = '<div style="margin-top:4px">'+
+          '<span onclick="var el=document.getElementById(\''+toggleId+'\');el.style.display=el.style.display===\'none\'?\'block\':\'none\';" '+
+          'style="cursor:pointer;font-size:11px;color:'+(pendentesInd.length?'#d93025':'#07583C')+';font-weight:600;text-decoration:underline dotted">'+
+          '👥 '+(pendentesInd.length ? pendentesInd.length+' pendente(s) de '+pessoasInd.length : 'Todos realizaram ('+pessoasInd.length+')')+'</span>'+
+          '<div id="'+toggleId+'" style="display:none;margin-top:6px;background:#fafcfa;border:1px solid #e0f0e8;border-radius:6px;padding:8px 10px;max-height:220px;overflow:auto">'+linhasPessoasHTML+'</div>'+
+          '</div>';
+      }
+
       h += '<tr>';
       h += '<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8">'+(ind.nome||'—')+comt+'</td>';
-      h += '<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">'+val+'</td>';
+      h += '<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;color:#5a7a5a">'+val+togglePessoas+'</td>';
       h += '<td style="padding:8px 12px;font-size:13px;border-bottom:1px solid #e0f0e8;text-align:center">'+evidCel+'</td>';
       h += '<td style="padding:8px 12px;font-size:13px;font-weight:700;border-bottom:1px solid #e0f0e8;text-align:right;color:'+corP+'">'+pts.toFixed(1)+'</td>';
       h += '</tr>';
@@ -3449,6 +3492,117 @@ function preencherMesesHistorico() {
     hm.innerHTML = '<option value="">Todos os meses</option>';
   }
   hm.value = '';
+}
+
+// ── PENDÊNCIAS ("quem não fez") ──────────────────────────────
+function preencherPendenciasFiltros() {
+  const pd = document.getElementById('pend-diretoria');
+  if (pd) pd.innerHTML = '<option value="">Todas as Diretorias</option>' +
+    estrutura.diretorias.map(d => `<option value="${d.id}">${d.nome}</option>`).join('');
+  const pg = document.getElementById('pend-gerencia');
+  if (pg) pg.innerHTML = '<option value="">Todas as Gerências</option>' +
+    estrutura.gerencias.map(g => `<option value="${g.id}">${g.nome}</option>`).join('');
+  const pm = document.getElementById('pend-mes');
+  if (pm) {
+    const nomesMes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const hoje = new Date();
+    const opts = Array.from({length:12}, (_,i) => {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const val = d.getFullYear()+'-'+mm;
+      return `<option value="${val}">${nomesMes[d.getMonth()]}/${d.getFullYear()}</option>`;
+    }).join('');
+    pm.innerHTML = opts;
+  }
+  const pi = document.getElementById('pend-indicador');
+  if (pi) sb.from('indicadores').select('id,nome').eq('ativo', true).order('nome').then(({data}) => {
+    pi.innerHTML = '<option value="">Todos os indicadores</option>' +
+      (data || []).map(i => `<option value="${i.id}">${i.nome}</option>`).join('');
+  });
+}
+
+function filtrarGerenciasPendencias() {
+  const dirId = parseInt(document.getElementById('pend-diretoria')?.value) || 0;
+  const pg = document.getElementById('pend-gerencia');
+  if (!pg) return;
+  const opts = estrutura.gerencias
+    .filter(g => !dirId || g.diretoria_id === dirId)
+    .map(g => `<option value="${g.id}">${g.nome}${g.unidades ? ' (' + g.unidades.nome + ')' : ''}</option>`)
+    .join('');
+  pg.innerHTML = '<option value="">Todas as Gerências</option>' + opts;
+}
+
+window._pendUltimosDados = [];
+
+async function carregarPendencias() {
+  const tw = document.getElementById('pend-table');
+  if (tw) tw.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
+
+  const dirId = parseInt(document.getElementById('pend-diretoria')?.value) || 0;
+  const gerId = parseInt(document.getElementById('pend-gerencia')?.value) || 0;
+  const indId = parseInt(document.getElementById('pend-indicador')?.value) || 0;
+  let mes = document.getElementById('pend-mes')?.value || '';
+  if (!mes) { const hoje = new Date(); mes = hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0'); }
+
+  let gerIdsFiltro = null;
+  if (gerId) gerIdsFiltro = [gerId];
+  else if (dirId) gerIdsFiltro = estrutura.gerencias.filter(g => g.diretoria_id === dirId).map(g => g.id);
+  if (usuario.perfil === 'gerencia') gerIdsFiltro = [usuario.gerencia_id];
+
+  let ql = sb.from('lancamentos').select('id,gerencia_id,mes,gerencias(nome,diretorias(nome),unidades(nome))').eq('mes', mes);
+  if (gerIdsFiltro) ql = ql.in('gerencia_id', gerIdsFiltro);
+  const { data: lancs, error: eL } = await ql;
+  if (eL || !lancs?.length) {
+    if (tw) tw.innerHTML = '<div class="loading">Nenhum lançamento encontrado para esse período/filtro.</div>';
+    window._pendUltimosDados = [];
+    return;
+  }
+  const lancPorId = Object.fromEntries(lancs.map(l => [l.id, l]));
+
+  let qp = sb.from('lancamento_pendencias').select('*,indicadores(nome)')
+    .in('lancamento_id', lancs.map(l => l.id))
+    .ilike('status', '%pendente%');
+  if (indId) qp = qp.eq('indicador_id', indId);
+  const { data: pend, error: eP } = await qp.order('nome');
+
+  if (eP || !pend?.length) {
+    if (tw) tw.innerHTML = '<div class="loading">🎉 Ninguém pendente com esses filtros.</div>';
+    window._pendUltimosDados = [];
+    return;
+  }
+
+  const linhas = pend.map(p => {
+    const l = lancPorId[p.lancamento_id] || {};
+    const g = l.gerencias || {};
+    return { ...p, gerNome: g.nome, dirNome: g.diretorias?.nome, uniNome: g.unidades?.nome, mes: l.mes };
+  });
+  window._pendUltimosDados = linhas;
+
+  if (tw) tw.innerHTML = `<div style="overflow-x:auto"><table><thead><tr>
+    <th>Nome</th><th>Cargo</th><th>Gerência</th><th>Diretoria</th><th>Unidade</th><th>Indicador</th><th>Status</th>
+  </tr></thead><tbody>${linhas.map(p => `<tr>
+      <td style="font-weight:600">${p.nome || '—'}</td>
+      <td style="font-size:12px;color:var(--muted)">${p.cargo || '—'}</td>
+      <td>${p.gerNome || '—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${p.dirNome || '—'}</td>
+      <td style="font-size:11px;color:var(--blue)">${p.uniNome || '—'}</td>
+      <td style="font-size:12px">${p.indicadores?.nome || '—'}</td>
+      <td><span class="badge" style="background:#fbe4e4;color:#d93025">${p.status || 'Pendente'}</span></td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+function exportarPendenciasExcel() {
+  const linhas = window._pendUltimosDados || [];
+  if (!linhas.length) { alert('Nada pra exportar — carregue a lista primeiro.'); return; }
+  const dados = linhas.map(p => ({
+    Nome: p.nome, Cargo: p.cargo, Matricula: p.matricula,
+    Gerencia: p.gerNome, Diretoria: p.dirNome, Unidade: p.uniNome,
+    Indicador: p.indicadores?.nome, Mes: p.mes, Status: p.status
+  }));
+  const ws = XLSX.utils.json_to_sheet(dados);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pendencias');
+  XLSX.writeFile(wb, 'pendencias_' + (document.getElementById('pend-mes')?.value || 'mes_atual') + '.xlsx');
 }
 
 // ── MODAL INDICADORES NÃO ATINGIDOS ──────────────────────────

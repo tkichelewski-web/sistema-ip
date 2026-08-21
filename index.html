@@ -2338,12 +2338,12 @@ async function salvarLancamento(){
     });
     const pg = calcPontGer(itens, indsGer);
 
-    // 3. Nota de auditoria
-    let aud = parseFloat(document.getElementById('nota-auditoria')?.value)||0;
-    try {
-      const nu = await withTimeout(getNotaAuditoria(uniId, safraIdLanc), 8000, 'getNotaAuditoria');
-      if(nu != null) aud = nu;
-    } catch(e) { /* usa valor manual */ }
+    // 3 e 5. Auditoria + Média da diretoria (recalculada de verdade a partir dos
+    // itens de cada gerência da diretoria, não copiada do banco — mesma correção
+    // já aplicada nos importadores).
+    const audManual = parseFloat(document.getElementById('nota-auditoria')?.value)||0;
+    let { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(gerId, mesLancar, safraIdLanc, pg);
+    if(!aud && audManual) aud = audManual; // busca automática não achou nada — usa o valor digitado manualmente
 
     // 4. Ajuste e eventos
     const regras   = parseInt(document.getElementById('regras-salvas')?.value)||0;
@@ -2355,26 +2355,6 @@ async function salvarLancamento(){
     let tipoAc     = 'nenhum';
     for(const o of piorOrdem){ if(_eventos.some(e=>e.classe===o)){ tipoAc=o; break; } }
 
-    // 5. Média da diretoria
-    const ger = estrutura.gerencias.find(g=>g.id===gerId);
-    let mediaDir = null;
-    if(ger){
-      try {
-        const gersDir = estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id);
-        const gersIds = gersDir.map(g=>g.id);
-        const {data:ld} = await sbSafe(()=>
-          sb.from('lancamentos')
-            .select('pontuacao_gerencia,gerencia_id')
-            .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar)
-            .in('gerencia_id', gersIds)
-        );
-        const mp = {};
-        gersDir.forEach(g=>{ mp[g.id]=0; });
-        (ld||[]).forEach(l=>{ mp[l.gerencia_id]=l.pontuacao_gerencia||0; });
-        mp[gerId] = pg;
-        mediaDir = Object.values(mp).reduce((s,v)=>s+v,0) / gersDir.length;
-      } catch(e) { mediaDir = pg; }
-    }
 
     // 6. Cálculos finais
     const indBase  = calcIndice(pg, mediaDir, aud, 0);
@@ -2483,22 +2463,10 @@ async function salvarLancamento(){
       catch(eh){ console.warn('Histórico semanal não gravado:', eh.message); }
     }
 
-    // 11. Recalcula outras gerências da diretoria (em background)
-    setTimeout(async ()=>{
-      try {
-        if(ger && mediaDir!=null){
-          const gd2 = estrutura.gerencias.filter(g=>g.diretoria_id===ger.diretoria_id&&g.id!==gerId).map(g=>g.id);
-          if(gd2.length){
-            const {data:ol} = await sb.from('lancamentos').select('*')
-              .or('mes.eq.'+mesLancar+',periodo.eq.'+mesLancar).in('gerencia_id',gd2);
-            for(const o of (ol||[])){
-              const nIP = calcIndice(o.pontuacao_gerencia,mediaDir,o.nota_auditoria||aud,o.ajuste_pontos||0);
-              await sb.from('lancamentos').update({media_diretoria:mediaDir,indice_prevencao:nIP}).eq('id',o.id);
-            }
-          }
-        }
-      } catch(e){ console.warn('Recálculo bg falhou:', e.message); }
-    }, 500);
+    // 11. (removido) — a propagação pras outras gerências da diretoria já
+    // aconteceu dentro de recalcularAuditoriaEMediaDiretoria, no passo 3/5,
+    // usando o pg recalculado de cada uma (não mais um valor stale do banco).
+    const ger = estrutura.gerencias.find(g=>g.id===gerId);
 
     // 12. Sucesso
     const st = getStatus(indFinal);

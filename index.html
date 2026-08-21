@@ -2997,18 +2997,13 @@ async function recalcularAuditoriaEMediaDiretoria(gerId, mes, safraId, pg) {
     lancsDir = data || [];
   } catch (e) { console.warn('recalcularAuditoriaEMediaDiretoria: busca de lançamentos da diretoria falhou:', e.message); }
 
-  let indsTodos = [];
-  try {
-    const { data, error } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
-    if (error) throw error;
-    indsTodos = data || [];
-  } catch (e) { console.warn('recalcularAuditoriaEMediaDiretoria: busca de indicadores falhou:', e.message); }
-
   // Recalcula a pontuação de CADA gerência da diretoria a partir dos itens dela —
   // nunca confia em pontuacao_gerencia salva no banco, que pode estar desatualizada
   // ou nunca ter sido calculada (é exatamente esse o bug que gerava PONT.GER = 0
-  // mesmo com item gravado). Cada gerência é isolada num try/catch próprio, pra uma
-  // falha pontual não travar o cálculo das outras.
+  // mesmo com item gravado). O peso de cada indicador é específico por gerência
+  // (tabela ind_gerencia_safra via getIndsGerencia) — usar o peso genérico da
+  // tabela indicadores dá conta errada. Cada gerência é isolada num try/catch
+  // próprio, pra uma falha pontual não travar o cálculo das outras.
   const pgPorGerencia = {};
   gersDir.forEach(g => { pgPorGerencia[g.id] = 0; });
   for (const l of lancsDir) {
@@ -3016,7 +3011,8 @@ async function recalcularAuditoriaEMediaDiretoria(gerId, mes, safraId, pg) {
     try {
       const { data: itensL, error } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', l.id);
       if (error) throw error;
-      pgPorGerencia[l.gerencia_id] = calcPontGer(itensL || [], indsTodos);
+      const indsGerL = await getIndsGerencia(l.gerencia_id, safraId);
+      pgPorGerencia[l.gerencia_id] = calcPontGer(itensL || [], indsGerL || []);
     } catch (e) {
       console.warn('recalcularAuditoriaEMediaDiretoria: falhou recalcular pg da gerência ' + l.gerencia_id + ' (lançamento ' + l.id + '):', e.message);
       pgPorGerencia[l.gerencia_id] = l.pontuacao_gerencia || 0; // fallback: mantém o que já estava salvo
@@ -5144,8 +5140,8 @@ async function gravarImportacaoWecheck(prontos) {
 
       // 3. Recalcula a pontuação da gerência usando TODOS os itens do lançamento
       const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
-      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
-      const pg = calcPontGer(todosItens || [], indsTodos || []);
+      const indsGer = await getIndsGerencia(grupo.gerId, grupo.safraId);
+      const pg = calcPontGer(todosItens || [], indsGer || []);
 
       const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(grupo.gerId, grupo.mes, grupo.safraId, pg);
       const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
@@ -5444,8 +5440,8 @@ async function gravarImportacaoWecheckObs(prontos) {
       }
 
       const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
-      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
-      const pg = calcPontGer(todosItens || [], indsTodos || []);
+      const indsGer = await getIndsGerencia(grupo.gerId, grupo.safraId);
+      const pg = calcPontGer(todosItens || [], indsGer || []);
 
       const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(grupo.gerId, grupo.mes, grupo.safraId, pg);
       const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
@@ -5792,8 +5788,8 @@ async function gravarImportacaoWecheckPA(prontos) {
       }
 
       const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
-      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
-      const pg = calcPontGer(todosItens || [], indsTodos || []);
+      const indsGer = await getIndsGerencia(grupo.gerId, grupo.safraId);
+      const pg = calcPontGer(todosItens || [], indsGer || []);
 
       const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(grupo.gerId, grupo.mes, grupo.safraId, pg);
       const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
@@ -6102,8 +6098,8 @@ async function gravarImportacaoWecheckSimulados(prontos) {
       if (eItens) throw eItens;
 
       const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
-      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
-      const pg = calcPontGer(todosItens || [], indsTodos || []);
+      const indsGer = await getIndsGerencia(g.gerId, safraId);
+      const pg = calcPontGer(todosItens || [], indsGer || []);
 
       const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(g.gerId, g.mes, safraId, pg);
       const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);

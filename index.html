@@ -2971,6 +2971,51 @@ async function salvarSafra(){const nome=document.getElementById('sf-nome')?.valu
 async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
 async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}
 async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}alert('✅ Notas de auditoria salvas!');carregarAuditorias();}
+// Usada pelos importadores (Inspeção/Observação/Plano de Ação/Simulados) — replica
+// a mesma lógica do lançamento manual: busca a nota de auditoria real, calcula a
+// média da diretoria com base em TODAS as gerências dela, e propaga a nova média
+// pras outras gerências da mesma diretoria (que também precisam de indice_prevencao
+// recalculado, mesmo sem terem sido tocadas nessa importação).
+async function recalcularAuditoriaEMediaDiretoria(gerId, mes, safraId, pg) {
+  const ger = estrutura.gerencias.find(g => g.id === gerId);
+  let aud = 0, mediaDir = null;
+  if (!ger) return { aud, mediaDir };
+
+  try {
+    const nu = await getNotaAuditoria(ger.unidade_id, safraId);
+    if (nu != null) aud = nu;
+  } catch (e) { /* mantém 0 */ }
+
+  try {
+    const gersDir = estrutura.gerencias.filter(g => g.diretoria_id === ger.diretoria_id);
+    const gersIds = gersDir.map(g => g.id);
+    const { data: ld } = await sb.from('lancamentos')
+      .select('pontuacao_gerencia,gerencia_id')
+      .or('mes.eq.' + mes + ',periodo.eq.' + mes)
+      .in('gerencia_id', gersIds);
+    const mp = {};
+    gersDir.forEach(g => { mp[g.id] = 0; });
+    (ld || []).forEach(l => { mp[l.gerencia_id] = l.pontuacao_gerencia || 0; });
+    mp[gerId] = pg;
+    mediaDir = Object.values(mp).reduce((s, v) => s + v, 0) / gersDir.length;
+  } catch (e) { mediaDir = pg; }
+
+  if (mediaDir != null) {
+    try {
+      const gd2 = estrutura.gerencias.filter(g => g.diretoria_id === ger.diretoria_id && g.id !== gerId).map(g => g.id);
+      if (gd2.length) {
+        const { data: ol } = await sb.from('lancamentos').select('*')
+          .or('mes.eq.' + mes + ',periodo.eq.' + mes).in('gerencia_id', gd2);
+        for (const o of (ol || [])) {
+          const nIP = calcIndice(o.pontuacao_gerencia, mediaDir, o.nota_auditoria || aud, o.ajuste_pontos || 0);
+          await sb.from('lancamentos').update({ media_diretoria: mediaDir, indice_prevencao: nIP }).eq('id', o.id);
+        }
+      }
+    } catch (e) { console.warn('Recálculo das outras gerências da diretoria falhou:', e.message); }
+  }
+  return { aud, mediaDir };
+}
+
 async function getNotaAuditoria(unidadeId,safraId){
   if(!unidadeId||!safraId) return null;
   try {
@@ -5076,16 +5121,15 @@ async function gravarImportacaoWecheck(prontos) {
       const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
       const pg = calcPontGer(todosItens || [], indsTodos || []);
 
-      const { data: lancAtual } = await sb.from('lancamentos')
-        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
-      const md = lancAtual?.[0]?.media_diretoria ?? null;
-      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(grupo.gerId, grupo.mes, grupo.safraId, pg);
+      const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
       const aj = lancAtual?.[0]?.ajuste_pontos || 0;
-      const indBase = calcIndice(pg, md, aud, 0);
-      const indFinal = calcIndice(pg, md, aud, aj);
+      const indBase = calcIndice(pg, mediaDir, aud, 0);
+      const indFinal = calcIndice(pg, mediaDir, aud, aj);
 
       await sb.from('lancamentos').update({
-        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,
+        indice_base: indBase, indice_prevencao: indFinal,
         atualizado_em: new Date().toISOString()
       }).eq('id', lancId);
 
@@ -5096,7 +5140,6 @@ async function gravarImportacaoWecheck(prontos) {
   }
   return { ok, erros };
 }
-
 
 // ===== Importação de planilha WeCheck Observações -> lançamentos reais no IP =====
 // Reaproveita as funções genéricas já carregadas pelo importador de Inspeção
@@ -5378,16 +5421,15 @@ async function gravarImportacaoWecheckObs(prontos) {
       const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
       const pg = calcPontGer(todosItens || [], indsTodos || []);
 
-      const { data: lancAtual } = await sb.from('lancamentos')
-        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
-      const md = lancAtual?.[0]?.media_diretoria ?? null;
-      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(grupo.gerId, grupo.mes, grupo.safraId, pg);
+      const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
       const aj = lancAtual?.[0]?.ajuste_pontos || 0;
-      const indBase = calcIndice(pg, md, aud, 0);
-      const indFinal = calcIndice(pg, md, aud, aj);
+      const indBase = calcIndice(pg, mediaDir, aud, 0);
+      const indFinal = calcIndice(pg, mediaDir, aud, aj);
 
       await sb.from('lancamentos').update({
-        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,
+        indice_base: indBase, indice_prevencao: indFinal,
         atualizado_em: new Date().toISOString()
       }).eq('id', lancId);
 
@@ -5398,7 +5440,6 @@ async function gravarImportacaoWecheckObs(prontos) {
   }
   return { ok, erros };
 }
-
 
 // ===== Importação de planilha WeCheck Plano de Ação -> lançamentos reais no IP =====
 // Reaproveita campo, montarMes, normaliza, SINONIMOS_UNIDADE, ALIASES_GERENCIA
@@ -5728,16 +5769,15 @@ async function gravarImportacaoWecheckPA(prontos) {
       const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
       const pg = calcPontGer(todosItens || [], indsTodos || []);
 
-      const { data: lancAtual } = await sb.from('lancamentos')
-        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
-      const md = lancAtual?.[0]?.media_diretoria ?? null;
-      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(grupo.gerId, grupo.mes, grupo.safraId, pg);
+      const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
       const aj = lancAtual?.[0]?.ajuste_pontos || 0;
-      const indBase = calcIndice(pg, md, aud, 0);
-      const indFinal = calcIndice(pg, md, aud, aj);
+      const indBase = calcIndice(pg, mediaDir, aud, 0);
+      const indFinal = calcIndice(pg, mediaDir, aud, aj);
 
       await sb.from('lancamentos').update({
-        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,
+        indice_base: indBase, indice_prevencao: indFinal,
         atualizado_em: new Date().toISOString()
       }).eq('id', lancId);
 
@@ -5748,7 +5788,6 @@ async function gravarImportacaoWecheckPA(prontos) {
   }
   return { ok, erros };
 }
-
 
 // ===== Importação de Cronograma de Simulados -> lançamentos reais no IP =====
 // Particularidade: a planilha só tem Diretoria (não Gerência) — cada linha
@@ -6040,16 +6079,15 @@ async function gravarImportacaoWecheckSimulados(prontos) {
       const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
       const pg = calcPontGer(todosItens || [], indsTodos || []);
 
-      const { data: lancAtual } = await sb.from('lancamentos')
-        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
-      const md = lancAtual?.[0]?.media_diretoria ?? null;
-      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(g.gerId, g.mes, safraId, pg);
+      const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
       const aj = lancAtual?.[0]?.ajuste_pontos || 0;
-      const indBase = calcIndice(pg, md, aud, 0);
-      const indFinal = calcIndice(pg, md, aud, aj);
+      const indBase = calcIndice(pg, mediaDir, aud, 0);
+      const indFinal = calcIndice(pg, mediaDir, aud, aj);
 
       await sb.from('lancamentos').update({
-        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,
+        indice_base: indBase, indice_prevencao: indFinal,
         atualizado_em: new Date().toISOString()
       }).eq('id', lancId);
 

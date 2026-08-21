@@ -2979,43 +2979,65 @@ async function salvarAuditorias(){const safraId=parseInt(document.getElementById
 async function recalcularAuditoriaEMediaDiretoria(gerId, mes, safraId, pg) {
   const ger = estrutura.gerencias.find(g => g.id === gerId);
   let aud = 0, mediaDir = null;
-  if (!ger) return { aud, mediaDir };
+  if (!ger) { console.warn('recalcularAuditoriaEMediaDiretoria: gerência ' + gerId + ' não encontrada em estrutura.gerencias'); return { aud, mediaDir }; }
 
   try {
     const nu = await getNotaAuditoria(ger.unidade_id, safraId);
     if (nu != null) aud = nu;
-  } catch (e) { /* mantém 0 */ }
+  } catch (e) { console.warn('getNotaAuditoria falhou:', e.message); }
 
+  const gersDir = estrutura.gerencias.filter(g => g.diretoria_id === ger.diretoria_id);
+  const gersIds = gersDir.map(g => g.id);
+
+  let lancsDir = [];
   try {
-    const gersDir = estrutura.gerencias.filter(g => g.diretoria_id === ger.diretoria_id);
-    const gersIds = gersDir.map(g => g.id);
-    const { data: lancsDir } = await sb.from('lancamentos').select('*')
+    const { data, error } = await sb.from('lancamentos').select('*')
       .or('mes.eq.' + mes + ',periodo.eq.' + mes).in('gerencia_id', gersIds);
-    const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
+    if (error) throw error;
+    lancsDir = data || [];
+  } catch (e) { console.warn('recalcularAuditoriaEMediaDiretoria: busca de lançamentos da diretoria falhou:', e.message); }
 
-    // Recalcula a pontuação de CADA gerência da diretoria a partir dos itens dela —
-    // nunca confia em pontuacao_gerencia salva no banco, que pode estar desatualizada
-    // ou nunca ter sido calculada (é exatamente esse o bug que gerava PONT.GER = 0
-    // mesmo com item gravado).
-    const pgPorGerencia = {};
-    gersDir.forEach(g => { pgPorGerencia[g.id] = 0; });
-    for (const l of (lancsDir || [])) {
-      if (l.gerencia_id === gerId) continue; // essa é a que acabamos de calcular (pg já veio pronto)
-      const { data: itensL } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', l.id);
-      pgPorGerencia[l.gerencia_id] = calcPontGer(itensL || [], indsTodos || []);
+  let indsTodos = [];
+  try {
+    const { data, error } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
+    if (error) throw error;
+    indsTodos = data || [];
+  } catch (e) { console.warn('recalcularAuditoriaEMediaDiretoria: busca de indicadores falhou:', e.message); }
+
+  // Recalcula a pontuação de CADA gerência da diretoria a partir dos itens dela —
+  // nunca confia em pontuacao_gerencia salva no banco, que pode estar desatualizada
+  // ou nunca ter sido calculada (é exatamente esse o bug que gerava PONT.GER = 0
+  // mesmo com item gravado). Cada gerência é isolada num try/catch próprio, pra uma
+  // falha pontual não travar o cálculo das outras.
+  const pgPorGerencia = {};
+  gersDir.forEach(g => { pgPorGerencia[g.id] = 0; });
+  for (const l of lancsDir) {
+    if (l.gerencia_id === gerId) continue; // essa é a que acabamos de calcular (pg já veio pronto)
+    try {
+      const { data: itensL, error } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', l.id);
+      if (error) throw error;
+      pgPorGerencia[l.gerencia_id] = calcPontGer(itensL || [], indsTodos);
+    } catch (e) {
+      console.warn('recalcularAuditoriaEMediaDiretoria: falhou recalcular pg da gerência ' + l.gerencia_id + ' (lançamento ' + l.id + '):', e.message);
+      pgPorGerencia[l.gerencia_id] = l.pontuacao_gerencia || 0; // fallback: mantém o que já estava salvo
     }
-    pgPorGerencia[gerId] = pg;
+  }
+  pgPorGerencia[gerId] = pg;
 
-    mediaDir = Object.values(pgPorGerencia).reduce((s, v) => s + v, 0) / gersDir.length;
+  mediaDir = gersDir.length ? Object.values(pgPorGerencia).reduce((s, v) => s + v, 0) / gersDir.length : pg;
 
-    // Propaga a pontuação recalculada + a nova média pras outras gerências da diretoria.
-    for (const l of (lancsDir || [])) {
-      if (l.gerencia_id === gerId) continue;
+  // Propaga a pontuação recalculada + a nova média pras outras gerências da diretoria.
+  for (const l of lancsDir) {
+    if (l.gerencia_id === gerId) continue;
+    try {
       const pgO = pgPorGerencia[l.gerencia_id];
       const nIP = calcIndice(pgO, mediaDir, l.nota_auditoria || aud, l.ajuste_pontos || 0);
-      await sb.from('lancamentos').update({ pontuacao_gerencia: pgO, media_diretoria: mediaDir, indice_prevencao: nIP }).eq('id', l.id);
+      const { error } = await sb.from('lancamentos').update({ pontuacao_gerencia: pgO, media_diretoria: mediaDir, indice_prevencao: nIP }).eq('id', l.id);
+      if (error) throw error;
+    } catch (e) {
+      console.warn('recalcularAuditoriaEMediaDiretoria: falhou atualizar lançamento ' + l.id + ' (gerência ' + l.gerencia_id + '):', e.message);
     }
-  } catch (e) { console.warn('Recálculo da diretoria falhou:', e.message); mediaDir = pg; }
+  }
 
   return { aud, mediaDir };
 }

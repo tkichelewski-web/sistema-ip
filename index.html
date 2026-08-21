@@ -187,6 +187,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="file" id="input-importar-planilha-obs" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckObservacoes(event)">
       <button class="btn btn-sm" id="btn-importar-planilha-pa" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-pa').click()">📥 Importar Plano de Ação (piloto)</button>
       <input type="file" id="input-importar-planilha-pa" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckPlanoAcao(event)">
+      <button class="btn btn-sm" id="btn-importar-planilha-sim" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-sim').click()">📥 Importar Simulados (piloto)</button>
+      <input type="file" id="input-importar-planilha-sim" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckSimulados(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -5742,6 +5744,253 @@ async function gravarImportacaoWecheckPA(prontos) {
       ok++;
     } catch (err) {
       erros.push({ chave, erro: err.message });
+    }
+  }
+  return { ok, erros };
+}
+
+
+// ===== Importação de Cronograma de Simulados -> lançamentos reais no IP =====
+// Particularidade: a planilha só tem Diretoria (não Gerência) — cada linha
+// se aplica a TODAS as gerências ativas daquela diretoria+unidade, com o
+// previsto/realizado cheio (não dividido) em cada uma.
+
+const NOME_IND_SIMULADOS_CRONOGRAMA = 'Nº de Simulados';
+
+// Remove espaços sobrando nas CHAVES do objeto (a planilha tem 'Unidade ', 'Diretoria ' com espaço no fim).
+function linhaComChavesTrimadas(l) {
+  const nova = {};
+  Object.keys(l).forEach(k => { nova[k.trim()] = l[k]; });
+  return nova;
+}
+
+async function importarPlanilhaWecheckSimulados(evento) {
+  const arquivos = Array.from(evento.target.files || []);
+  if (!arquivos.length) return;
+
+  try {
+    const todasLinhas = [];
+    for (const arquivo of arquivos) {
+      const buffer = await arquivo.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      wb.SheetNames.forEach(nomeAba => {
+        const linhasAba = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null });
+        linhasAba.forEach(l => todasLinhas.push(linhaComChavesTrimadas(l)));
+      });
+    }
+
+    const linhasValidas = [];
+    const linhasIgnoradas = [];
+    todasLinhas.forEach(l => {
+      const unidadeNome = (campo(l, ['Unidade', 'UNIDADE']) || '').trim();
+      const diretoriaNome = (campo(l, ['Diretoria', 'DIRETORIA']) || '').trim();
+      const mes = montarMes(l) || (() => {
+        // MÊS (nome completo) + ANO/SAFRA, mesmo esquema do resto do sistema
+        const mesNome = (campo(l, ['MÊS', 'Mês', 'MES']) || '').toString().trim().toLowerCase();
+        const mesNum = MESES_PT[mesNome];
+        const safraTxt = (campo(l, ['ANO/SAFRA', 'Ano Safra', 'SAFRA']) || '').toString().trim();
+        if (!mesNum) return null;
+        const ano = anoDaSafraParaMes(safraTxt, parseInt(mesNum, 10));
+        return ano ? ano + '-' + mesNum : null;
+      })();
+      const safraTxt = (campo(l, ['ANO/SAFRA', 'Ano Safra', 'SAFRA']) || '').toString().trim();
+      const planejado = parseFloat(campo(l, ['PLANEJADO', 'Planejado'])) || 0;
+      const realizado = parseFloat(campo(l, ['REALIZADO', 'Realizado'])) || 0;
+
+      if (!unidadeNome || !diretoriaNome || !mes || !safraTxt) {
+        linhasIgnoradas.push({ unidadeNome, diretoriaNome, mes, safraTxt });
+        return;
+      }
+      linhasValidas.push({ unidadeNome, diretoriaNome, mes, safraTxt, planejado, realizado, oQue: (campo(l, ['O que']) || '').toString().trim() });
+    });
+
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s):', linhasIgnoradas.slice(0, 20));
+    if (!linhasValidas.length) {
+      alert('Não encontrei nenhuma linha válida. Confira Unidade, Diretoria, MÊS, ANO/SAFRA, PLANEJADO, REALIZADO.');
+      return;
+    }
+
+    const [{ data: gers }, { data: unids }, { data: diretorias }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,diretoria_id,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
+      sb.from('diretorias').select('id,nome'),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const acharUnidadeId = nomeExport => {
+      const norm = normaliza(nomeExport);
+      const alvo = SINONIMOS_UNIDADE[norm] || nomeExport;
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(alvo));
+      return u ? u.id : null;
+    };
+    const acharDiretoriaId = nome => {
+      const d = (diretorias || []).find(d => normaliza(d.nome) === normaliza(nome));
+      return d ? d.id : null;
+    };
+    const indicador = (inds || []).find(i => normaliza(i.nome) === normaliza(NOME_IND_SIMULADOS_CRONOGRAMA));
+
+    if (!indicador) {
+      alert('Não encontrei o indicador "' + NOME_IND_SIMULADOS_CRONOGRAMA + '" cadastrado (ativo) no sistema. Cria ele antes de importar.');
+      return;
+    }
+
+    // Pra cada linha, acha a diretoria+unidade e expande pra TODAS as gerências
+    // ativas daquela combinação, com o previsto/realizado cheio em cada uma.
+    const grupos = {}; // chave: gerId|safraTxt|mes -> {previsto, realizado}
+    const semGerencia = [];
+    linhasValidas.forEach(l => {
+      const unidadeId = acharUnidadeId(l.unidadeNome);
+      if (!unidadeId) { semGerencia.push({ ...l, motivo: 'unidade não encontrada' }); return; }
+
+      let gerenciasAlvo;
+      if (normaliza(l.diretoriaNome) === normaliza('Todas as diretorias')) {
+        // Caso especial: aplica em todas as gerências ativas da unidade, sem filtrar por diretoria.
+        gerenciasAlvo = (gers || []).filter(g => g.unidade_id === unidadeId);
+      } else {
+        const diretoriaId = acharDiretoriaId(l.diretoriaNome);
+        if (!diretoriaId) { semGerencia.push({ ...l, motivo: 'diretoria não encontrada' }); return; }
+        gerenciasAlvo = (gers || []).filter(g => g.diretoria_id === diretoriaId && g.unidade_id === unidadeId);
+      }
+      if (!gerenciasAlvo.length) { semGerencia.push({ ...l, motivo: 'nenhuma gerência ativa nessa diretoria+unidade' }); return; }
+
+      gerenciasAlvo.forEach(g => {
+        const chave = g.id + '|' + l.safraTxt + '|' + l.mes;
+        if (!grupos[chave]) grupos[chave] = { gerId: g.id, gerNome: g.nome, safraTxt: l.safraTxt, mes: l.mes, previsto: 0, realizado: 0 };
+        grupos[chave].previsto += l.planejado;
+        grupos[chave].realizado += l.realizado;
+      });
+    });
+
+    if (semGerencia.length) {
+      const detalhe = semGerencia.slice(0, 10).map(s => `- ${s.diretoriaNome} (${s.unidadeNome}) — ${s.motivo}`).join('\n');
+      const seguir = confirm(
+        'Não encontrei gerência(s) pra ' + semGerencia.length + ' linha(s):\n\n' + detalhe +
+        (semGerencia.length > 10 ? '\n... e mais ' + (semGerencia.length - 10) : '') +
+        '\n\nEssas linhas NÃO serão importadas. Continuar com o resto?'
+      );
+      if (!seguir) return;
+    }
+
+    const prontos = Object.values(grupos).map(g => ({ ...g, indicadorId: indicador.id, nomeIndicador: NOME_IND_SIMULADOS_CRONOGRAMA }));
+    if (!prontos.length) { alert('Nenhum lançamento pôde ser importado.'); return; }
+
+    const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
+    await mostrarPreviaImportacaoSimuladosV2(prontos, nomeResumo);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler a(s) planilha(s): ' + err.message);
+  } finally {
+    evento.target.value = '';
+  }
+}
+
+async function mostrarPreviaImportacaoSimuladosV2(prontos, nomeArquivo) {
+  const linhasHtml = prontos.map(g => {
+    const pct = g.previsto > 0 ? Math.min((g.realizado / g.previsto) * 100, 100) : (g.realizado === 0 ? 100 : 0);
+    return `<tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.gerNome}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.mes}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.previsto}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.realizado}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;font-weight:600">${pct.toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;max-width:800px;width:90%;max-height:80vh;overflow:auto;padding:24px;">
+      <h3 style="margin:0 0 4px">Prévia da importação (Simulados) — ${nomeArquivo}</h3>
+      <p style="color:#666;font-size:13px;margin:0 0 16px">${prontos.length} lançamento(s) de gerência serão gravados/atualizados. Cada gerência da diretoria recebe o valor cheio. Nada foi salvo ainda.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#f5f5f5">
+          <th style="padding:6px 10px;text-align:left">Gerência</th>
+          <th style="padding:6px 10px;text-align:left">Mês</th>
+          <th style="padding:6px 10px">Previsto</th>
+          <th style="padding:6px 10px">Realizado</th>
+          <th style="padding:6px 10px">%</th>
+        </tr></thead>
+        <tbody>${linhasHtml}</tbody>
+      </table>
+      <div style="text-align:right;margin-top:16px">
+        <button id="btn-cancelar-previa-sim" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+        <button id="btn-confirmar-previa-sim" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Confirmar e Gravar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('btn-cancelar-previa-sim').onclick = () => overlay.remove();
+  document.getElementById('btn-confirmar-previa-sim').onclick = async () => {
+    const btn = document.getElementById('btn-confirmar-previa-sim');
+    btn.disabled = true; btn.textContent = 'Gravando...';
+    try {
+      const resumo = await gravarImportacaoWecheckSimulados(prontos);
+      overlay.remove();
+      alert('Importação concluída.\n' + resumo.ok + ' lançamento(s) atualizado(s) com sucesso.' +
+        (resumo.erros.length ? '\n' + resumo.erros.length + ' com erro (veja o console).' : ''));
+      if (resumo.erros.length) console.error('Erros na importação:', resumo.erros);
+      if (typeof onPeriodoLancarChange === 'function') onPeriodoLancarChange();
+    } catch (err) {
+      alert('Erro ao gravar: ' + err.message);
+      btn.disabled = false; btn.textContent = 'Confirmar e Gravar';
+    }
+  };
+}
+
+async function gravarImportacaoWecheckSimulados(prontos) {
+  const { data: safrasBanco } = await sb.from('safras').select('id,nome,ano_ini,ano_fim');
+  const acharSafraId = safraTxt => {
+    const m = (safraTxt || '').match(/(\d{4})\s*\/\s*(\d{4})/);
+    if (!m) return null;
+    const ini = parseInt(m[1], 10), fim = parseInt(m[2], 10);
+    const s = (safrasBanco || []).find(s => s.ano_ini === ini && s.ano_fim === fim);
+    return s ? s.id : null;
+  };
+
+  let ok = 0; const erros = [];
+
+  for (const g of prontos) {
+    try {
+      const safraId = acharSafraId(g.safraTxt);
+      if (!safraId) throw new Error('safra não reconhecida: ' + g.safraTxt);
+
+      const { data: ex } = await sb.from('lancamentos').select('id')
+        .eq('gerencia_id', g.gerId).eq('safra_id', safraId).eq('mes', g.mes).limit(1);
+      let lancId = ex?.[0]?.id || null;
+      if (!lancId) {
+        const { data: ins, error: eIns } = await sb.from('lancamentos').insert({
+          gerencia_id: g.gerId, safra_id: safraId, mes: g.mes, periodo: g.mes,
+          atualizado_em: new Date().toISOString()
+        }).select('id');
+        if (eIns) throw eIns;
+        lancId = ins?.[0]?.id;
+      }
+
+      await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId).eq('indicador_id', g.indicadorId);
+      const { error: eItens } = await sb.from('lancamento_itens').insert([{
+        lancamento_id: lancId, indicador_id: g.indicadorId, previsto: g.previsto, realizado: g.realizado
+      }]);
+      if (eItens) throw eItens;
+
+      const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
+      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
+      const pg = calcPontGer(todosItens || [], indsTodos || []);
+
+      const { data: lancAtual } = await sb.from('lancamentos')
+        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
+      const md = lancAtual?.[0]?.media_diretoria ?? null;
+      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const aj = lancAtual?.[0]?.ajuste_pontos || 0;
+      const indBase = calcIndice(pg, md, aud, 0);
+      const indFinal = calcIndice(pg, md, aud, aj);
+
+      await sb.from('lancamentos').update({
+        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        atualizado_em: new Date().toISOString()
+      }).eq('id', lancId);
+
+      ok++;
+    } catch (err) {
+      erros.push({ gerencia: g.gerNome, mes: g.mes, erro: err.message });
     }
   }
   return { ok, erros };

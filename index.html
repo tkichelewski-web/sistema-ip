@@ -182,9 +182,11 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="user-info">
       <span>Olá, <strong id="user-nome"></strong> <span id="user-perfil-badge"></span></span>
       <button class="btn btn-sm" id="btn-importar-planilha" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha').click()">📥 Importar Inspeção (piloto)</button>
-      <input type="file" id="input-importar-planilha" accept=".xlsx,.xls" multiple style="display:none" onchange="importarPlanilhaWecheckInspecoes(event)">
+      <input type="file" id="input-importar-planilha" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckInspecoes(event)">
       <button class="btn btn-sm" id="btn-importar-planilha-obs" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-obs').click()">📥 Importar Observação (piloto)</button>
-      <input type="file" id="input-importar-planilha-obs" accept=".xlsx,.xls" multiple style="display:none" onchange="importarPlanilhaWecheckObservacoes(event)">
+      <input type="file" id="input-importar-planilha-obs" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckObservacoes(event)">
+      <button class="btn btn-sm" id="btn-importar-planilha-pa" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-pa').click()">📥 Importar Plano de Ação (piloto)</button>
+      <input type="file" id="input-importar-planilha-pa" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckPlanoAcao(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -3233,18 +3235,20 @@ function gerarDetalheHTML(lanc, itens, pendencias){
         ? '<a href="'+item.evidencia_url+'" target="_blank" style="font-size:11px;color:#1a73e8;text-decoration:none;background:#e8f0fe;padding:3px 8px;border-radius:12px;font-weight:600;white-space:nowrap">📎 Ver</a>'
         : '<span style="font-size:11px;color:#aaa">—</span>';
 
-      // Lista de pessoas desse indicador (se o import trouxe o detalhe)
+      // Lista de pessoas/ações desse indicador (se o import trouxe o detalhe).
+      // Vocabulário: Inspeção/Observação usam Pendente/Realizado; Plano de Ação usa
+      // Atrasada/Concluída/Pendente (aqui "Pendente" é ok, só "Atrasada" é problema).
       var pessoasInd = pendencias.filter(function(p){ return p.indicador_id === item.indicador_id; });
-      var pendentesInd = pessoasInd.filter(function(p){ return /pendente/i.test(p.status||''); });
+      var pendentesInd = pessoasInd.filter(function(p){ return /pendente|atrasad/i.test(p.status||''); });
       var togglePessoas = '';
       if(pessoasInd.length){
         var toggleId = 'pend-'+lanc.id+'-'+item.indicador_id;
         var linhasPessoasHTML = pessoasInd.map(function(p){
-          var okStatus = /realizado/i.test(p.status||'');
-          var corSt = okStatus ? '#07583C' : /pendente/i.test(p.status||'') ? '#d93025' : '#888';
+          var stTxt = p.status || '';
+          var corSt = /conclu[ií]d|realizado/i.test(stTxt) ? '#07583C' : /pendente|atrasad/i.test(stTxt) ? '#d93025' : '#888';
           return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #eef5ee;font-size:12px">'+
             '<span>'+(p.nome||'—')+(p.cargo?' <span style="color:#999">— '+p.cargo+'</span>':'')+'</span>'+
-            '<span style="color:'+corSt+';font-weight:600;white-space:nowrap">'+(p.status||'—')+'</span></div>';
+            '<span style="color:'+corSt+';font-weight:600;white-space:nowrap">'+(stTxt||'—')+'</span></div>';
         }).join('');
         togglePessoas = '<div style="margin-top:4px">'+
           '<span onclick="var el=document.getElementById(\''+toggleId+'\');el.style.display=el.style.display===\'none\'?\'block\':\'none\';" '+
@@ -3563,7 +3567,7 @@ async function carregarPendencias() {
 
   let qp = sb.from('lancamento_pendencias').select('*,indicadores(nome)')
     .in('lancamento_id', lancs.map(l => l.id))
-    .ilike('status', '%pendente%');
+    .or('status.ilike.%pendente%,status.ilike.%atrasada%');
   if (indId) qp = qp.eq('indicador_id', indId);
   const { data: pend, error: eP } = await qp.order('nome');
 
@@ -5366,6 +5370,355 @@ async function gravarImportacaoWecheckObs(prontos) {
       if (linhasPessoas.length) {
         const { error: ePess } = await sb.from('lancamento_pendencias').insert(linhasPessoas);
         if (ePess) console.warn('Não consegui gravar o detalhe por pessoa:', ePess.message);
+      }
+
+      const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
+      const { data: indsTodos } = await sb.from('indicadores').select('id,tipo,peso').eq('ativo', true);
+      const pg = calcPontGer(todosItens || [], indsTodos || []);
+
+      const { data: lancAtual } = await sb.from('lancamentos')
+        .select('media_diretoria,nota_auditoria,ajuste_pontos').eq('id', lancId).limit(1);
+      const md = lancAtual?.[0]?.media_diretoria ?? null;
+      const aud = lancAtual?.[0]?.nota_auditoria || 0;
+      const aj = lancAtual?.[0]?.ajuste_pontos || 0;
+      const indBase = calcIndice(pg, md, aud, 0);
+      const indFinal = calcIndice(pg, md, aud, aj);
+
+      await sb.from('lancamentos').update({
+        pontuacao_gerencia: pg, indice_base: indBase, indice_prevencao: indFinal,
+        atualizado_em: new Date().toISOString()
+      }).eq('id', lancId);
+
+      ok++;
+    } catch (err) {
+      erros.push({ chave, erro: err.message });
+    }
+  }
+  return { ok, erros };
+}
+
+
+// ===== Importação de planilha WeCheck Plano de Ação -> lançamentos reais no IP =====
+// Reaproveita campo, montarMes, normaliza, SINONIMOS_UNIDADE, ALIASES_GERENCIA
+// (já globais, definidos pelo importador de Inspeção).
+
+// baseNomeGerencia não é global — repete a mesma lógica aqui (mesmo motivo do de Observação).
+function baseNomeGerenciaPA(nome) {
+  return (nome || '').toString().trim()
+    .replace(/\s*-\s*(JB|PB)\s*$/i, '')
+    .replace(/^ger[eê]ncia\s+/i, '');
+}
+
+const MESES_ABREV_PT = { jan:'01', fev:'02', mar:'03', abr:'04', mai:'05', jun:'06', jul:'07', ago:'08', set:'09', out:'10', nov:'11', dez:'12' };
+
+// Aceita "2026/2027" OU "26/27" -> {ini, fim} sempre em 4 dígitos.
+function normalizarAnoSafraPA(txt) {
+  const m = (txt || '').toString().match(/(\d{2,4})\s*\/\s*(\d{2,4})/);
+  if (!m) return null;
+  const expandir = s => s.length === 2 ? (parseInt(s, 10) < 70 ? 2000 + parseInt(s, 10) : 1900 + parseInt(s, 10)) : parseInt(s, 10);
+  return { ini: expandir(m[1]), fim: expandir(m[2]) };
+}
+
+// O relatório de Plano de Ação já mudou de formato de período umas 3x — esta função
+// tenta, em ordem: (1) MES/ANO-SAFRA padrão das outras planilhas; (2) "Mes Ano"
+// abreviado tipo "ago/26"; (3) "Mes Nome" completo ("agosto") + "Safra" ("26/27" ou
+// "2026/2027"). O que funcionar primeiro, usa.
+function montarMesESafraPA(l) {
+  let mes = montarMes(l);
+  let safraTxt = (campo(l, ['ANO/SAFRA', 'Ano Safra', 'ANO_SAFRA', 'SAFRA', 'Safra']) || '').toString().trim();
+
+  if (!mes) {
+    const combo = (campo(l, ['Mes Ano', 'MES ANO', 'MesAno']) || '').toString().trim().toLowerCase();
+    const m = combo.match(/^([a-zç]{3})\/(\d{2})$/);
+    if (m) {
+      const mesNum = MESES_ABREV_PT[m[1]];
+      if (mesNum) {
+        const ano2 = parseInt(m[2], 10);
+        const ano = ano2 < 70 ? 2000 + ano2 : 1900 + ano2;
+        mes = ano + '-' + mesNum;
+        if (!safraTxt) {
+          const anoIni = parseInt(mesNum, 10) >= 4 ? ano : ano - 1;
+          safraTxt = anoIni + '/' + (anoIni + 1);
+        }
+      }
+    }
+  }
+
+  if (!mes) {
+    const mesNome = (campo(l, ['Mes Nome', 'Mês', 'MES_NOME', 'Mes_Nome']) || '').toString().trim().toLowerCase();
+    const mesNum = MESES_PT[mesNome];
+    if (mesNum) {
+      const safraObj = normalizarAnoSafraPA(safraTxt);
+      if (safraObj) mes = (parseInt(mesNum, 10) >= 4 ? safraObj.ini : safraObj.fim) + '-' + mesNum;
+    }
+  }
+
+  if (safraTxt && !/^\d{4}\/\d{4}$/.test(safraTxt)) {
+    const safraObj = normalizarAnoSafraPA(safraTxt);
+    if (safraObj) safraTxt = safraObj.ini + '/' + safraObj.fim;
+  }
+
+  if (!mes || !safraTxt) return null;
+  return { mes, safraTxt };
+}
+const NOME_IND_PA_SIMULADOS  = 'Nº de Ações de Simulados';
+const NOME_IND_PA_ABRANGENCIA= 'Nº de Ações de Acidentes/Abrangência';
+const NOME_IND_PA_ACID_INC   = 'Nº de Ações de Acidentes/Incidentes';
+const NOME_IND_PA_ERGONOMIA  = 'Nº de Ações de Ergonomia';
+
+// Classifica o texto livre de "Tipo de Plano de Ação" em um dos 5 indicadores.
+function classificarPlanoAcao(tipoTxt) {
+  const t = normaliza(tipoTxt);
+  if (t.includes('INSPECAO')) return NOME_IND_PA_INSPECOES;
+  if (t.includes('ABRANGENCIA')) return NOME_IND_PA_ABRANGENCIA;
+  if (t.includes('INCIDENTE') || t.includes('ACIDENTE')) return NOME_IND_PA_ACID_INC;
+  if (t.includes('ALARME')) return NOME_IND_PA_SIMULADOS;
+  if (t.includes('ERGONOMIA')) return NOME_IND_PA_ERGONOMIA;
+  return null;
+}
+
+async function importarPlanilhaWecheckPlanoAcao(evento) {
+  const arquivos = Array.from(evento.target.files || []);
+  if (!arquivos.length) return;
+
+  try {
+    const todasLinhas = [];
+    for (const arquivo of arquivos) {
+      const buffer = await arquivo.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      wb.SheetNames.forEach(nomeAba => {
+        const linhasAba = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null });
+        todasLinhas.push(...linhasAba);
+      });
+    }
+
+    // Previsto = total de planos daquele tipo/gerência/mês; Realizado = quantos NÃO
+    // estão Atrasados (Concluída + Pendente no prazo contam como "em dia").
+    const grupos = {};
+    const linhasIgnoradas = [];
+
+    todasLinhas.forEach(l => {
+      const gerNome = (campo(l, ['GERENCIA', 'Gerencia', 'Gerência']) || '').trim();
+      const unidadeNome = (campo(l, ['UNIDADE2', 'UNIDADE', 'Unidade']) || '').trim();
+      const r = montarMesESafraPA(l);
+      const mes = r ? r.mes : null;
+      const safraTxt = r ? r.safraTxt : '';
+      const tipo = campo(l, ['Tipo de Plano de Ação', 'TIPO DE PLANO DE AÇÃO', 'Tipo']);
+      const nomeIndicador = classificarPlanoAcao(tipo);
+      if (!gerNome || !unidadeNome || !mes || !nomeIndicador) {
+        linhasIgnoradas.push({ gerNome, unidadeNome, mes, tipo });
+        return;
+      }
+
+      const status = normaliza(campo(l, ['Status', 'STATUS']));
+      const emDia = status !== 'ATRASADA' ? 1 : 0;
+
+      const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + nomeIndicador;
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador, previsto: 0, realizado: 0, pessoas: [] };
+      grupos[chave].previsto += 1;
+      grupos[chave].realizado += emDia;
+      grupos[chave].pessoas.push({
+        nome: (campo(l, ['Ação', 'AÇÃO']) || '').toString().trim(),        // aqui "pessoa" = a ação em si, pra dar pra ver detalhe
+        cargo: (campo(l, ['Responsável', 'RESPONSÁVEL']) || '').toString().trim(),
+        matricula: (campo(l, ['Número', 'NÚMERO']) || '').toString().trim(),
+        status: (campo(l, ['Status', 'STATUS']) || '').toString().trim()
+      });
+    });
+
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s):', linhasIgnoradas.slice(0, 20));
+
+    const listaGrupos = Object.values(grupos);
+    if (!listaGrupos.length) {
+      alert('Não encontrei nenhuma linha válida. Confira GERENCIA/Gerencia, UNIDADE2/UNIDADE, MES, ANO/SAFRA e "Tipo de Plano de Ação".');
+      return;
+    }
+
+    const [{ data: gers }, { data: unids }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const acharUnidadeId = nomeExport => {
+      const norm = normaliza(nomeExport);
+      const alvo = SINONIMOS_UNIDADE[norm] || nomeExport;
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(alvo));
+      return u ? u.id : null;
+    };
+    const acharGerId = (gerNomeOriginal, unidadeNome) => {
+      const apelido = ALIASES_GERENCIA[normaliza(gerNomeOriginal)];
+      const gerNome = apelido || gerNomeOriginal;
+      const base = normaliza(baseNomeGerenciaPA(gerNome));
+      const unidadeId = acharUnidadeId(unidadeNome);
+      if (unidadeId) {
+        const c1 = (gers || []).filter(g => normaliza(baseNomeGerenciaPA(g.nome)) === base && g.unidade_id === unidadeId);
+        if (c1.length === 1) return { id: c1[0].id };
+        if (c1.length > 1) return { erro: 'gerência ambígua (' + c1.length + ' registros nome+unidade)' };
+      }
+      const c2 = (gers || []).filter(g => normaliza(baseNomeGerenciaPA(g.nome)) === base);
+      if (c2.length === 1) return { id: c2[0].id };
+      if (c2.length > 1) return { erro: 'gerência ambígua (' + c2.length + ' registros só de nome, unidade "' + unidadeNome + '" não bateu com nenhum)' };
+      return { erro: 'gerência não encontrada' };
+    };
+    const acharIndicadorPorNome = nome => (inds || []).find(i => normaliza(i.nome) === normaliza(nome)) || null;
+
+    const prontosBrutos = [];
+    const semMatch = [];
+    listaGrupos.forEach(gr => {
+      const resGer = acharGerId(gr.gerNome, gr.unidadeNome);
+      const ind = acharIndicadorPorNome(gr.nomeIndicador);
+      if (resGer.erro || !ind) { semMatch.push({ ...gr, erroGer: resGer.erro, ind }); return; }
+      prontosBrutos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
+    });
+
+    const mesclados = {};
+    prontosBrutos.forEach(p => {
+      const chave = p.gerId + '|' + p.safraTxt + '|' + p.mes + '|' + p.indicadorId;
+      if (!mesclados[chave]) mesclados[chave] = { ...p };
+      else {
+        mesclados[chave].previsto += p.previsto;
+        mesclados[chave].realizado += p.realizado;
+        mesclados[chave].pessoas = (mesclados[chave].pessoas || []).concat(p.pessoas || []);
+      }
+    });
+    const prontos = Object.values(mesclados);
+
+    if (semMatch.length) {
+      const detalhe = semMatch.slice(0, 10).map(s =>
+        `- ${s.gerNome} (${s.unidadeNome}) / ${s.nomeIndicador} (${s.erroGer || ''}${s.erroGer && !s.ind ? ' e ' : ''}${!s.ind ? 'indicador não encontrado' : ''})`
+      ).join('\n');
+      const seguir = confirm(
+        'Não encontrei correspondência para ' + semMatch.length + ' grupo(s):\n\n' + detalhe +
+        (semMatch.length > 10 ? '\n... e mais ' + (semMatch.length - 10) : '') +
+        '\n\nEsses grupos NÃO serão importados. Continuar só com os ' + prontos.length + ' que deram certo?'
+      );
+      if (!seguir) return;
+    }
+    if (!prontos.length) { alert('Nenhum grupo pôde ser importado.'); return; }
+
+    const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
+    await mostrarPreviaImportacaoPAV2(prontos, nomeResumo);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler a(s) planilha(s): ' + err.message);
+  } finally {
+    evento.target.value = '';
+  }
+}
+
+async function mostrarPreviaImportacaoPAV2(prontos, nomeArquivo) {
+  const linhasHtml = prontos.map(g => {
+    const pct = g.previsto > 0 ? Math.min((g.realizado / g.previsto) * 100, 100) : (g.realizado === 0 ? 100 : 0);
+    return `<tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.gerNome}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.mes}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.nomeIndicador}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.previsto}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.realizado}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;font-weight:600">${pct.toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;max-width:800px;width:90%;max-height:80vh;overflow:auto;padding:24px;">
+      <h3 style="margin:0 0 4px">Prévia da importação (Plano de Ação) — ${nomeArquivo}</h3>
+      <p style="color:#666;font-size:13px;margin:0 0 16px">${prontos.length} lançamento(s) de indicador serão gravados/atualizados. Previsto = total de planos; Realizado = não Atrasados. Nada foi salvo ainda.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#f5f5f5">
+          <th style="padding:6px 10px;text-align:left">Gerência</th>
+          <th style="padding:6px 10px;text-align:left">Mês</th>
+          <th style="padding:6px 10px;text-align:left">Indicador</th>
+          <th style="padding:6px 10px">Previsto</th>
+          <th style="padding:6px 10px">Realizado</th>
+          <th style="padding:6px 10px">%</th>
+        </tr></thead>
+        <tbody>${linhasHtml}</tbody>
+      </table>
+      <div style="text-align:right;margin-top:16px">
+        <button id="btn-cancelar-previa-pa" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+        <button id="btn-confirmar-previa-pa" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Confirmar e Gravar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('btn-cancelar-previa-pa').onclick = () => overlay.remove();
+  document.getElementById('btn-confirmar-previa-pa').onclick = async () => {
+    const btn = document.getElementById('btn-confirmar-previa-pa');
+    btn.disabled = true; btn.textContent = 'Gravando...';
+    try {
+      const resumo = await gravarImportacaoWecheckPA(prontos);
+      overlay.remove();
+      alert('Importação concluída.\n' + resumo.ok + ' lançamento(s) atualizado(s) com sucesso.' +
+        (resumo.erros.length ? '\n' + resumo.erros.length + ' com erro (veja o console).' : ''));
+      if (resumo.erros.length) console.error('Erros na importação:', resumo.erros);
+      if (typeof onPeriodoLancarChange === 'function') onPeriodoLancarChange();
+    } catch (err) {
+      alert('Erro ao gravar: ' + err.message);
+      btn.disabled = false; btn.textContent = 'Confirmar e Gravar';
+    }
+  };
+}
+
+async function gravarImportacaoWecheckPA(prontos) {
+  const { data: safrasBanco } = await sb.from('safras').select('id,nome,ano_ini,ano_fim');
+  const acharSafraId = safraTxt => {
+    const m = (safraTxt || '').match(/(\d{4})\s*\/\s*(\d{4})/);
+    if (!m) return null;
+    const ini = parseInt(m[1], 10), fim = parseInt(m[2], 10);
+    const s = (safrasBanco || []).find(s => s.ano_ini === ini && s.ano_fim === fim);
+    return s ? s.id : null;
+  };
+
+  const porLancamento = {};
+  const semSafra = [];
+  prontos.forEach(g => {
+    const safraId = acharSafraId(g.safraTxt);
+    if (!safraId) { semSafra.push(g); return; }
+    const chave = g.gerId + '|' + safraId + '|' + g.mes;
+    if (!porLancamento[chave]) porLancamento[chave] = { gerId: g.gerId, safraId, mes: g.mes, itens: [] };
+    porLancamento[chave].itens.push({ indicador_id: g.indicadorId, previsto: g.previsto, realizado: g.realizado, peso: g.peso, pessoas: g.pessoas || [] });
+  });
+  if (semSafra.length) console.warn(semSafra.length + ' grupo(s) sem safra reconhecida:', semSafra);
+
+  let ok = 0; const erros = [];
+
+  for (const chave in porLancamento) {
+    const grupo = porLancamento[chave];
+    try {
+      const { data: ex } = await sb.from('lancamentos').select('id')
+        .eq('gerencia_id', grupo.gerId).eq('safra_id', grupo.safraId).eq('mes', grupo.mes).limit(1);
+      let lancId = ex?.[0]?.id || null;
+      if (!lancId) {
+        const { data: ins, error: eIns } = await sb.from('lancamentos').insert({
+          gerencia_id: grupo.gerId, safra_id: grupo.safraId, mes: grupo.mes, periodo: grupo.mes,
+          atualizado_em: new Date().toISOString()
+        }).select('id');
+        if (eIns) throw eIns;
+        lancId = ins?.[0]?.id;
+      }
+
+      const idsIndicadores = grupo.itens.map(it => it.indicador_id);
+      await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      const novasLinhas = grupo.itens.map(it => ({
+        lancamento_id: lancId, indicador_id: it.indicador_id,
+        previsto: it.previsto, realizado: it.realizado
+      }));
+      const { error: eItens } = await sb.from('lancamento_itens').insert(novasLinhas);
+      if (eItens) throw eItens;
+
+      // Detalhe por ação (reaproveita a mesma tabela de pendências — aqui "pendente"
+      // vira "atrasada"; nome/cargo viram ação/responsável, matrícula vira número da ação).
+      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      const linhasPessoas = [];
+      grupo.itens.forEach(it => {
+        (it.pessoas || []).forEach(p => {
+          linhasPessoas.push({ lancamento_id: lancId, indicador_id: it.indicador_id, nome: p.nome, cargo: p.cargo, matricula: p.matricula, status: p.status });
+        });
+      });
+      if (linhasPessoas.length) {
+        const { error: ePess } = await sb.from('lancamento_pendencias').insert(linhasPessoas);
+        if (ePess) console.warn('Não consegui gravar o detalhe por ação:', ePess.message);
       }
 
       const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);

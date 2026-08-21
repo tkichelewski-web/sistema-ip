@@ -3239,13 +3239,13 @@ function gerarDetalheHTML(lanc, itens, pendencias){
       // Vocabulário: Inspeção/Observação usam Pendente/Realizado; Plano de Ação usa
       // Atrasada/Concluída/Pendente (aqui "Pendente" é ok, só "Atrasada" é problema).
       var pessoasInd = pendencias.filter(function(p){ return p.indicador_id === item.indicador_id; });
-      var pendentesInd = pessoasInd.filter(function(p){ return /pendente|atrasad/i.test(p.status||''); });
+      var pendentesInd = pessoasInd.filter(function(p){ return /pendente|atrasad|andamento/i.test(p.status||''); });
       var togglePessoas = '';
       if(pessoasInd.length){
         var toggleId = 'pend-'+lanc.id+'-'+item.indicador_id;
         var linhasPessoasHTML = pessoasInd.map(function(p){
           var stTxt = p.status || '';
-          var corSt = /conclu[ií]d|realizado/i.test(stTxt) ? '#07583C' : /pendente|atrasad/i.test(stTxt) ? '#d93025' : '#888';
+          var corSt = /conclu[ií]d|realizado/i.test(stTxt) ? '#07583C' : /atrasad/i.test(stTxt) ? '#d93025' : /pendente|andamento/i.test(stTxt) ? '#c47d0e' : '#888';
           return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid #eef5ee;font-size:12px">'+
             '<span>'+(p.nome||'—')+(p.cargo?' <span style="color:#999">— '+p.cargo+'</span>':'')+'</span>'+
             '<span style="color:'+corSt+';font-weight:600;white-space:nowrap">'+(stTxt||'—')+'</span></div>';
@@ -3567,7 +3567,7 @@ async function carregarPendencias() {
 
   let qp = sb.from('lancamento_pendencias').select('*,indicadores(nome)')
     .in('lancamento_id', lancs.map(l => l.id))
-    .or('status.ilike.%pendente%,status.ilike.%atrasada%');
+    .or('status.ilike.%pendente%,status.ilike.%atrasada%,status.ilike.%andamento%');
   if (indId) qp = qp.eq('indicador_id', indId);
   const { data: pend, error: eP } = await qp.order('nome');
 
@@ -5512,7 +5512,7 @@ async function importarPlanilhaWecheckPlanoAcao(evento) {
       }
 
       const status = normaliza(campo(l, ['Status', 'STATUS']));
-      const emDia = status !== 'ATRASADA' ? 1 : 0;
+      const emDia = /CONCLU/.test(status) ? 1 : 0; // só Concluída conta como Realizado — Atrasada e Andamento não contam
 
       const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + nomeIndicador;
       if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador, previsto: 0, realizado: 0, pessoas: [] };

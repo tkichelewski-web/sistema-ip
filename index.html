@@ -5757,11 +5757,70 @@ async function gravarImportacaoWecheckPA(prontos) {
 
 const NOME_IND_SIMULADOS_CRONOGRAMA = 'Nº de Simulados';
 
+// Apelidos de nome de diretoria — a planilha às vezes usa o nome por extenso,
+// o sistema usa abreviado.
+const ALIASES_DIRETORIA = {
+  'DIRETORIA FINANCEIRA': 'Diretoria Fin.'
+};
+
 // Remove espaços sobrando nas CHAVES do objeto (a planilha tem 'Unidade ', 'Diretoria ' com espaço no fim).
 function linhaComChavesTrimadas(l) {
   const nova = {};
   Object.keys(l).forEach(k => { nova[k.trim()] = l[k]; });
   return nova;
+}
+
+// Mostra os meses presentes no arquivo (marcados por padrão) e deixa o usuário
+// escolher quais entram na importação — útil pra planilha de cronograma anual,
+// que sempre traz vários meses de uma vez. Retorna a lista de meses escolhidos
+// (formato "YYYY-MM"), ou null se cancelou.
+function escolherMesesSimulados(linhasValidas) {
+  return new Promise(resolve => {
+    const nomesMes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const mesesUnicos = [...new Set(linhasValidas.map(l => l.mes))].sort();
+    if (mesesUnicos.length <= 1) { resolve(mesesUnicos); return; } // só 1 mês no arquivo, nem precisa perguntar
+
+    const rotulo = mes => {
+      const [ano, mm] = mes.split('-');
+      return nomesMes[parseInt(mm, 10) - 1] + '/' + ano;
+    };
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:10px;max-width:420px;width:90%;padding:24px;">
+        <h3 style="margin:0 0 4px">Quais meses importar?</h3>
+        <p style="color:#666;font-size:13px;margin:0 0 16px">O arquivo tem ${mesesUnicos.length} meses diferentes. Marca só os que você quer atualizar agora.</p>
+        <div id="lista-meses-sim" style="max-height:260px;overflow:auto;border:1px solid #eee;border-radius:6px;padding:8px 12px;">
+          ${mesesUnicos.map((m, i) => `
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:14px">
+              <input type="checkbox" class="chk-mes-sim" value="${m}" checked>
+              ${rotulo(m)}
+            </label>`).join('')}
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:12px">
+          <span>
+            <button id="btn-marcar-todos-sim" style="font-size:12px;border:none;background:none;color:#07583C;cursor:pointer;text-decoration:underline">marcar todos</button>
+            <button id="btn-desmarcar-todos-sim" style="font-size:12px;border:none;background:none;color:#888;cursor:pointer;text-decoration:underline;margin-left:8px">desmarcar todos</button>
+          </span>
+        </div>
+        <div style="text-align:right;margin-top:16px">
+          <button id="btn-cancelar-mes-sim" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+          <button id="btn-continuar-mes-sim" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Continuar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    document.getElementById('btn-marcar-todos-sim').onclick = () => overlay.querySelectorAll('.chk-mes-sim').forEach(c => c.checked = true);
+    document.getElementById('btn-desmarcar-todos-sim').onclick = () => overlay.querySelectorAll('.chk-mes-sim').forEach(c => c.checked = false);
+    document.getElementById('btn-cancelar-mes-sim').onclick = () => { overlay.remove(); resolve(null); };
+    document.getElementById('btn-continuar-mes-sim').onclick = () => {
+      const escolhidos = [...overlay.querySelectorAll('.chk-mes-sim:checked')].map(c => c.value);
+      overlay.remove();
+      if (!escolhidos.length) { alert('Marca pelo menos um mês.'); resolve(null); return; }
+      resolve(escolhidos);
+    };
+  });
 }
 
 async function importarPlanilhaWecheckSimulados(evento) {
@@ -5810,6 +5869,11 @@ async function importarPlanilhaWecheckSimulados(evento) {
       return;
     }
 
+    const mesesEscolhidos = await escolherMesesSimulados(linhasValidas);
+    if (!mesesEscolhidos) return; // cancelou
+    const linhasFiltradas = linhasValidas.filter(l => mesesEscolhidos.includes(l.mes));
+    if (!linhasFiltradas.length) { alert('Nenhuma linha nos meses selecionados.'); return; }
+
     const [{ data: gers }, { data: unids }, { data: diretorias }, { data: inds }] = await Promise.all([
       sb.from('gerencias').select('id,nome,diretoria_id,unidade_id').eq('ativo', true),
       sb.from('unidades').select('id,nome'),
@@ -5823,7 +5887,8 @@ async function importarPlanilhaWecheckSimulados(evento) {
       const u = (unids || []).find(u => normaliza(u.nome) === normaliza(alvo));
       return u ? u.id : null;
     };
-    const acharDiretoriaId = nome => {
+    const acharDiretoriaId = nomeOriginal => {
+      const nome = ALIASES_DIRETORIA[normaliza(nomeOriginal)] || nomeOriginal;
       const d = (diretorias || []).find(d => normaliza(d.nome) === normaliza(nome));
       return d ? d.id : null;
     };
@@ -5838,7 +5903,7 @@ async function importarPlanilhaWecheckSimulados(evento) {
     // ativas daquela combinação, com o previsto/realizado cheio em cada uma.
     const grupos = {}; // chave: gerId|safraTxt|mes -> {previsto, realizado}
     const semGerencia = [];
-    linhasValidas.forEach(l => {
+    linhasFiltradas.forEach(l => {
       const unidadeId = acharUnidadeId(l.unidadeNome);
       if (!unidadeId) { semGerencia.push({ ...l, motivo: 'unidade não encontrada' }); return; }
 

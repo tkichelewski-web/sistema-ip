@@ -189,6 +189,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="file" id="input-importar-planilha-pa" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckPlanoAcao(event)">
       <button class="btn btn-sm" id="btn-importar-planilha-sim" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-sim').click()">📥 Importar Simulados (piloto)</button>
       <input type="file" id="input-importar-planilha-sim" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckSimulados(event)">
+      <button class="btn btn-sm" id="btn-importar-planilha-coach" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-coach').click()">📥 Importar Coaching Liderança (piloto)</button>
+      <input type="file" id="input-importar-planilha-coach" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaCoachingLideranca(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -6084,6 +6086,334 @@ async function gravarImportacaoWecheckSimulados(prontos) {
       ok++;
     } catch (err) {
       erros.push({ gerencia: g.gerNome, mes: g.mes, erro: err.message });
+    }
+  }
+  return { ok, erros };
+}
+
+// ===== Importação de Cronograma de Coaching de Liderança (Inspeção + Observação) -> lançamentos reais no IP =====
+// Particularidade: a planilha é por PESSOA (um cronograma de acompanhamentos que a
+// liderança deve receber da SSMA), sem coluna de mês — o prazo é sempre o fim do
+// semestre. Por decisão do usuário, isso vira UM lançamento por gerência (não mensal),
+// com previsto = total de pessoas da gerência e realizado = quantas já foram concluídas
+// (Observação e Inspeção contam como dois indicadores separados). O usuário escolhe em
+// qual Safra/Mês do sistema esse "retrato" do momento é gravado.
+
+const NOME_IND_COACHING_INSPECAO   = 'Nº de Inspeções com Coaching de SSMA';
+const NOME_IND_COACHING_OBSERVACAO = 'Nº de Observações Comportamentais com Coaching de SSMA';
+
+// Nomes de gerência que aparecem na planilha sem sigla de unidade, mas que no sistema
+// só existem com o sufixo " - JB" / " - PB" (mesmo padrão dos outros importadores).
+function candidatosNomeGerenciaCoaching(nomeBruto, siglaUnidade) {
+  const nome = (nomeBruto || '').trim();
+  const semEspacoDuplo = nome.replace(/\s+/g, ' ');
+  return [semEspacoDuplo, semEspacoDuplo + ' - ' + siglaUnidade];
+}
+
+function boolCoaching(v) {
+  if (typeof v === 'boolean') return v;
+  const s = (v || '').toString().trim().toUpperCase();
+  return s === 'TRUE' || s === 'VERDADEIRO' || s === 'SIM' || s === '1' || s === 'X';
+}
+
+// "Responsável"/"Responsável2" (só existe no arquivo PB) às vezes vem trocado com um
+// rótulo de semana ("SEMANA 03/05") em vez de nome — filtra esses fora.
+function nomeResponsavelValido(v) {
+  const s = (v || '').toString().trim();
+  if (!s) return false;
+  if (/SEMANA/i.test(s)) return false;
+  return true;
+}
+
+// Acha, dentro do array de linhas (formato header:1), a linha de cabeçalho de verdade
+// (a planilha PB repete o cabeçalho no meio dos dados, e tem uma linha de título acima).
+function acharLinhaHeaderCoaching(linhasArray) {
+  for (let i = 0; i < linhasArray.length; i++) {
+    const linha = linhasArray[i] || [];
+    const normalizados = linha.map(c => normaliza(c));
+    if (normalizados.includes('MATRICULA')) return i;
+  }
+  return -1;
+}
+
+async function importarPlanilhaCoachingLideranca(evento) {
+  const arquivos = Array.from(evento.target.files || []);
+  if (!arquivos.length) return;
+
+  try {
+    // Cada arquivo do cronograma é de UMA unidade (JB ou PB) — sem coluna própria pra isso.
+    // Tenta inferir pelo nome do arquivo; se não conseguir, pergunta.
+    const arquivosComUnidade = [];
+    for (const arquivo of arquivos) {
+      const nomeArq = normaliza(arquivo.name);
+      let sigla = null;
+      if (/\bJB\b/.test(nomeArq) || nomeArq.includes('JABOTICABAL')) sigla = 'JB';
+      else if (/\bPB\b/.test(nomeArq) || nomeArq.includes('PEREIRA BARRETO')) sigla = 'PB';
+      if (!sigla) {
+        sigla = prompt('Não identifiquei a unidade pelo nome do arquivo "' + arquivo.name + '". Digite JB ou PB:');
+        sigla = (sigla || '').trim().toUpperCase();
+        if (sigla !== 'JB' && sigla !== 'PB') { alert('Unidade inválida para ' + arquivo.name + '. Arquivo ignorado.'); continue; }
+      }
+      arquivosComUnidade.push({ arquivo, sigla });
+    }
+    if (!arquivosComUnidade.length) return;
+
+    const linhasValidas = [];
+    const linhasIgnoradas = [];
+
+    for (const { arquivo, sigla } of arquivosComUnidade) {
+      const buffer = await arquivo.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      for (const nomeAba of wb.SheetNames) {
+        const bruto = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { header: 1, defval: null });
+        const idxHeader = acharLinhaHeaderCoaching(bruto);
+        if (idxHeader < 0) continue;
+        const linhasAba = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null, range: idxHeader });
+        linhasAba.forEach(lBruta => {
+          const l = linhaComChavesTrimadas(lBruta);
+          const matricula = campo(l, ['Matricula', 'Matrícula']);
+          const gerenciaNome = (campo(l, ['Gerência', 'Gerencia']) || '').toString().trim();
+          const diretoriaNome = (campo(l, ['Diretoria']) || '').toString().trim();
+          // Linhas de cabeçalho repetido, ou sem matrícula numérica, ou sem gerência: ignora.
+          if (!matricula || isNaN(parseFloat(matricula)) || !gerenciaNome || normaliza(gerenciaNome) === 'GERENCIA' || normaliza(diretoriaNome) === 'DIRETORIA') {
+            linhasIgnoradas.push({ arquivo: arquivo.name, matricula, gerenciaNome, diretoriaNome });
+            return;
+          }
+          const obsRealizada = boolCoaching(campo(l, ['Observação Realizada', 'Observacao Realizada']));
+          const inspRealizada = boolCoaching(campo(l, ['Inspeção Realizada', 'Inspecao Realizada']));
+          const responsaveis = [
+            campo(l, ['Responsável', 'Responsavel']),
+            campo(l, ['Responsável2', 'Responsavel2'])
+          ].filter(nomeResponsavelValido).map(v => v.toString().trim());
+
+          linhasValidas.push({ sigla, gerenciaNome, diretoriaNome, obsRealizada, inspRealizada, responsaveis, colaborador: campo(l, ['Colaborador']) });
+        });
+      }
+    }
+
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s):', linhasIgnoradas.slice(0, 20));
+    if (!linhasValidas.length) {
+      alert('Não encontrei nenhuma linha válida. Confira se o arquivo tem as colunas Matricula, Colaborador, Gerência, Observação Realizada, Inspeção Realizada.');
+      return;
+    }
+
+    // Pergunta em qual Safra/Mês do sistema gravar esse retrato (é um lançamento único,
+    // não por mês da planilha — a planilha não tem essa informação por linha).
+    const [{ data: gers }, { data: unids }, { data: safrasBanco }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,diretoria_id,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
+      sb.from('safras').select('id,nome,ano_ini,ano_fim').order('ano_ini', { ascending: false }),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const indInsp = (inds || []).find(i => normaliza(i.nome) === normaliza(NOME_IND_COACHING_INSPECAO));
+    const indObs  = (inds || []).find(i => normaliza(i.nome) === normaliza(NOME_IND_COACHING_OBSERVACAO));
+    const faltando = [];
+    if (!indInsp) faltando.push(NOME_IND_COACHING_INSPECAO);
+    if (!indObs)  faltando.push(NOME_IND_COACHING_OBSERVACAO);
+    if (faltando.length) {
+      alert('Não encontrei o(s) indicador(es) "' + faltando.join('", "') + '" cadastrado(s) (ativo) no sistema. Cria eles antes de importar.');
+      return;
+    }
+
+    const escolha = await escolherSafraMesCoaching(safrasBanco || []);
+    if (!escolha) return; // cancelou
+
+    const acharUnidadeIdPorSigla = sigla => {
+      const u = (unids || []).find(u => normaliza(u.nome) === sigla || normaliza(u.nome).includes(sigla));
+      return u ? u.id : null;
+    };
+
+    // Agrupa por gerência (dentro da unidade certa).
+    const grupos = {}; // chave: gerId -> {gerId, gerNome, totalObs, feitoObs, totalInsp, feitoInsp, responsaveis:Set}
+    const semGerencia = [];
+
+    linhasValidas.forEach(l => {
+      const unidadeId = acharUnidadeIdPorSigla(l.sigla);
+      if (!unidadeId) { semGerencia.push({ ...l, motivo: 'unidade "' + l.sigla + '" não encontrada no sistema' }); return; }
+
+      const candidatos = candidatosNomeGerenciaCoaching(l.gerenciaNome, l.sigla);
+      let ger = null;
+      for (const c of candidatos) {
+        ger = (gers || []).find(g => g.unidade_id === unidadeId && normaliza(g.nome) === normaliza(c));
+        if (ger) break;
+      }
+      if (!ger) { semGerencia.push({ ...l, motivo: 'gerência "' + l.gerenciaNome + '" não encontrada em ' + l.sigla }); return; }
+
+      const chave = ger.id;
+      if (!grupos[chave]) grupos[chave] = { gerId: ger.id, gerNome: ger.nome, sigla: l.sigla, totalObs: 0, feitoObs: 0, totalInsp: 0, feitoInsp: 0, responsaveis: new Set() };
+      grupos[chave].totalObs++;
+      if (l.obsRealizada) grupos[chave].feitoObs++;
+      grupos[chave].totalInsp++;
+      if (l.inspRealizada) grupos[chave].feitoInsp++;
+      l.responsaveis.forEach(r => grupos[chave].responsaveis.add(r));
+    });
+
+    if (semGerencia.length) {
+      const detalhe = semGerencia.slice(0, 10).map(s => `- ${s.colaborador || '(?)'} — ${s.gerenciaNome} (${s.sigla}) — ${s.motivo}`).join('\n');
+      const seguir = confirm(
+        'Não encontrei gerência pra ' + semGerencia.length + ' pessoa(s):\n\n' + detalhe +
+        (semGerencia.length > 10 ? '\n... e mais ' + (semGerencia.length - 10) : '') +
+        '\n\nEssas linhas NÃO serão importadas. Continuar com o resto?'
+      );
+      if (!seguir) return;
+    }
+
+    const prontos = Object.values(grupos);
+    if (!prontos.length) { alert('Nenhum lançamento pôde ser importado.'); return; }
+
+    const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
+    await mostrarPreviaImportacaoCoaching(prontos, nomeResumo, escolha, indInsp.id, indObs.id);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler a(s) planilha(s): ' + err.message);
+  } finally {
+    evento.target.value = '';
+  }
+}
+
+// Pequeno diálogo pra escolher em qual Safra + Mês do sistema gravar o retrato do coaching.
+function escolherSafraMesCoaching(safras) {
+  return new Promise(resolve => {
+    const hoje = new Date();
+    const mesDefault = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0');
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:10px;max-width:420px;width:90%;padding:24px;">
+        <h3 style="margin:0 0 4px">Gravar retrato do Coaching em qual período?</h3>
+        <p style="color:#666;font-size:13px;margin:0 0 16px">Como o cronograma não tem mês por linha, isso vira 1 lançamento por gerência (previsto = total de pessoas, realizado = já concluídas) no período que você escolher.</p>
+        <div style="margin-bottom:12px">
+          <label style="display:block;font-size:12px;color:#666;margin-bottom:4px">Safra</label>
+          <select id="sel-safra-coach" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc">
+            ${safras.map(s => `<option value="${s.id}">${s.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:#666;margin-bottom:4px">Mês</label>
+          <input type="month" id="input-mes-coach" value="${mesDefault}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc">
+        </div>
+        <div style="text-align:right;margin-top:16px">
+          <button id="btn-cancelar-mes-coach" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+          <button id="btn-continuar-mes-coach" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Continuar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    document.getElementById('btn-cancelar-mes-coach').onclick = () => { overlay.remove(); resolve(null); };
+    document.getElementById('btn-continuar-mes-coach').onclick = () => {
+      const safraId = parseInt(document.getElementById('sel-safra-coach').value, 10);
+      const mes = document.getElementById('input-mes-coach').value;
+      overlay.remove();
+      if (!safraId || !mes) { alert('Escolhe safra e mês.'); resolve(null); return; }
+      resolve({ safraId, mes });
+    };
+  });
+}
+
+async function mostrarPreviaImportacaoCoaching(prontos, nomeArquivo, escolha, indInspId, indObsId) {
+  const linhaIndicador = (nome, previsto, realizado, resp) => {
+    const pct = previsto > 0 ? Math.min((realizado / previsto) * 100, 100) : 100;
+    return `<tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${nome}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${previsto}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${realizado}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;font-weight:600">${pct.toFixed(1)}%</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:11px;color:#888">${resp}</td>
+    </tr>`;
+  };
+  const linhasHtml = prontos.map(g => {
+    const resp = g.responsaveis.size ? [...g.responsaveis].join(', ') : '—';
+    return linhaIndicador(g.gerNome + ' (' + g.sigla + ') — Inspeção', g.totalInsp, g.feitoInsp, resp)
+         + linhaIndicador(g.gerNome + ' (' + g.sigla + ') — Observação', g.totalObs, g.feitoObs, resp);
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;max-width:900px;width:90%;max-height:80vh;overflow:auto;padding:24px;">
+      <h3 style="margin:0 0 4px">Prévia da importação (Coaching Liderança) — ${nomeArquivo}</h3>
+      <p style="color:#666;font-size:13px;margin:0 0 16px">${prontos.length} gerência(s) → ${prontos.length * 2} lançamento(s) de indicador serão gravados/atualizados no mês ${escolha.mes}. Nada foi salvo ainda.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#f5f5f5">
+          <th style="padding:6px 10px;text-align:left">Gerência — Indicador</th>
+          <th style="padding:6px 10px">Previsto</th>
+          <th style="padding:6px 10px">Realizado</th>
+          <th style="padding:6px 10px">%</th>
+          <th style="padding:6px 10px;text-align:left">Responsáveis</th>
+        </tr></thead>
+        <tbody>${linhasHtml}</tbody>
+      </table>
+      <div style="text-align:right;margin-top:16px">
+        <button id="btn-cancelar-previa-coach" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+        <button id="btn-confirmar-previa-coach" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Confirmar e Gravar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('btn-cancelar-previa-coach').onclick = () => overlay.remove();
+  document.getElementById('btn-confirmar-previa-coach').onclick = async () => {
+    const btn = document.getElementById('btn-confirmar-previa-coach');
+    btn.disabled = true; btn.textContent = 'Gravando...';
+    try {
+      const resumo = await gravarImportacaoCoaching(prontos, escolha, indInspId, indObsId);
+      overlay.remove();
+      alert('Importação concluída.\n' + resumo.ok + ' gerência(s) atualizada(s) com sucesso.' +
+        (resumo.erros.length ? '\n' + resumo.erros.length + ' com erro (veja o console).' : ''));
+      if (resumo.erros.length) console.error('Erros na importação:', resumo.erros);
+      if (typeof onPeriodoLancarChange === 'function') onPeriodoLancarChange();
+    } catch (err) {
+      alert('Erro ao gravar: ' + err.message);
+      btn.disabled = false; btn.textContent = 'Confirmar e Gravar';
+    }
+  };
+}
+
+async function gravarImportacaoCoaching(prontos, escolha, indInspId, indObsId) {
+  let ok = 0; const erros = [];
+
+  for (const g of prontos) {
+    try {
+      const { data: ex } = await sb.from('lancamentos').select('id')
+        .eq('gerencia_id', g.gerId).eq('safra_id', escolha.safraId).eq('mes', escolha.mes).limit(1);
+      let lancId = ex?.[0]?.id || null;
+      if (!lancId) {
+        const { data: ins, error: eIns } = await sb.from('lancamentos').insert({
+          gerencia_id: g.gerId, safra_id: escolha.safraId, mes: escolha.mes, periodo: escolha.mes,
+          atualizado_em: new Date().toISOString()
+        }).select('id');
+        if (eIns) throw eIns;
+        lancId = ins?.[0]?.id;
+      }
+
+      const comentario = g.responsaveis.size ? 'Responsáveis pelo coaching: ' + [...g.responsaveis].join(', ') : null;
+
+      await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId).in('indicador_id', [indInspId, indObsId]);
+      const { error: eItens } = await sb.from('lancamento_itens').insert([
+        { lancamento_id: lancId, indicador_id: indInspId, previsto: g.totalInsp, realizado: g.feitoInsp, comentario },
+        { lancamento_id: lancId, indicador_id: indObsId, previsto: g.totalObs, realizado: g.feitoObs, comentario }
+      ]);
+      if (eItens) throw eItens;
+
+      const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
+      const indsGer = await getIndsGerencia(g.gerId, escolha.safraId);
+      const pg = calcPontGer(todosItens || [], indsGer || []);
+
+      const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(g.gerId, escolha.mes, escolha.safraId, pg);
+      const { data: lancAtual } = await sb.from('lancamentos').select('ajuste_pontos').eq('id', lancId).limit(1);
+      const aj = lancAtual?.[0]?.ajuste_pontos || 0;
+      const indBase = calcIndice(pg, mediaDir, aud, 0);
+      const indFinal = calcIndice(pg, mediaDir, aud, aj);
+
+      await sb.from('lancamentos').update({
+        pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,
+        indice_base: indBase, indice_prevencao: indFinal,
+        atualizado_em: new Date().toISOString()
+      }).eq('id', lancId);
+
+      ok++;
+    } catch (err) {
+      erros.push({ gerencia: g.gerNome, erro: err.message });
     }
   }
   return { ok, erros };

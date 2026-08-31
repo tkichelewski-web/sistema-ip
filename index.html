@@ -191,6 +191,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="file" id="input-importar-planilha-sim" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaWecheckSimulados(event)">
       <button class="btn btn-sm" id="btn-importar-planilha-coach" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-planilha-coach').click()">📥 Importar Coaching Liderança (piloto)</button>
       <input type="file" id="input-importar-planilha-coach" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaCoachingLideranca(event)">
+      <button class="btn btn-sm" id="btn-importar-fechamento" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-fechamento').click()">📥 Importar Fechamento Mensal Completo</button>
+      <input type="file" id="input-importar-fechamento" accept=".xlsx,.xls" style="display:none" onchange="importarFechamentoMensal(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -6404,6 +6406,339 @@ async function gravarImportacaoCoaching(prontos, escolha, indInspId, indObsId) {
       const aj = lancAtual?.[0]?.ajuste_pontos || 0;
       const indBase = calcIndice(pg, mediaDir, aud, 0);
       const indFinal = calcIndice(pg, mediaDir, aud, aj);
+
+      await sb.from('lancamentos').update({
+        pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,
+        indice_base: indBase, indice_prevencao: indFinal,
+        atualizado_em: new Date().toISOString()
+      }).eq('id', lancId);
+
+      ok++;
+    } catch (err) {
+      erros.push({ gerencia: g.gerNome, erro: err.message });
+    }
+  }
+  return { ok, erros };
+}
+
+// ===== Importação de Fechamento Mensal Completo (pacote com todos os indicadores) =====
+// Formato esperado: 1 arquivo .xlsx com 3 abas — "Indicadores" (uma linha por
+// gerência+indicador, com Previsto/Realizado/Nota/Sim-Não/Pontuação já calculados),
+// "Auditoria e Ajuste" (nota de auditoria + ajuste de deflator/bônus por gerência) e
+// "Resumo IP" (pontuação final já fechada por gerência, usada só pra conferência).
+// Isso serve pra fechar um mês inteiro de uma vez a partir de um cálculo já feito
+// (ex: fora do sistema, manualmente), sem precisar reprocessar cada evidência bruta.
+
+const ALIASES_GERENCIA_FECHAMENTO = {
+  'SMA': 'Gerência SSMA',
+  'SSMA': 'Gerência SSMA'
+};
+
+function candidatosNomeGerenciaFechamento(nomeBruto, sigla) {
+  const nome = (nomeBruto || '').toString().trim().replace(/\s+/g, ' ');
+  const candidatos = [];
+  if (ALIASES_GERENCIA_FECHAMENTO[nome.toUpperCase()]) candidatos.push(ALIASES_GERENCIA_FECHAMENTO[nome.toUpperCase()]);
+  candidatos.push(nome, 'Gerência ' + nome, nome + ' - ' + sigla, 'Gerência ' + nome + ' - ' + sigla);
+  return candidatos;
+}
+
+function chaveGerFechamento(unidade, gerencia) {
+  return normaliza(unidade) + '||' + normaliza(gerencia);
+}
+
+async function importarFechamentoMensal(evento) {
+  const arquivo = evento.target.files && evento.target.files[0];
+  if (!arquivo) return;
+
+  try {
+    const buffer = await arquivo.arrayBuffer();
+    const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+
+    const acharAba = (nomePreferido, posicaoFallback) => {
+      const nomeAchado = wb.SheetNames.find(n => normaliza(n) === normaliza(nomePreferido));
+      return wb.Sheets[nomeAchado || wb.SheetNames[posicaoFallback]];
+    };
+    const abaIndicadores = acharAba('Indicadores', 0);
+    const abaAuditoria   = acharAba('Auditoria e Ajuste', 1);
+    const abaResumo      = acharAba('Resumo IP', 2);
+    if (!abaIndicadores) { alert('Não encontrei a aba "Indicadores" no arquivo.'); return; }
+
+    const linhasIndicadores = XLSX.utils.sheet_to_json(abaIndicadores, { defval: null });
+    const linhasAuditoria   = abaAuditoria ? XLSX.utils.sheet_to_json(abaAuditoria, { defval: null }) : [];
+    const linhasResumo      = abaResumo ? XLSX.utils.sheet_to_json(abaResumo, { defval: null }) : [];
+
+    // Agrupa indicadores por (unidade, gerência)
+    const grupos = {}; // chave -> {diretoria, unidade, gerencia, itens:[{indicadorNome, previsto, realizado}]}
+    linhasIndicadores.forEach(lBruta => {
+      const l = linhaComChavesTrimadas(lBruta);
+      const unidade = (campo(l, ['Unidade']) || '').toString().trim();
+      const gerencia = (campo(l, ['Gerência', 'Gerencia']) || '').toString().trim();
+      const diretoria = (campo(l, ['Diretoria']) || '').toString().trim();
+      const indicadorNome = (campo(l, ['Indicador']) || '').toString().trim();
+      if (!unidade || !gerencia || !indicadorNome) return;
+      const previsto = campo(l, ['Previsto']);
+      const realizado = campo(l, ['Realizado']);
+      const chave = chaveGerFechamento(unidade, gerencia);
+      if (!grupos[chave]) grupos[chave] = { diretoria, unidade, gerencia, itens: [] };
+      grupos[chave].itens.push({
+        indicadorNome,
+        previsto: previsto == null || previsto === '' ? 0 : parseFloat(previsto) || 0,
+        realizado: realizado == null || realizado === '' ? 0 : parseFloat(realizado) || 0
+      });
+    });
+
+    // Auditoria/Ajuste por gerência
+    const auditoriaPorGer = {};
+    linhasAuditoria.forEach(lBruta => {
+      const l = linhaComChavesTrimadas(lBruta);
+      const unidade = (campo(l, ['Unidade']) || '').toString().trim();
+      const gerencia = (campo(l, ['Gerência', 'Gerencia']) || '').toString().trim();
+      if (!unidade || !gerencia) return;
+      auditoriaPorGer[chaveGerFechamento(unidade, gerencia)] = {
+        aud: parseFloat(campo(l, ['Nota de Auditoria'])) || 0,
+        ajuste: parseFloat(campo(l, ['Ajuste (deflator/bônus)', 'Ajuste'])) || 0,
+        obs: campo(l, ['Observação', 'Observacao'])
+      };
+    });
+
+    // Resumo (só pra conferência visual, não é gravado)
+    const resumoPorGer = {};
+    linhasResumo.forEach(lBruta => {
+      const l = linhaComChavesTrimadas(lBruta);
+      const unidade = (campo(l, ['Unidade']) || '').toString().trim();
+      const gerencia = (campo(l, ['Gerência', 'Gerencia']) || '').toString().trim();
+      if (!unidade || !gerencia) return;
+      resumoPorGer[chaveGerFechamento(unidade, gerencia)] = {
+        pg: parseFloat(campo(l, ['Pont. Gerência', 'Pontuação Gerência'])),
+        md: parseFloat(campo(l, ['Média Diretoria'])),
+        ipMensal: parseFloat(campo(l, ['IP Mensal']))
+      };
+    });
+
+    if (!Object.keys(grupos).length) {
+      alert('Não encontrei linhas válidas na aba "Indicadores" (preciso de Unidade, Gerência e Indicador preenchidos).');
+      return;
+    }
+
+    const escolha = await escolherSafraMesFechamento();
+    if (!escolha) return;
+
+    const [{ data: gers }, { data: unids }, { data: safrasBanco }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,diretoria_id,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
+      sb.from('safras').select('id,nome'),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const acharUnidadeId = sigla => {
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(sigla) || normaliza(u.nome).includes(normaliza(sigla)));
+      return u ? u.id : null;
+    };
+    const acharIndicadorId = nome => {
+      const i = (inds || []).find(i => normaliza(i.nome) === normaliza(nome));
+      return i ? i.id : null;
+    };
+
+    const gerenciasNaoEncontradas = [];
+    const indicadoresNaoEncontrados = new Set();
+    const prontos = [];
+
+    for (const chave of Object.keys(grupos)) {
+      const grp = grupos[chave];
+      const unidadeId = acharUnidadeId(grp.unidade);
+      if (!unidadeId) { gerenciasNaoEncontradas.push(grp.unidade + ' / ' + grp.gerencia + ' (unidade não encontrada)'); continue; }
+
+      const candidatos = candidatosNomeGerenciaFechamento(grp.gerencia, grp.unidade);
+      let ger = null;
+      for (const c of candidatos) {
+        ger = (gers || []).find(g => g.unidade_id === unidadeId && normaliza(g.nome) === normaliza(c));
+        if (ger) break;
+      }
+      if (!ger) { gerenciasNaoEncontradas.push(grp.unidade + ' / ' + grp.gerencia); continue; }
+
+      const itensResolvidos = [];
+      grp.itens.forEach(it => {
+        const indId = acharIndicadorId(it.indicadorNome);
+        if (!indId) { indicadoresNaoEncontrados.add(it.indicadorNome); return; }
+        itensResolvidos.push({ indicador_id: indId, indicadorNome: it.indicadorNome, previsto: it.previsto, realizado: it.realizado });
+      });
+
+      const aa = auditoriaPorGer[chave] || { aud: 0, ajuste: 0 };
+      prontos.push({
+        gerId: ger.id, gerNome: ger.nome, unidade: grp.unidade,
+        itens: itensResolvidos, ajuste: aa.ajuste, audPlanilha: aa.aud,
+        resumoPlanilha: resumoPorGer[chave] || null
+      });
+    }
+
+    if (!prontos.length) {
+      alert('Nenhuma gerência da planilha bateu com o cadastro do sistema. Confira os nomes de Unidade/Gerência.');
+      return;
+    }
+
+    // Simula a pontuação que o sistema vai calcular (sem gravar ainda), pra conferência.
+    for (const g of prontos) {
+      try {
+        const indsGer = await getIndsGerencia(g.gerId, escolha.safraId);
+        const itensSimulados = g.itens.map(it => ({ indicador_id: it.indicador_id, previsto: it.previsto, realizado: it.realizado }));
+        g.pgCalculado = calcPontGer(itensSimulados, indsGer || []);
+      } catch (e) {
+        g.pgCalculado = null;
+      }
+    }
+
+    await mostrarPreviaFechamentoMensal(prontos, arquivo.name, escolha, gerenciasNaoEncontradas, [...indicadoresNaoEncontrados]);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler o arquivo: ' + err.message);
+  } finally {
+    evento.target.value = '';
+  }
+}
+
+function escolherSafraMesFechamento() {
+  return new Promise(async resolve => {
+    const { data: safras } = await sb.from('safras').select('id,nome').order('ano_ini', { ascending: false });
+    const hoje = new Date();
+    const mesDefault = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0');
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:10px;max-width:420px;width:90%;padding:24px;">
+        <h3 style="margin:0 0 4px">Gravar fechamento em qual período?</h3>
+        <p style="color:#666;font-size:13px;margin:0 0 16px">Confira o mês antes de continuar — a planilha não indica o mês sozinha.</p>
+        <div style="margin-bottom:12px">
+          <label style="display:block;font-size:12px;color:#666;margin-bottom:4px">Safra</label>
+          <select id="sel-safra-fech" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc">
+            ${(safras || []).map(s => `<option value="${s.id}">${s.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:#666;margin-bottom:4px">Mês</label>
+          <input type="month" id="input-mes-fech" value="${mesDefault}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc">
+        </div>
+        <div style="text-align:right;margin-top:16px">
+          <button id="btn-cancelar-mes-fech" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+          <button id="btn-continuar-mes-fech" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Continuar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('btn-cancelar-mes-fech').onclick = () => { overlay.remove(); resolve(null); };
+    document.getElementById('btn-continuar-mes-fech').onclick = () => {
+      const safraId = parseInt(document.getElementById('sel-safra-fech').value, 10);
+      const mes = document.getElementById('input-mes-fech').value;
+      overlay.remove();
+      if (!safraId || !mes) { alert('Escolhe safra e mês.'); resolve(null); return; }
+      resolve({ safraId, mes });
+    };
+  });
+}
+
+async function mostrarPreviaFechamentoMensal(prontos, nomeArquivo, escolha, gerenciasNaoEncontradas, indicadoresNaoEncontrados) {
+  const avisos = [];
+  if (gerenciasNaoEncontradas.length) {
+    avisos.push('<b>' + gerenciasNaoEncontradas.length + ' gerência(s) da planilha não encontrada(s) no cadastro</b> (não serão importadas):<br>' +
+      gerenciasNaoEncontradas.slice(0, 15).map(g => '• ' + g).join('<br>'));
+  }
+  if (indicadoresNaoEncontrados.length) {
+    avisos.push('<b>' + indicadoresNaoEncontrados.length + ' indicador(es) da planilha não encontrado(s) no cadastro</b> (essas linhas serão puladas):<br>' +
+      indicadoresNaoEncontrados.slice(0, 20).map(i => '• ' + i).join('<br>'));
+  }
+  const avisosHtml = avisos.length
+    ? `<div style="background:#fef3e6;border:1px solid #f5c98f;border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:#7a4a0e">${avisos.join('<hr style="margin:8px 0;border-color:#f5c98f">')}</div>`
+    : '';
+
+  const linhas = prontos.map(g => {
+    const pgPlan = g.resumoPlanilha?.pg;
+    const pgCalc = g.pgCalculado;
+    const delta = (pgPlan != null && pgCalc != null) ? Math.abs(pgPlan - pgCalc) : null;
+    const corDelta = delta == null ? '#888' : (delta > 0.5 ? '#c0392b' : '#2e7d32');
+    return `<tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee">${g.gerNome} (${g.unidade})</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.itens.length}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${g.ajuste >= 0 ? '+' : ''}${g.ajuste}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center">${pgPlan != null ? pgPlan.toFixed(1) : '—'}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center;color:${corDelta};font-weight:600">${pgCalc != null ? pgCalc.toFixed(1) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const totalItens = prontos.reduce((s, g) => s + g.itens.length, 0);
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;max-width:900px;width:90%;max-height:85vh;overflow:auto;padding:24px;">
+      <h3 style="margin:0 0 4px">Prévia do Fechamento Mensal — ${nomeArquivo}</h3>
+      <p style="color:#666;font-size:13px;margin:0 0 16px">${prontos.length} gerência(s), ${totalItens} lançamento(s) de indicador, mês ${escolha.mes}. A coluna "PG sistema" é a pontuação que o sistema vai calcular com os pesos atuais — compare com "PG planilha" antes de confirmar. Nada foi salvo ainda.</p>
+      ${avisosHtml}
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#f5f5f5">
+          <th style="padding:6px 10px;text-align:left">Gerência</th>
+          <th style="padding:6px 10px">Itens</th>
+          <th style="padding:6px 10px">Ajuste</th>
+          <th style="padding:6px 10px">PG planilha</th>
+          <th style="padding:6px 10px">PG sistema</th>
+        </tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+      <div style="text-align:right;margin-top:16px">
+        <button id="btn-cancelar-previa-fech" style="padding:8px 16px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;margin-right:8px">Cancelar</button>
+        <button id="btn-confirmar-previa-fech" style="padding:8px 16px;border-radius:6px;border:none;background:#07583C;color:#fff;cursor:pointer">Confirmar e Gravar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('btn-cancelar-previa-fech').onclick = () => overlay.remove();
+  document.getElementById('btn-confirmar-previa-fech').onclick = async () => {
+    const btn = document.getElementById('btn-confirmar-previa-fech');
+    btn.disabled = true; btn.textContent = 'Gravando...';
+    try {
+      const resumo = await gravarImportacaoFechamentoMensal(prontos, escolha);
+      overlay.remove();
+      alert('Importação concluída.\n' + resumo.ok + ' gerência(s) atualizada(s) com sucesso.' +
+        (resumo.erros.length ? '\n' + resumo.erros.length + ' com erro (veja o console).' : ''));
+      if (resumo.erros.length) console.error('Erros na importação:', resumo.erros);
+      if (typeof onPeriodoLancarChange === 'function') onPeriodoLancarChange();
+    } catch (err) {
+      alert('Erro ao gravar: ' + err.message);
+      btn.disabled = false; btn.textContent = 'Confirmar e Gravar';
+    }
+  };
+}
+
+async function gravarImportacaoFechamentoMensal(prontos, escolha) {
+  let ok = 0; const erros = [];
+
+  for (const g of prontos) {
+    try {
+      const { data: ex } = await sb.from('lancamentos').select('id')
+        .eq('gerencia_id', g.gerId).eq('safra_id', escolha.safraId).eq('mes', escolha.mes).limit(1);
+      let lancId = ex?.[0]?.id || null;
+      if (!lancId) {
+        const { data: ins, error: eIns } = await sb.from('lancamentos').insert({
+          gerencia_id: g.gerId, safra_id: escolha.safraId, mes: escolha.mes, periodo: escolha.mes,
+          ajuste_pontos: g.ajuste, atualizado_em: new Date().toISOString()
+        }).select('id');
+        if (eIns) throw eIns;
+        lancId = ins?.[0]?.id;
+      } else {
+        await sb.from('lancamentos').update({ ajuste_pontos: g.ajuste }).eq('id', lancId);
+      }
+
+      const indIds = g.itens.map(it => it.indicador_id);
+      await sb.from('lancamento_itens').delete().eq('lancamento_id', lancId).in('indicador_id', indIds);
+      const { error: eItens } = await sb.from('lancamento_itens').insert(
+        g.itens.map(it => ({ lancamento_id: lancId, indicador_id: it.indicador_id, previsto: it.previsto, realizado: it.realizado }))
+      );
+      if (eItens) throw eItens;
+
+      const { data: todosItens } = await sb.from('lancamento_itens').select('*').eq('lancamento_id', lancId);
+      const indsGer = await getIndsGerencia(g.gerId, escolha.safraId);
+      const pg = calcPontGer(todosItens || [], indsGer || []);
+
+      const { aud, mediaDir } = await recalcularAuditoriaEMediaDiretoria(g.gerId, escolha.mes, escolha.safraId, pg);
+      const indBase = calcIndice(pg, mediaDir, aud, 0);
+      const indFinal = calcIndice(pg, mediaDir, aud, g.ajuste);
 
       await sb.from('lancamentos').update({
         pontuacao_gerencia: pg, media_diretoria: mediaDir, nota_auditoria: aud,

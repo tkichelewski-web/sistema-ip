@@ -61,7 +61,7 @@ header{background:#07583C;padding:11px 28px;display:flex;align-items:center;just
 .tab:hover{color:#07583C;}
 .tab.active{color:#07583C;border-bottom-color:#B3DD64;background:#f0f9f0;}
 .tab.hidden{display:none;}
-main{padding:22px 28px;max-width:1400px;margin:0 auto;}
+main{padding:22px 28px;max-width:1760px;margin:0 auto;}
 .section{display:none;}.section.active{display:block;}
 
 /* CARDS */
@@ -977,6 +977,10 @@ function renderAcumTable() {
 
   function calcIP(l) {
     if(!l) return null;
+    // Lançamento existe mas nunca foi de fato apurado (ex: linha em branco criada sem
+    // querer, ou nenhum indicador lançado ainda) — pontuacao_gerencia e nota_auditoria
+    // ficam null nesse caso. Sem isso, virava nota 0 "de verdade" e derrubava o acumulado.
+    if(l.pontuacao_gerencia == null && l.nota_auditoria == null && l.indice_prevencao == null) return null;
     const pg  = l.pontuacao_gerencia || 0;
     const md  = l.media_diretoria != null ? l.media_diretoria : pg;
     const aud = l.nota_auditoria   || 0;
@@ -1244,6 +1248,8 @@ function uniLabelTexto(uniNome) {
 
 function calcIPLanc(l) {
   if(!l) return null;
+  // Mesma correção do calcIP: lançamento existe mas nunca foi apurado de verdade.
+  if(l.pontuacao_gerencia == null && l.nota_auditoria == null && l.indice_prevencao == null) return null;
   const wPG  = Number(config?.peso_gerencia)  || 0.5;
   const wMD  = Number(config?.peso_diretoria) || 0.2;
   const wAUD = Number(config?.peso_auditoria) || 0.3;
@@ -1429,6 +1435,9 @@ function criarChart(canvasId,ref,tipo,vizType,acumMode){
   // 1 mês só + colunas: 1 barra por entidade, nomes no eixo X, cor em gradiente pela
   // posição (melhor→pior) — sem legenda de bolinhas, que ficava confusa com muita gerência.
   const modoUmaEntidadePorBarra = isBar && meses.length===1;
+  // Rótulo com muita gerência + nome longo precisa de mais altura embaixo pra não cortar
+  // o texto girado; volta ao tamanho normal nos outros modos.
+  if(canvas.parentElement) canvas.parentElement.style.height = modoUmaEntidadePorBarra ? '430px' : '340px';
 
   if(ref[0]){ref[0].destroy();ref[0]=null;}
 
@@ -1436,23 +1445,32 @@ function criarChart(canvasId,ref,tipo,vizType,acumMode){
     const itens=buildSingleMonthEntidades(tipo, meses[0].val, acumMode);
     const cores=itens.map((it,i)=>corPorRank(i, itens.length));
     const corsTexto=cores.map(c=>textoParaCor(c));
+    // "Gerência " se repete em todo rótulo e só ocupa espaço à toa no eixo — tira só
+    // aqui (a tabela e o resto do sistema continuam com o nome completo).
+    const encurtar = nome => (nome||'').replace(/^Ger[eê]ncia\s+/i,'');
     ref[0]=new Chart(canvas,{
       type:'bar',
-      data:{ labels:itens.map(it=>it.nome), datasets:[{
+      data:{ labels:itens.map(it=>encurtar(it.nome)), datasets:[{
         data:itens.map(it=>parseFloat(it.valor.toFixed(2))),
         backgroundColor:cores, borderColor:cores, borderRadius:8,
-        barPercentage:0.82, categoryPercentage:0.86,
+        barPercentage:0.86, categoryPercentage:0.92,
         hoverBackgroundColor:cores.map(c=>c+'cc'),
         _corTexto:'#fff', _corTextoArr:corsTexto
       }]},
       options:{
         responsive:true,maintainAspectRatio:false,
+        layout:{padding:{top:4}},
         plugins:{
           legend:{display:false},
-          tooltip:{callbacks:{label:ctx=>' '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
+          tooltip:{callbacks:{
+            title:ctxs=>itens[ctxs[0].dataIndex]?.nome||'',
+            label:ctx=>' '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')
+          }}
         },
         scales:{
-          x:{grid:{display:false},ticks:{font:{size:10.5},maxRotation:40,minRotation:itens.length>8?40:0,autoSkip:false}},
+          // Sempre inclinado — com nome comprido, deixar reto (0°) colava um texto no
+          // outro; um ângulo fixo evita que o Chart.js "decida" errado com poucas barras.
+          x:{grid:{display:false},ticks:{font:{size:11},maxRotation:42,minRotation:42,autoSkip:false}},
           y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:11},callback:v=>v.toFixed(0)}}
         }
       },

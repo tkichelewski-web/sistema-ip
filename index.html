@@ -313,7 +313,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
             </select>
           </div>
         </div>
-        <div style="padding:16px;position:relative;height:360px">
+        <div style="padding:16px 16px 4px 16px" id="acum-chart-reflegend"></div>
+        <div style="padding:0 16px 16px;position:relative;height:340px">
           <canvas id="acum-chart"></canvas>
         </div>
       </div>
@@ -333,7 +334,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
             </select>
           </div>
         </div>
-        <div style="padding:16px;position:relative;height:360px">
+        <div style="padding:16px 16px 4px 16px" id="acum-chart-mensal-reflegend"></div>
+        <div style="padding:0 16px 16px;position:relative;height:340px">
           <canvas id="acum-chart-mensal"></canvas>
         </div>
       </div>
@@ -901,20 +903,25 @@ async function carregarAcumulado() {
 }
 
 function uniCor(nome) {
-  // Retorna cor da unidade: JB = verde escuro, PB = verde lima, outros = cinza
+  // Retorna cor da unidade: JB = verde escuro, PB = verde lima, JB/PB combinado = azul
+  // (antes "JB/PB" caía no mesmo verde escuro do JB puro e ficava quase idêntico — agora
+  // tem cor própria pra dar pra distinguir de cara), outros = cinza
   if(!nome) return '#888';
   const n = nome.toUpperCase();
+  if(n.includes('JB') && n.includes('PB')) return '#1a73e8';
   if(n.includes('JB')) return '#07583C';
-  if(n.includes('PB')) return '#B3DD64';
+  if(n.includes('PB')) return '#7CB518';
   return '#888';
 }
 
 function uniTag(nome) {
   const cor   = uniCor(nome);
   const texto = nome || '—';
-  // tag colorida com contraste adequado
-  const corTexto = nome && nome.toUpperCase().includes('PB') ? '#07583C' : '#fff';
-  return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:'+cor+';color:'+corTexto+'">'+texto+'</span>';
+  // tag colorida com contraste adequado — JB/PB e JB usam texto branco, PB (verde mais
+  // claro que antes, mas ainda claro) usa texto escuro
+  const n = (nome || '').toUpperCase();
+  const corTexto = (n.includes('PB') && !n.includes('JB')) ? '#07583C' : '#fff';
+  return '<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:700;background:'+cor+';color:'+corTexto+';border:1px solid rgba(0,0,0,0.12)">'+texto+'</span>';
 }
 
 // ── TOGGLE VISÃO ACUMULADO ────────────────────────────────────
@@ -1143,6 +1150,27 @@ function renderAcumTable() {
 
 const VERDES = ['#065539','#096948','#0C7D56','#109164','#14A472','#18B780','#1DC98E','#23DB9C','#39DCA4','#4FDEAC','#64E0B5','#79E2BE','#8DE5C7','#A2E8D0','#B5ECD9'];
 
+// Interpola linearmente entre duas cores hex (t de 0 a 1)
+function interpolarHex(hexA, hexB, t) {
+  t = Math.max(0, Math.min(1, t));
+  const a = [1,3,5].map(i => parseInt(hexA.slice(i,i+2),16));
+  const b = [1,3,5].map(i => parseInt(hexB.slice(i,i+2),16));
+  const rgb = a.map((va,i) => Math.round(va + (b[i]-va)*t));
+  return '#' + rgb.map(v => v.toString(16).padStart(2,'0')).join('');
+}
+
+// Cor contínua por nota: vermelho (crítico) → amarelo (abaixo da meta) → verde → verde escuro (100).
+// Antes as barras do gráfico usavam uma paleta de verdes sequencial sem relação com o valor —
+// não dava pra saber, olhando a cor, se a barra era boa ou ruim. Agora a cor carrega essa informação.
+function corPorValor(v) {
+  if(v == null) return '#ccc';
+  const min = config?.faixa_critico || 80, meta = config?.faixa_meta || 90;
+  if(v >= 100) return '#043d29';
+  if(v >= meta) return interpolarHex('#18B780', '#043d29', (v-meta)/(100-meta || 1));
+  if(v >= min)  return interpolarHex('#e8b923', '#18B780', (v-min)/(meta-min || 1));
+  return interpolarHex('#c0392b', '#e8b923', Math.max(0, v/(min || 1)));
+}
+
 // Retorna cor de texto legível (#fff ou verde escuro) baseado na luminância do fundo
 function textoParaCor(hex) {
   const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
@@ -1153,15 +1181,28 @@ const refLinesPlugin = {
   id:'refLines',
   afterDraw(chart){
     const{ctx,chartArea:{left,right},scales:{y}}=chart;
-    [[100,'#07583C','Máximo (100)'],[90,'#1a73e8','Meta (90)'],[82,'#c47d0e','Mínimo (82)']].forEach(([val,color,lbl])=>{
+    // Só as linhas tracejadas — os rótulos (Máximo/Meta/Mínimo) saíram do canvas
+    // (onde ficavam colados em cima das barras da direita) e viraram uma legenda
+    // HTML fixa acima do gráfico (função legendaLinhasRefHTML).
+    [[100,'#07583C'],[90,'#1a73e8'],[82,'#c47d0e']].forEach(([val,color])=>{
       const yPx=y.getPixelForValue(val);
-      ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.8;
+      ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.7;
       ctx.beginPath();ctx.moveTo(left,yPx);ctx.lineTo(right,yPx);ctx.stroke();
-      ctx.globalAlpha=1;ctx.setLineDash([]);ctx.fillStyle=color;ctx.font='bold 10px DM Mono,monospace';
-      ctx.fillText(lbl,right-92,yPx-4);ctx.restore();
+      ctx.restore();
     });
   }
 };
+
+// Legenda HTML das linhas de referência — fica acima do canvas (estático, não sobrepõe barras)
+function legendaLinhasRefHTML(){
+  const item = (cor,label) =>
+    '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)">'
+    + '<span style="display:inline-block;width:16px;height:0;border-top:2px dashed '+cor+'"></span>'+label+'</span>';
+  const meta = config?.faixa_meta || 90, min = config?.faixa_critico || 80;
+  return '<div style="display:flex;gap:16px;align-items:center;padding:0 16px;margin-bottom:2px;flex-wrap:wrap">'
+    + item('#07583C','Máximo (100)') + item('#1a73e8','Meta ('+meta+')') + item('#c47d0e','Mínimo ('+min+')')
+    + '</div>';
+}
 
 const dataLabelsPlugin = {
   id:'dataLabels',
@@ -1170,12 +1211,16 @@ const dataLabelsPlugin = {
     chart.data.datasets.forEach((ds,i)=>{
       const meta=chart.getDatasetMeta(i);
       if(meta.hidden)return;
-      const corTexto=ds._corTexto||'#fff';
       meta.data.forEach((bar,j)=>{
         const val=ds.data[j];if(val==null)return;
-        const{x,y:barY,base}=bar;
-        const barH=Math.abs(base-barY);if(barH<20)return;
-        ctx.save();ctx.fillStyle=corTexto;ctx.font='bold 12px Open Sans,sans-serif';
+        const{x,y:barY,base,width}=bar;
+        const barH=Math.abs(base-barY);
+        // Barra baixa OU estreita demais: rótulo não cabe legível, não desenha
+        // (antes só checava altura — com muitas barras lado a lado, ficavam
+        // apertadas e os números se atropelavam uns nos outros)
+        if(barH<20||width<16)return;
+        const corTexto=(ds._corTextoArr&&ds._corTextoArr[j])||ds._corTexto||'#fff';
+        ctx.save();ctx.fillStyle=corTexto;ctx.font='bold 11px Open Sans,sans-serif';
         ctx.textAlign='center';ctx.textBaseline='middle';
         ctx.fillText(val.toFixed(1),x,(barY+base)/2);ctx.restore();
       });
@@ -1213,6 +1258,11 @@ function calcIPLanc(l) {
 
 function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
   const isBar=vizType==='bar';
+  // Quando o gráfico mostra 1 mês só, ordena as barras da maior nota pra menor
+  // (mais fácil de ler do que a ordem "como apareceu nos dados").
+  const ordenarSeUnicoMes = arr => meses.length===1
+    ? arr.slice().sort((a,b) => (b.data[0]??-1) - (a.data[0]??-1))
+    : arr;
   const filtDirChart=parseInt(document.getElementById('acum-dir')?.value)||0;
   const filtGerChart=parseInt(document.getElementById('acum-ger')?.value)||0;
   // filtMesExt vem de criarChart (já lido); garante consistência
@@ -1225,11 +1275,13 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
   if(filtMes)      base=base.filter(l=>l.mes===filtMes);
 
   function mkDs(label, pts, cor, corTexto){
+    const corPorPonto = isBar ? pts.map(v => corPorValor(v)) : cor;
+    const corTextoPorPonto = isBar ? pts.map(v => textoParaCor(corPorValor(v))) : corTexto;
     return {
       label: label||'—',
       data: pts,
-      backgroundColor: isBar ? cor : cor+'22',
-      borderColor: cor,
+      backgroundColor: isBar ? corPorPonto : cor+'22',
+      borderColor: isBar ? corPorPonto : cor,
       borderWidth: isBar ? 0 : 2,
       pointRadius: isBar ? 0 : 5,
       pointHoverRadius: isBar ? 0 : 7,
@@ -1237,6 +1289,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
       tension: 0.3,
       spanGaps: acumMode,
       _corTexto: corTexto || '#fff',
+      _corTextoArr: isBar ? corTextoPorPonto : null,
     };
   }
 
@@ -1254,7 +1307,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
     const gers=[...gersMap.values()];
     // Distribui os tons uniformemente ao longo da paleta
     const step = gers.length > 1 ? Math.floor((VERDES.length-1)/(gers.length-1)) : 0;
-    return gers.map((g,idx)=>{
+    return ordenarSeUnicoMes(gers.map((g,idx)=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
         // Para acumMode, precisa de todos os meses até m (não só os filtrados)
@@ -1268,7 +1321,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
       const palIdx = gers.length === 1 ? 0 : Math.min(idx*step, VERDES.length-1);
       const cor    = VERDES[palIdx];
       return mkDs(label, pts, cor, textoParaCor(cor));
-    });
+    }));
 
   }else if(tipo==='consolidado'){
     // Agrupa gerências com o MESMO NOME de unidades diferentes → média JB+PB
@@ -1278,7 +1331,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
       if(!nomeMap.has(nome)) nomeMap.set(nome,[]);
       nomeMap.get(nome).push(l);
     });
-    return [...nomeMap.entries()].map(([nome,ls],idx)=>{
+    return ordenarSeUnicoMes([...nomeMap.entries()].map(([nome,ls],idx)=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
         const lsM=ls.filter(l=>l.mes===m.val);
@@ -1290,7 +1343,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
       });
       const cor=VERDES[idx%VERDES.length];
       return mkDs(nome, pts, cor, textoParaCor(cor));
-    });
+    }));
 
   }else{
     // Por Diretoria
@@ -1300,7 +1353,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
       if(did&&!dirsMap.has(did)) dirsMap.set(did,l.gerencias?.diretorias?.nome||'—');
     });
     const dirs=[...dirsMap.entries()].map(([id,n])=>({id,nome:n}));
-    return dirs.map((d,idx)=>{
+    return ordenarSeUnicoMes(dirs.map((d,idx)=>{
       let soma=0,count=0;
       const pts=meses.map(m=>{
         const ls=base.filter(l=>l.gerencias?.diretoria_id===d.id&&l.mes===m.val);
@@ -1312,7 +1365,7 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
       });
       const cor=VERDES[idx%VERDES.length];
       return mkDs(d.nome, pts, cor, textoParaCor(cor));
-    });
+    }));
   }
 }
 
@@ -1320,6 +1373,8 @@ const _refAcum=[null],_refMensal=[null];
 
 function criarChart(canvasId,ref,tipo,vizType,acumMode){
   const canvas=document.getElementById(canvasId);if(!canvas)return;
+  const legendEl=document.getElementById(canvasId+'-reflegend');
+  if(legendEl) legendEl.innerHTML=legendaLinhasRefHTML();
   const safraId=document.getElementById('acum-safra')?.value;
   const safra=safrasData.find(s=>s.id==safraId);
   if(!acumAllData.length||!safra)return;

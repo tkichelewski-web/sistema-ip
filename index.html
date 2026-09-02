@@ -903,14 +903,14 @@ async function carregarAcumulado() {
 }
 
 function uniCor(nome) {
-  // Retorna cor da unidade: JB = verde escuro, PB = verde lima, JB/PB combinado = azul
-  // (antes "JB/PB" caía no mesmo verde escuro do JB puro e ficava quase idêntico — agora
-  // tem cor própria pra dar pra distinguir de cara), outros = cinza
+  // Retorna cor da unidade: JB = verde escuro, PB = lima, JB/PB combinado = verde médio
+  // (fica "entre" as outras duas — visualmente intuitivo pra "as duas juntas" — e continua
+  // 100% dentro da paleta da marca; antes usava um azul que não tinha nada a ver)
   if(!nome) return '#888';
   const n = nome.toUpperCase();
-  if(n.includes('JB') && n.includes('PB')) return '#1a73e8';
+  if(n.includes('JB') && n.includes('PB')) return '#348964';
   if(n.includes('JB')) return '#07583C';
-  if(n.includes('PB')) return '#7CB518';
+  if(n.includes('PB')) return '#B3DD64';
   return '#888';
 }
 
@@ -1150,6 +1150,9 @@ function renderAcumTable() {
 
 const VERDES = ['#065539','#096948','#0C7D56','#109164','#14A472','#18B780','#1DC98E','#23DB9C','#39DCA4','#4FDEAC','#64E0B5','#79E2BE','#8DE5C7','#A2E8D0','#B5ECD9'];
 
+// Paleta oficial da marca, da melhor nota pra pior — nada fora disso entra no gráfico.
+const GRADIENTE_MARCA = ['#07583C', '#348964', '#B3DD64', '#FDB952', '#DF4636'];
+
 // Interpola linearmente entre duas cores hex (t de 0 a 1)
 function interpolarHex(hexA, hexB, t) {
   t = Math.max(0, Math.min(1, t));
@@ -1159,16 +1162,34 @@ function interpolarHex(hexA, hexB, t) {
   return '#' + rgb.map(v => v.toString(16).padStart(2,'0')).join('');
 }
 
-// Cor contínua por nota: vermelho (crítico) → amarelo (abaixo da meta) → verde → verde escuro (100).
-// Antes as barras do gráfico usavam uma paleta de verdes sequencial sem relação com o valor —
-// não dava pra saber, olhando a cor, se a barra era boa ou ruim. Agora a cor carrega essa informação.
+// Percorre os 5 tons da marca suavemente (t=0 → melhor cor, t=1 → pior cor)
+function corGradiente(t) {
+  t = Math.max(0, Math.min(1, t));
+  const n = GRADIENTE_MARCA.length - 1;
+  const pos = t * n;
+  const i = Math.min(Math.floor(pos), n-1);
+  return interpolarHex(GRADIENTE_MARCA[i], GRADIENTE_MARCA[i+1], pos - i);
+}
+
+// Cor por POSIÇÃO/RANKING (0 = melhor, total-1 = pior) — usada quando as barras estão
+// ordenadas (1 mês só). Garante um gradiente sempre bem distribuído visualmente, mesmo
+// quando os valores reais estão todos próximos (por valor absoluto isso "achatava" tudo
+// numa cor só, porque o gráfico geralmente mostra os piores, que ficam todos abaixo da meta).
+function corPorRank(i, total) {
+  return corGradiente(total > 1 ? i/(total-1) : 0);
+}
+
+// Cor por VALOR ABSOLUTO (0–100) — usada em gráficos com mais de 1 mês, onde não faz
+// sentido reordenar. Ancorada na Meta e no Mínimo configurados.
 function corPorValor(v) {
   if(v == null) return '#ccc';
-  const min = config?.faixa_critico || 80, meta = config?.faixa_meta || 90;
-  if(v >= 100) return '#043d29';
-  if(v >= meta) return interpolarHex('#18B780', '#043d29', (v-meta)/(100-meta || 1));
-  if(v >= min)  return interpolarHex('#e8b923', '#18B780', (v-min)/(meta-min || 1));
-  return interpolarHex('#c0392b', '#e8b923', Math.max(0, v/(min || 1)));
+  const meta = config?.faixa_meta || 90, min = config?.faixa_critico || 80;
+  if(v >= 100) return GRADIENTE_MARCA[0];
+  if(v >= meta) return interpolarHex(GRADIENTE_MARCA[1], GRADIENTE_MARCA[0], (v-meta)/(100-meta || 1));
+  if(v >= min)  return interpolarHex(GRADIENTE_MARCA[2], GRADIENTE_MARCA[1], (v-min)/(meta-min || 1));
+  const pisoBaixo = Math.max(0, min - 25);
+  if(v >= pisoBaixo) return interpolarHex(GRADIENTE_MARCA[3], GRADIENTE_MARCA[2], (v-pisoBaixo)/(min-pisoBaixo || 1));
+  return interpolarHex(GRADIENTE_MARCA[4], GRADIENTE_MARCA[3], Math.max(0, v/(pisoBaixo || 1)));
 }
 
 // Retorna cor de texto legível (#fff ou verde escuro) baseado na luminância do fundo
@@ -1184,9 +1205,9 @@ const refLinesPlugin = {
     // Só as linhas tracejadas — os rótulos (Máximo/Meta/Mínimo) saíram do canvas
     // (onde ficavam colados em cima das barras da direita) e viraram uma legenda
     // HTML fixa acima do gráfico (função legendaLinhasRefHTML).
-    [[100,'#07583C'],[90,'#1a73e8'],[82,'#c47d0e']].forEach(([val,color])=>{
+    [[100,'#07583C'],[config?.faixa_meta||90,'#348964'],[config?.faixa_critico||82,'#FDB952']].forEach(([val,color])=>{
       const yPx=y.getPixelForValue(val);
-      ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.7;
+      ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=0.8;
       ctx.beginPath();ctx.moveTo(left,yPx);ctx.lineTo(right,yPx);ctx.stroke();
       ctx.restore();
     });
@@ -1200,7 +1221,7 @@ function legendaLinhasRefHTML(){
     + '<span style="display:inline-block;width:16px;height:0;border-top:2px dashed '+cor+'"></span>'+label+'</span>';
   const meta = config?.faixa_meta || 90, min = config?.faixa_critico || 80;
   return '<div style="display:flex;gap:16px;align-items:center;padding:0 16px;margin-bottom:2px;flex-wrap:wrap">'
-    + item('#07583C','Máximo (100)') + item('#1a73e8','Meta ('+meta+')') + item('#c47d0e','Mínimo ('+min+')')
+    + item('#07583C','Máximo (100)') + item('#348964','Meta ('+meta+')') + item('#FDB952','Mínimo ('+min+')')
     + '</div>';
 }
 
@@ -1371,6 +1392,50 @@ function buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesExt){
 
 const _refAcum=[null],_refMensal=[null];
 
+// Junta lançamentos por entidade (gerência/diretoria/consolidado) e calcula o valor de
+// cada uma num mês (ou a média progressiva até ele, se acumMode) — usado só no modo
+// "1 mês, barra por entidade" (ver criarChart), que dispensa o buildAcumDatasets normal.
+function buildSingleMonthEntidades(tipo, mesVal, acumMode){
+  const filtDirChart=parseInt(document.getElementById('acum-dir')?.value)||0;
+  const filtGerChart=parseInt(document.getElementById('acum-ger')?.value)||0;
+  let base=acumAllData;
+  if(filtDirChart) base=base.filter(l=>l.gerencias?.diretoria_id===filtDirChart);
+  if(filtGerChart) base=base.filter(l=>l.gerencia_id===filtGerChart);
+
+  const mediaDoMes = ls => {
+    const ips=ls.filter(l=>l.mes===mesVal).map(l=>calcIPLanc(l)).filter(v=>v!=null);
+    return ips.length?ips.reduce((s,v)=>s+v,0)/ips.length:null;
+  };
+  const mediaAcumulada = ls => {
+    const mesesAte=[...new Set(ls.filter(l=>l.mes<=mesVal).map(l=>l.mes))].sort();
+    const medias=mesesAte.map(mv=>{
+      const ips=ls.filter(l=>l.mes===mv).map(l=>calcIPLanc(l)).filter(v=>v!=null);
+      return ips.length?ips.reduce((s,v)=>s+v,0)/ips.length:null;
+    }).filter(v=>v!=null);
+    return medias.length?medias.reduce((s,v)=>s+v,0)/medias.length:null;
+  };
+  const valorDe = ls => acumMode ? mediaAcumulada(ls) : mediaDoMes(ls);
+
+  let itens=[];
+  if(tipo==='consolidado'){
+    const nomeMap=new Map();
+    base.forEach(l=>{const nome=l.gerencias?.nome||'—'; if(!nomeMap.has(nome))nomeMap.set(nome,[]); nomeMap.get(nome).push(l);});
+    itens=[...nomeMap.entries()].map(([nome,ls])=>({nome, valor:valorDe(ls)}));
+  } else if(tipo==='diretoria'){
+    const dirsMap=new Map();
+    base.forEach(l=>{const did=l.gerencias?.diretoria_id; if(did&&!dirsMap.has(did))dirsMap.set(did,l.gerencias?.diretorias?.nome||'—');});
+    itens=[...dirsMap.entries()].map(([id,nome])=>({nome, valor:valorDe(base.filter(l=>l.gerencias?.diretoria_id===id))}));
+  } else {
+    const gersMap=new Map();
+    base.forEach(l=>{if(!gersMap.has(l.gerencia_id))gersMap.set(l.gerencia_id,{id:l.gerencia_id,nome:l.gerencias?.nome||'—',uni:l.gerencias?.unidades?.nome||''});});
+    itens=[...gersMap.values()].map(g=>({
+      nome: g.uni?g.nome+' '+g.uni:g.nome,
+      valor: valorDe(base.filter(l=>l.gerencia_id===g.id))
+    }));
+  }
+  return itens.filter(it=>it.valor!=null).sort((a,b)=>b.valor-a.valor);
+}
+
 function criarChart(canvasId,ref,tipo,vizType,acumMode){
   const canvas=document.getElementById(canvasId);if(!canvas)return;
   const legendEl=document.getElementById(canvasId+'-reflegend');
@@ -1382,10 +1447,45 @@ function criarChart(canvasId,ref,tipo,vizType,acumMode){
   // Respeita filtro de mês: se filtrado, mostra só o mês selecionado
   let meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
   if(filtMesChart) meses=meses.filter(m=>m.val===filtMesChart);
+  const isBar=vizType==='bar';
+
+  // 1 mês só + colunas: 1 barra por entidade, nomes no eixo X, cor em gradiente pela
+  // posição (melhor→pior) — sem legenda de bolinhas, que ficava confusa com muita gerência.
+  const modoUmaEntidadePorBarra = isBar && meses.length===1;
+
+  if(ref[0]){ref[0].destroy();ref[0]=null;}
+
+  if(modoUmaEntidadePorBarra){
+    const itens=buildSingleMonthEntidades(tipo, meses[0].val, acumMode);
+    const cores=itens.map((it,i)=>corPorRank(i, itens.length));
+    const corsTexto=cores.map(c=>textoParaCor(c));
+    ref[0]=new Chart(canvas,{
+      type:'bar',
+      data:{ labels:itens.map(it=>it.nome), datasets:[{
+        data:itens.map(it=>parseFloat(it.valor.toFixed(2))),
+        backgroundColor:cores, borderColor:cores, borderRadius:8,
+        barPercentage:0.82, categoryPercentage:0.86,
+        hoverBackgroundColor:cores.map(c=>c+'cc'),
+        _corTexto:'#fff', _corTextoArr:corsTexto
+      }]},
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{
+          legend:{display:false},
+          tooltip:{callbacks:{label:ctx=>' '+(ctx.parsed.y!=null?ctx.parsed.y.toFixed(1):'—')}}
+        },
+        scales:{
+          x:{grid:{display:false},ticks:{font:{size:10.5},maxRotation:40,minRotation:itens.length>8?40:0,autoSkip:false}},
+          y:{min:0,max:100,grid:{color:'#e8f0e8'},ticks:{font:{size:11},callback:v=>v.toFixed(0)}}
+        }
+      },
+      plugins:[refLinesPlugin,dataLabelsPlugin]
+    });
+    return;
+  }
+
   const labels=meses.map(m=>m.nome);
   const datasets=buildAcumDatasets(meses,tipo,vizType,acumMode,filtMesChart);
-  const isBar=vizType==='bar';
-  if(ref[0]){ref[0].destroy();ref[0]=null;}
   ref[0]=new Chart(canvas,{
     type:vizType,data:{labels,datasets},
     options:{

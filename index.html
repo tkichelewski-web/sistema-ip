@@ -839,6 +839,16 @@ function getMesesSafra(safra) {
   });
 }
 
+// Meses futuros (depois do mês atual) não têm apuração possível ainda — mesmo que
+// exista uma linha de lançamento em branco pra eles no banco (pontuacao_gerencia=0
+// "de verdade", não null, criada sem querer), eles não devem aparecer no Acumulado
+// nem entrar na média. Compara sempre com a data real de hoje.
+function mesEhFuturo(mesVal) {
+  const hoje = new Date();
+  const atual = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0');
+  return mesVal > atual;
+}
+
 async function carregarSafras() {
   const { data } = await sb.from('safras').select('*').eq('ativa', true).order('ano_ini', { ascending: false });
   safrasData = data || [];
@@ -899,7 +909,7 @@ async function carregarAcumulado() {
   if(dtEl) dtEl.innerHTML = '<div class="loading"><span class="spinner"></span>Carregando...</div>';
 
   const { data } = await sb.from('lancamentos')
-    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))')
+    .select('*,gerencias(nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)),lancamento_itens(id)')
     .eq('safra_id', safraId).order('mes');
   acumAllData = data || [];
 
@@ -915,7 +925,7 @@ async function carregarAcumulado() {
   const safraObj = safrasData.find(s => s.id == safraId);
   const amEl = document.getElementById('acum-mes');
   if(amEl && safraObj) {
-    const mesesDisp = getMesesSafra(safraObj).filter(m => acumAllData.some(l => l.mes === m.val));
+    const mesesDisp = getMesesSafra(safraObj).filter(m => acumAllData.some(l => l.mes === m.val) && !mesEhFuturo(m.val));
     amEl.innerHTML = '<option value="">Todos os Meses</option>' + mesesDisp.map(m => `<option value="${m.val}">${m.nome}</option>`).join('');
   }
   renderAcumTable();
@@ -979,7 +989,7 @@ function renderAcumTable() {
   if(filtGer) dadosFiltrados = dadosFiltrados.filter(l => l.gerencia_id === filtGer);
   if(filtMes) dadosFiltrados = dadosFiltrados.filter(l => l.mes === filtMes);
 
-  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val) && !mesEhFuturo(m.val));
   const mesesVisiveis = filtMes ? meses.filter(m => m.val === filtMes) : meses;
   const wPG   = Number(config?.peso_gerencia)  || 0.5;
   const wMD   = Number(config?.peso_diretoria) || 0.2;
@@ -987,10 +997,12 @@ function renderAcumTable() {
 
   function calcIP(l) {
     if(!l) return null;
-    // Lançamento existe mas nunca foi de fato apurado (ex: linha em branco criada sem
-    // querer, ou nenhum indicador lançado ainda) — pontuacao_gerencia e nota_auditoria
-    // ficam null nesse caso. Sem isso, virava nota 0 "de verdade" e derrubava o acumulado.
-    if(l.pontuacao_gerencia == null && l.nota_auditoria == null && l.indice_prevencao == null) return null;
+    // Lançamento existe mas nunca foi de fato apurado — nenhum indicador lançado ainda
+    // (linha em branco criada sem querer, ou mês futuro pré-criado pela safra). Confere
+    // direto se tem item lançado, em vez de confiar nos campos calculados: quando não tem
+    // nenhum indicador, pontuacao_gerencia vem 0 "de verdade" (não null) e contava como
+    // nota real, derrubando o acumulado.
+    if(!l.lancamento_itens || l.lancamento_itens.length === 0) return null;
     const pg  = l.pontuacao_gerencia || 0;
     const md  = l.media_diretoria != null ? l.media_diretoria : pg;
     const aud = l.nota_auditoria   || 0;
@@ -1264,8 +1276,8 @@ function uniLabelTexto(uniNome) {
 
 function calcIPLanc(l) {
   if(!l) return null;
-  // Mesma correção do calcIP: lançamento existe mas nunca foi apurado de verdade.
-  if(l.pontuacao_gerencia == null && l.nota_auditoria == null && l.indice_prevencao == null) return null;
+  // Mesma correção do calcIP: sem nenhum indicador lançado, não conta.
+  if(!l.lancamento_itens || l.lancamento_itens.length === 0) return null;
   const wPG  = Number(config?.peso_gerencia)  || 0.5;
   const wMD  = Number(config?.peso_diretoria) || 0.2;
   const wAUD = Number(config?.peso_auditoria) || 0.3;
@@ -1444,7 +1456,7 @@ function criarChart(canvasId,ref,tipo,vizType,acumMode){
   if(!acumAllData.length||!safra)return;
   const filtMesChart=document.getElementById('acum-mes')?.value||'';
   // Respeita filtro de mês: se filtrado, mostra só o mês selecionado
-  let meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val));
+  let meses=getMesesSafra(safra).filter(m=>acumAllData.some(l=>l.mes===m.val) && !mesEhFuturo(m.val));
   if(filtMesChart) meses=meses.filter(m=>m.val===filtMesChart);
   const isBar=vizType==='bar';
 
@@ -1532,7 +1544,7 @@ function exportarAcumCSV() {
   if(!acumAllData.length) { alert('Sem dados.'); return; }
   const safraId = document.getElementById('acum-safra')?.value;
   const safra = safrasData.find(s => s.id == safraId);
-  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val));
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val) && !mesEhFuturo(m.val));
   const gers = [...new Map(acumAllData.map(l => [l.gerencia_id, { id: l.gerencia_id, nome: l.gerencias?.nome, dir: l.gerencias?.diretorias?.nome }])).values()];
   let csv = 'Gerência,Diretoria,' + meses.map(m => m.nome + ',Acum.' + m.nome).join(',') + '\n';
   for(const g of gers) {

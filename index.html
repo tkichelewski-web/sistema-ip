@@ -193,6 +193,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="file" id="input-importar-planilha-coach" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaCoachingLideranca(event)">
       <button class="btn btn-sm" id="btn-importar-fechamento" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-fechamento').click()">📥 Importar Fechamento Mensal Completo</button>
       <input type="file" id="input-importar-fechamento" accept=".xlsx,.xls" style="display:none" onchange="importarFechamentoMensal(event)">
+      <button class="btn btn-sm" id="btn-importar-periodico" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="document.getElementById('input-importar-periodico').click()">📥 Importar Exames Periódicos</button>
+      <input type="file" id="input-importar-periodico" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaExamesPeriodicos(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -6752,6 +6754,140 @@ async function gravarImportacaoFechamentoMensal(prontos, escolha) {
     }
   }
   return { ok, erros };
+}
+
+// ===== Importação de Exames Periódicos -> lançamento real no IP =====
+// Planilha por pessoa (NOME_COLABORADOR, GERENCIA, Mes Nome, Safra "26/27", Total Previsto
+// Inicial, Total Realizado, STATUS_DASHBOARD). Sem coluna de Unidade — os nomes de gerência
+// seguem o mesmo padrão dos exports WeCheck, então reaproveita ALIASES_GERENCIA/
+// SINONIMOS_UNIDADE/baseNomeGerencia já carregados, e a gravação genérica
+// gravarImportacaoWecheck / mostrarPreviaImportacaoV2 (usadas pelo importador de Inspeções).
+
+const NOME_IND_EXAME_PERIODICO = 'Exames Periódicos';
+
+// "26/27" -> "2026/2027", pro mesmo formato que anoDaSafraParaMes/acharSafraId esperam.
+function normalizarSafraCurta(txt) {
+  const s = (txt || '').toString().trim();
+  const m2 = s.match(/^(\d{2})\s*\/\s*(\d{2})$/);
+  if (m2) return '20' + m2[1] + '/20' + m2[2];
+  if (/\d{4}\s*\/\s*\d{4}/.test(s)) return s;
+  return s;
+}
+
+async function importarPlanilhaExamesPeriodicos(evento) {
+  const arquivos = Array.from(evento.target.files || []);
+  if (!arquivos.length) return;
+
+  try {
+    const todasLinhas = [];
+    for (const arquivo of arquivos) {
+      const buffer = await arquivo.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      wb.SheetNames.forEach(nomeAba => {
+        const linhasAba = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null });
+        todasLinhas.push(...linhasAba);
+      });
+    }
+
+    const grupos = {};
+    const linhasIgnoradas = [];
+
+    todasLinhas.forEach(lBruta => {
+      const l = linhaComChavesTrimadas(lBruta);
+      const gerNome = (campo(l, ['GERENCIA', 'Gerência']) || '').toString().trim();
+      const mesTexto = (campo(l, ['Mes Nome', 'Mês', 'MES', 'MES_NOME', 'Mes_Nome']) || '').toString().trim().toLowerCase();
+      const num = MESES_PT[mesTexto];
+      const safraTxt = normalizarSafraCurta(campo(l, ['Safra', 'ANO/SAFRA', 'Ano Safra', 'ANO_SAFRA']));
+      const ano = num ? anoDaSafraParaMes(safraTxt, parseInt(num, 10)) : null;
+      const mes = (ano && num) ? (ano + '-' + num) : null;
+
+      if (!gerNome || !mes) { linhasIgnoradas.push({ gerNome, mesTexto, safraTxt }); return; }
+
+      const previsto = parseFloat(campo(l, ['Total Previsto Inicial', 'Previsto'])) || 0;
+      const realizado = parseFloat(campo(l, ['Total Realizado', 'Realizado'])) || 0;
+      const chave = gerNome + '|' + mes + '|' + safraTxt;
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome: '', mes, safraTxt, nomeIndicador: NOME_IND_EXAME_PERIODICO, previsto: 0, realizado: 0, pessoas: [] };
+      grupos[chave].previsto += previsto;
+      grupos[chave].realizado += realizado;
+      grupos[chave].pessoas.push({
+        nome: (campo(l, ['NOME_COLABORADOR', 'Colaborador']) || '').toString().trim(),
+        cargo: '',
+        matricula: '',
+        status: (campo(l, ['STATUS_DASHBOARD', 'Status']) || '').toString().trim()
+      });
+    });
+
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s) (sem GERENCIA/Mês/Safra reconhecível):', linhasIgnoradas.slice(0, 20));
+
+    const listaGrupos = Object.values(grupos);
+    if (!listaGrupos.length) {
+      alert('Não encontrei nenhuma linha válida. Confira se a planilha tem as colunas GERENCIA, "Mes Nome", Safra, "Total Previsto Inicial", "Total Realizado".');
+      return;
+    }
+
+    const [{ data: gers }, { data: unids }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const ind = (inds || []).find(i => normaliza(i.nome) === normaliza(NOME_IND_EXAME_PERIODICO));
+    if (!ind) {
+      alert('Não encontrei o indicador "' + NOME_IND_EXAME_PERIODICO + '" cadastrado (ativo) no sistema. Cria ele antes de importar.');
+      return;
+    }
+
+    const acharUnidadeId = nomeExport => {
+      const norm = normaliza(nomeExport);
+      const alvo = SINONIMOS_UNIDADE[norm] || nomeExport;
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(alvo));
+      return u ? u.id : null;
+    };
+    const acharGerId = (gerNomeOriginal, unidadeNome) => {
+      const apelido = ALIASES_GERENCIA[normaliza(gerNomeOriginal)];
+      const gerNome = apelido || gerNomeOriginal;
+      const base = normaliza(baseNomeGerencia(gerNome));
+      const unidadeId = acharUnidadeId(unidadeNome);
+
+      if (unidadeId) {
+        const porNomeEUnidade = (gers || []).filter(g => normaliza(baseNomeGerencia(g.nome)) === base && g.unidade_id === unidadeId);
+        if (porNomeEUnidade.length === 1) return { id: porNomeEUnidade[0].id };
+        if (porNomeEUnidade.length > 1) return { erro: 'gerência ambígua (' + porNomeEUnidade.length + ' registros nome+unidade)' };
+      }
+      const porNome = (gers || []).filter(g => normaliza(baseNomeGerencia(g.nome)) === base);
+      if (porNome.length === 1) return { id: porNome[0].id };
+      if (porNome.length > 1) return { erro: 'gerência ambígua (' + porNome.length + ' registros — a planilha não diz JB ou PB pra essa gerência)' };
+      return { erro: 'gerência não encontrada' };
+    };
+
+    const prontos = [];
+    const semMatch = [];
+    listaGrupos.forEach(gr => {
+      const resGer = acharGerId(gr.gerNome, gr.unidadeNome);
+      if (resGer.erro) { semMatch.push({ ...gr, erroGer: resGer.erro }); return; }
+      prontos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
+    });
+
+    if (semMatch.length) {
+      const detalhe = semMatch.slice(0, 10).map(s => `- ${s.gerNome} — ${s.erroGer}`).join('\n');
+      const seguir = confirm(
+        'Não encontrei correspondência para ' + semMatch.length + ' gerência(s):\n\n' + detalhe +
+        (semMatch.length > 10 ? '\n... e mais ' + (semMatch.length - 10) : '') +
+        '\n\nEssas gerências NÃO serão importadas. Continuar só com as ' + prontos.length + ' que deram certo?'
+      );
+      if (!seguir) return;
+    }
+    if (!prontos.length) { alert('Nenhum grupo pôde ser importado.'); return; }
+
+    const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
+    await mostrarPreviaImportacaoV2(prontos, nomeResumo);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler a(s) planilha(s): ' + err.message +
+      '\nConfira se a planilha tem as colunas GERENCIA, "Mes Nome", Safra, "Total Previsto Inicial", "Total Realizado".');
+  } finally {
+    evento.target.value = '';
+  }
 }
 
 </script>

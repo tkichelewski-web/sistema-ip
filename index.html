@@ -6795,6 +6795,7 @@ async function importarPlanilhaExamesPeriodicos(evento) {
     todasLinhas.forEach(lBruta => {
       const l = linhaComChavesTrimadas(lBruta);
       const gerNome = (campo(l, ['GERENCIA', 'Gerência']) || '').toString().trim();
+      const unidadeNome = (campo(l, ['UNIDADE', 'Unidade']) || '').toString().trim();
       const mesTexto = (campo(l, ['Mes Nome', 'Mês', 'MES', 'MES_NOME', 'Mes_Nome']) || '').toString().trim().toLowerCase();
       const num = MESES_PT[mesTexto];
       const safraTxt = normalizarSafraCurta(campo(l, ['Safra', 'ANO/SAFRA', 'Ano Safra', 'ANO_SAFRA']));
@@ -6805,8 +6806,8 @@ async function importarPlanilhaExamesPeriodicos(evento) {
 
       const previsto = parseFloat(campo(l, ['Total Previsto Inicial', 'Previsto'])) || 0;
       const realizado = parseFloat(campo(l, ['Total Realizado', 'Realizado'])) || 0;
-      const chave = gerNome + '|' + mes + '|' + safraTxt;
-      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome: '', mes, safraTxt, nomeIndicador: NOME_IND_EXAME_PERIODICO, previsto: 0, realizado: 0, pessoas: [] };
+      const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + safraTxt;
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador: NOME_IND_EXAME_PERIODICO, previsto: 0, realizado: 0, pessoas: [] };
       grupos[chave].previsto += previsto;
       grupos[chave].realizado += realizado;
       grupos[chave].pessoas.push({

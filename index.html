@@ -472,7 +472,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <div class="flex-row" style="margin-bottom:16px;flex-wrap:wrap;">
         <select id="pend-diretoria" style="width:auto;padding:6px 10px;font-size:13px;" onchange="filtrarGerenciasPendencias();carregarPendencias()"><option value="">Todas as Diretorias</option></select>
         <select id="pend-gerencia" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Todas as Gerências</option></select>
-        <select id="pend-mes" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Mês atual</option></select>
+        <select id="pend-mes" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Mês mais recente</option></select>
         <select id="pend-indicador" style="width:auto;padding:6px 10px;font-size:13px;" onchange="carregarPendencias()"><option value="">Todos os indicadores</option></select>
         <button class="btn btn-secondary btn-sm" onclick="exportarPendenciasExcel()">⬇ Excel</button>
       </div>
@@ -3793,7 +3793,19 @@ async function carregarPendencias() {
   const gerId = parseInt(document.getElementById('pend-gerencia')?.value) || 0;
   const indId = parseInt(document.getElementById('pend-indicador')?.value) || 0;
   let mes = document.getElementById('pend-mes')?.value || '';
-  if (!mes) { const hoje = new Date(); mes = hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0'); }
+  if (!mes) {
+    // Sem mês escolhido: usa o mês mais recente que TEM lançamento de verdade (com
+    // indicador lançado), não a data real de hoje — mesmo ajuste que já fizemos no
+    // Acumulado. Sem isso, quem fecha o mês anterior via importação ficava vendo a
+    // aba de Pendências sempre no mês corrente (em branco), achando que nada atualizou.
+    const { data: recentes } = await sb.from('lancamentos')
+      .select('mes, lancamento_itens(id)')
+      .order('mes', { ascending: false })
+      .limit(50);
+    const comDados = (recentes || []).find(l => l.lancamento_itens && l.lancamento_itens.length > 0);
+    const hoje = new Date();
+    mes = comDados?.mes || (hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0'));
+  }
 
   let gerIdsFiltro = null;
   if (gerId) gerIdsFiltro = [gerId];

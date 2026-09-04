@@ -5184,7 +5184,8 @@ async function importarPlanilhaWecheckInspecoes(evento) {
     if (!prontos.length) { alert('Nenhum grupo pôde ser importado.'); return; }
 
     const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
-    await mostrarPreviaImportacaoV2(prontos, nomeResumo);
+    const familiaInspecoes = [NOME_IND_QUINZENA_1, NOME_IND_QUINZENA_2, NOME_IND_TRIMESTRAL, NOME_IND_MENSAL, ...Object.values(NOME_IND_SEMANA)];
+    await mostrarPreviaImportacaoV2(prontos, nomeResumo, familiaInspecoes);
   } catch (err) {
     console.error(err);
     alert('Erro ao ler a(s) planilha(s): ' + err.message +
@@ -5195,7 +5196,7 @@ async function importarPlanilhaWecheckInspecoes(evento) {
 }
 
 // Mostra a prévia; só grava quando o usuário confirma
-async function mostrarPreviaImportacaoV2(prontos, nomeArquivo) {
+async function mostrarPreviaImportacaoV2(prontos, nomeArquivo, familiaIndicadores) {
   const linhasHtml = prontos.map(g => {
     const pct = g.previsto > 0 ? Math.min((g.realizado / g.previsto) * 100, 100) : (g.realizado === 0 ? 100 : 0);
     return `<tr>
@@ -5236,7 +5237,7 @@ async function mostrarPreviaImportacaoV2(prontos, nomeArquivo) {
     const btn = document.getElementById('btn-confirmar-previa');
     btn.disabled = true; btn.textContent = 'Gravando...';
     try {
-      const resumo = await gravarImportacaoWecheck(prontos);
+      const resumo = await gravarImportacaoWecheck(prontos, familiaIndicadores);
       overlay.remove();
       alert('Importação concluída.\n' + resumo.ok + ' lançamento(s) atualizado(s) com sucesso.' +
         (resumo.erros.length ? '\n' + resumo.erros.length + ' com erro (veja o console).' : ''));
@@ -5253,7 +5254,14 @@ async function mostrarPreviaImportacaoV2(prontos, nomeArquivo) {
 // Grava de fato: para cada (gerência, mês), atualiza SÓ os itens dos indicadores
 // que vieram da planilha (preserva outros indicadores já lançados manualmente),
 // e recalcula a pontuação da gerência com TODOS os itens daquele lançamento.
-async function gravarImportacaoWecheck(prontos) {
+// `familiaIndicadores` (opcional): nomes de TODOS os indicadores que essa planilha
+// PODE gerar (ex: 1ª/2ª quinzena, trimestral, semana 1-4) — usado só pra limpar
+// pendências antigas por completo, mesmo quando um desses tipos não aparece mais
+// na planilha atual (ex: pendência de "trimestral" que já foi resolvida e saiu do
+// relatório). Sem isso, cada tipo só era limpo quando aparecia de novo na planilha,
+// e pendência de um tipo "sumido" ficava presa pra sempre. Sem esse parâmetro,
+// mantém o comportamento antigo (limpa só os tipos presentes nesse lote).
+async function gravarImportacaoWecheck(prontos, familiaIndicadores) {
   // Resolve o safra_id de cada linha pela própria planilha (ANO/SAFRA, ex: "2026/2027"),
   // comparando com ano_ini/ano_fim cadastrados em `safras` — não depende de nenhum
   // campo da tela (sel-safra só existe na tela de Lançamento; o import pode ser feito
@@ -5279,6 +5287,14 @@ async function gravarImportacaoWecheck(prontos) {
 
   if (semSafra.length) {
     console.warn(semSafra.length + ' grupo(s) sem safra reconhecida (confira a coluna ANO/SAFRA na planilha):', semSafra);
+  }
+
+  // Se veio a família completa de indicadores possíveis, resolve os IDs uma vez só
+  // (fora do loop) pra usar na limpeza de pendências de cada lançamento.
+  let idsFamiliaCompleta = null;
+  if (familiaIndicadores && familiaIndicadores.length) {
+    const { data: indsFam } = await sb.from('indicadores').select('id,nome').in('nome', familiaIndicadores);
+    idsFamiliaCompleta = (indsFam || []).map(i => i.id);
   }
 
   let ok = 0; const erros = [];
@@ -5311,7 +5327,7 @@ async function gravarImportacaoWecheck(prontos) {
 
       // 2b. Grava o detalhe por pessoa (nome, cargo, status) — pra dar pra ver
       // "quem não fez" depois, sem precisar abrir a planilha anexada.
-      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsFamiliaCompleta || idsIndicadores);
       const linhasPessoas = [];
       grupo.itens.forEach(it => {
         (it.pessoas || []).forEach(p => {
@@ -5578,6 +5594,14 @@ async function gravarImportacaoWecheckObs(prontos) {
     return s ? s.id : null;
   };
 
+  // Família completa de indicadores de Observações (mensal, quinzenal, trimestral,
+  // semana 1-4) — pra limpar pendências de um tipo que sumiu da planilha atual, mesmo
+  // que essa gerência não tenha nenhuma linha desse tipo específico dessa vez. Mesmo
+  // ajuste feito no Plano de Ação e nas Inspeções.
+  const familiaObs = [NOME_IND_OBS_MENSAL, NOME_IND_OBS_QUINZENAL, NOME_IND_OBS_TRIMESTRAL, ...Object.values(NOME_IND_OBS_SEMANA)];
+  const { data: indsFamObs } = await sb.from('indicadores').select('id').in('nome', familiaObs);
+  const idsFamiliaObs = (indsFamObs || []).map(i => i.id);
+
   const porLancamento = {};
   const semSafra = [];
   prontos.forEach(g => {
@@ -5615,7 +5639,7 @@ async function gravarImportacaoWecheckObs(prontos) {
       const { error: eItens } = await sb.from('lancamento_itens').insert(novasLinhas);
       if (eItens) throw eItens;
 
-      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsFamiliaObs);
       const linhasPessoas = [];
       grupo.itens.forEach(it => {
         (it.pessoas || []).forEach(p => {
@@ -5924,6 +5948,15 @@ async function gravarImportacaoWecheckPA(prontos) {
     return s ? s.id : null;
   };
 
+  // Os 5 tipos de Plano de Ação sempre vêm do MESMO relatório/export — se uma gerência
+  // não tem mais nenhuma linha de um tipo (ex: "Inspeções de SSMA") nessa importação, é
+  // porque não tem mais pendência aberta desse tipo (foi resolvida e saiu do relatório).
+  // Por isso a limpeza de pendências usa esses 5 IDs sempre, não só os que aparecem na
+  // planilha atual — senão pendência de um tipo que "sumiu" do relatório nunca era apagada.
+  const { data: indsPA } = await sb.from('indicadores').select('id,nome')
+    .in('nome', [NOME_IND_PA_INSPECOES, NOME_IND_PA_SIMULADOS, NOME_IND_PA_ABRANGENCIA, NOME_IND_PA_ACID_INC, NOME_IND_PA_ERGONOMIA]);
+  const idsTodosIndicadoresPA = (indsPA || []).map(i => i.id);
+
   const porLancamento = {};
   const semSafra = [];
   prontos.forEach(g => {
@@ -5963,7 +5996,9 @@ async function gravarImportacaoWecheckPA(prontos) {
 
       // Detalhe por ação (reaproveita a mesma tabela de pendências — aqui "pendente"
       // vira "atrasada"; nome/cargo viram ação/responsável, matrícula vira número da ação).
-      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsIndicadores);
+      // Limpa os 5 tipos de PA sempre (idsTodosIndicadoresPA), não só os que essa
+      // gerência tem nessa planilha — ver comentário lá em cima.
+      await sb.from('lancamento_pendencias').delete().eq('lancamento_id', lancId).in('indicador_id', idsTodosIndicadoresPA);
       const linhasPessoas = [];
       grupo.itens.forEach(it => {
         (it.pessoas || []).forEach(p => {

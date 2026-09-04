@@ -4999,7 +4999,15 @@ const SINONIMOS_UNIDADE = {
 const ALIASES_GERENCIA = {
   'DIRETORIA DE PESSOAS': 'RH/Jurídico/Restaurante/Saúde/Facilities',
   'SUPERINTENDENCIA': 'Supervisão Excelência e Projetos',
-  'SUPERINTENDÊNCIA': 'Supervisão Excelência e Projetos'
+  'SUPERINTENDÊNCIA': 'Supervisão Excelência e Projetos',
+  // As três reportam pra área única cadastrada como "RH/Jurídico/Restaurante/Saúde/Facilities".
+  'SUPERVISAO FACILITIES': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'GERÊNCIA RH': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'GERENCIA RH': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'SUPERVISAO RH': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'GERÊNCIA JURIDICO': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'GERENCIA JURIDICO': 'RH/Jurídico/Restaurante/Saúde/Facilities',
+  'SUPERVISAO JURIDICO': 'RH/Jurídico/Restaurante/Saúde/Facilities'
 };
 
 const NOME_IND_QUINZENA_1 = 'Nº de Inspeções SSMA -1º quinzena';
@@ -7230,13 +7238,29 @@ async function importarPlanilhaTreinamento(evento) {
       return { erro: 'gerência não encontrada' };
     };
 
-    const prontos = [];
+    const prontosBrutos = [];
     const semMatch = [];
     listaGrupos.forEach(gr => {
       const resGer = acharGerId(gr.gerNome, gr.unidadeNome);
       if (resGer.erro) { semMatch.push({ ...gr, erroGer: resGer.erro }); return; }
-      prontos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
+      prontosBrutos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
     });
+
+    // Alguns nomes da planilha (ex: Facilities/RH/Jurídico) apontam pra UMA MESMA
+    // gerência no cadastro (via ALIASES_GERENCIA) — mescla por média em vez de deixar
+    // 3 lançamentos conflitantes pro mesmo lugar/mês.
+    const mesclados = {};
+    prontosBrutos.forEach(p => {
+      const chave = p.gerId + '|' + p.mes + '|' + p.safraTxt;
+      if (!mesclados[chave]) mesclados[chave] = { ...p, _n: 1 };
+      else {
+        const m = mesclados[chave];
+        m.previsto = (m.previsto * m._n + p.previsto) / (m._n + 1);
+        m.realizado = (m.realizado * m._n + p.realizado) / (m._n + 1);
+        m._n++;
+      }
+    });
+    const prontos = Object.values(mesclados);
 
     if (semMatch.length) {
       const detalhe = semMatch.slice(0, 15).map(s => `- ${s.gerNome} (${s.unidadeNome}) — ${s.erroGer}`).join('\n');

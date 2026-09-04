@@ -196,6 +196,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <button class="dropdown-item" onclick="document.getElementById('input-importar-planilha-sim').click();fecharImportarDropdown()">📄 Simulados <span>(piloto)</span></button>
           <button class="dropdown-item" onclick="document.getElementById('input-importar-planilha-coach').click();fecharImportarDropdown()">📄 Coaching Liderança <span>(piloto)</span></button>
           <button class="dropdown-item" onclick="document.getElementById('input-importar-periodico').click();fecharImportarDropdown()">📄 Exames Periódicos</button>
+          <button class="dropdown-item" onclick="document.getElementById('input-importar-treinamento').click();fecharImportarDropdown()">📄 Matriz de Treinamento</button>
           <div style="border-top:1px solid var(--border);margin:4px 0"></div>
           <button class="dropdown-item" onclick="document.getElementById('input-importar-fechamento').click();fecharImportarDropdown()">📦 Fechamento Mensal Completo</button>
         </div>
@@ -207,6 +208,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="file" id="input-importar-planilha-coach" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaCoachingLideranca(event)">
       <input type="file" id="input-importar-fechamento" accept=".xlsx,.xls" style="display:none" onchange="importarFechamentoMensal(event)">
       <input type="file" id="input-importar-periodico" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaExamesPeriodicos(event)">
+      <input type="file" id="input-importar-treinamento" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaTreinamento(event)">
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -7086,6 +7088,126 @@ async function importarPlanilhaExamesPeriodicos(evento) {
     console.error(err);
     alert('Erro ao ler a(s) planilha(s): ' + err.message +
       '\nConfira se a planilha tem as colunas GERENCIA, "Mes Nome", Safra, "Total Previsto Inicial", "Total Realizado".');
+  } finally {
+    evento.target.value = '';
+  }
+}
+
+// ===== Importação de Atendimento Matriz de Treinamento -> lançamento real no IP =====
+// Planilha já vem 1 linha por gerência/mês (não por pessoa), com UNIDADE explícita —
+// inclusive o valor combinado "JB/PB" pra gerências que têm um único registro pras duas
+// unidades. Reaproveita o mesmo acharGerId/gravarImportacaoWecheck dos outros importadores.
+
+const NOME_IND_TREINAMENTO = 'Atendimento Matriz de Treinamento 70%';
+
+async function importarPlanilhaTreinamento(evento) {
+  const arquivos = Array.from(evento.target.files || []);
+  if (!arquivos.length) return;
+
+  try {
+    const todasLinhas = [];
+    for (const arquivo of arquivos) {
+      const buffer = await arquivo.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      wb.SheetNames.forEach(nomeAba => {
+        todasLinhas.push(...XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null }));
+      });
+    }
+
+    const grupos = {};
+    const linhasIgnoradas = [];
+
+    todasLinhas.forEach(lBruta => {
+      const l = linhaComChavesTrimadas(lBruta);
+      const unidadeNome = (campo(l, ['UNIDADE', 'Unidade']) || '').toString().trim();
+      const gerNome = (campo(l, ['GERÊNCIA', 'GERENCIA', 'Gerência']) || '').toString().trim();
+      const mesTexto = (campo(l, ['MÊS', 'MES', 'Mês']) || '').toString().trim().toLowerCase();
+      const num = MESES_PT[mesTexto];
+      const safraTxt = normalizarSafraCurta(campo(l, ['SAFRA/', 'Safra', 'ANO/SAFRA', 'Ano Safra']));
+      const ano = num ? anoDaSafraParaMes(safraTxt, parseInt(num, 10)) : null;
+      const mes = (ano && num) ? (ano + '-' + num) : null;
+
+      if (!gerNome || !mes) { linhasIgnoradas.push({ gerNome, mesTexto, safraTxt }); return; }
+
+      const previsto = parseFloat(campo(l, ['PREVISTO', 'Previsto'])) || 0;
+      const realizado = parseFloat(campo(l, ['REALIZADO', 'Realizado'])) || 0;
+      const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + safraTxt;
+      if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador: NOME_IND_TREINAMENTO, previsto: 0, realizado: 0, pessoas: [], _n: 0 };
+      // Já vem agregado por gerência (1 linha só) — soma defensiva só cobre o caso raro
+      // de duas linhas pra mesma gerência/mês em arquivos diferentes (faz média nesse caso).
+      grupos[chave].previsto = (grupos[chave].previsto * grupos[chave]._n + previsto) / (grupos[chave]._n + 1);
+      grupos[chave].realizado = (grupos[chave].realizado * grupos[chave]._n + realizado) / (grupos[chave]._n + 1);
+      grupos[chave]._n++;
+    });
+
+    if (linhasIgnoradas.length) console.warn(linhasIgnoradas.length + ' linha(s) ignorada(s) (sem GERÊNCIA/Mês/Safra reconhecível):', linhasIgnoradas.slice(0, 20));
+
+    const listaGrupos = Object.values(grupos);
+    if (!listaGrupos.length) {
+      alert('Não encontrei nenhuma linha válida. Confira se a planilha tem as colunas UNIDADE, GERÊNCIA, MÊS, SAFRA/, PREVISTO, REALIZADO.');
+      return;
+    }
+
+    const [{ data: gers }, { data: unids }, { data: inds }] = await Promise.all([
+      sb.from('gerencias').select('id,nome,unidade_id').eq('ativo', true),
+      sb.from('unidades').select('id,nome'),
+      sb.from('indicadores').select('id,nome,tipo,peso').eq('ativo', true)
+    ]);
+
+    const ind = (inds || []).find(i => normaliza(i.nome) === normaliza(NOME_IND_TREINAMENTO));
+    if (!ind) {
+      alert('Não encontrei o indicador "' + NOME_IND_TREINAMENTO + '" cadastrado (ativo) no sistema. Cria ele antes de importar.');
+      return;
+    }
+
+    const acharUnidadeId = nomeExport => {
+      const norm = normaliza(nomeExport);
+      const alvo = SINONIMOS_UNIDADE[norm] || nomeExport;
+      const u = (unids || []).find(u => normaliza(u.nome) === normaliza(alvo));
+      return u ? u.id : null;
+    };
+    const acharGerId = (gerNomeOriginal, unidadeNome) => {
+      const apelido = ALIASES_GERENCIA[normaliza(gerNomeOriginal)];
+      const gerNome = apelido || gerNomeOriginal;
+      const base = normaliza(baseNomeGerencia(gerNome));
+      const unidadeId = acharUnidadeId(unidadeNome);
+
+      if (unidadeId) {
+        const porNomeEUnidade = (gers || []).filter(g => normaliza(baseNomeGerencia(g.nome)) === base && g.unidade_id === unidadeId);
+        if (porNomeEUnidade.length === 1) return { id: porNomeEUnidade[0].id };
+        if (porNomeEUnidade.length > 1) return { erro: 'gerência ambígua (' + porNomeEUnidade.length + ' registros nome+unidade)' };
+      }
+      const porNome = (gers || []).filter(g => normaliza(baseNomeGerencia(g.nome)) === base);
+      if (porNome.length === 1) return { id: porNome[0].id };
+      if (porNome.length > 1) return { erro: 'gerência ambígua (' + porNome.length + ' registros — confira se a unidade "' + unidadeNome + '" está certa no cadastro)' };
+      return { erro: 'gerência não encontrada' };
+    };
+
+    const prontos = [];
+    const semMatch = [];
+    listaGrupos.forEach(gr => {
+      const resGer = acharGerId(gr.gerNome, gr.unidadeNome);
+      if (resGer.erro) { semMatch.push({ ...gr, erroGer: resGer.erro }); return; }
+      prontos.push({ ...gr, gerId: resGer.id, indicadorId: ind.id, peso: ind.peso });
+    });
+
+    if (semMatch.length) {
+      const detalhe = semMatch.slice(0, 15).map(s => `- ${s.gerNome} (${s.unidadeNome}) — ${s.erroGer}`).join('\n');
+      const seguir = confirm(
+        'Não encontrei correspondência para ' + semMatch.length + ' gerência(s):\n\n' + detalhe +
+        (semMatch.length > 15 ? '\n... e mais ' + (semMatch.length - 15) : '') +
+        '\n\nEssas gerências NÃO serão importadas. Continuar só com as ' + prontos.length + ' que deram certo?'
+      );
+      if (!seguir) return;
+    }
+    if (!prontos.length) { alert('Nenhum grupo pôde ser importado.'); return; }
+
+    const nomeResumo = arquivos.length === 1 ? arquivos[0].name : arquivos.length + ' arquivos selecionados';
+    await mostrarPreviaImportacaoV2(prontos, nomeResumo);
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao ler a(s) planilha(s): ' + err.message +
+      '\nConfira se a planilha tem as colunas UNIDADE, GERÊNCIA, MÊS, SAFRA/, PREVISTO, REALIZADO.');
   } finally {
     evento.target.value = '';
   }

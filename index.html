@@ -3872,6 +3872,7 @@ function exportarPendenciasExcel() {
 // Cache de dados para o modal
 let _naLancamentos = [];
 let _naItens = {};
+let _naPendencias = {}; // Map: `${lancamento_id}_${indicador_id}` => [{nome,cargo,status}]
 let _naPesos = {}; // Map: `${gerencia_id}_${safra_id}_${indicador_id}` => peso
 let _naDadosAtuais = null; // recorte agregado atual, usado para gerar a apresentação por IA
 let _apresentacaoSlides = [];
@@ -3900,9 +3901,9 @@ function agregarPorDiretoria(dadosNA){
     d.perdaTotal += g.perdaTotal;
     d.gerenciasComPerda += 1;
     g.indicadoresNaoAtingidos.forEach(it=>{
-      const acc = d.indicadoresMap.get(it.indicador) || { indicador:it.indicador, perdaPontos:0, semEvidencia:0 };
+      const acc = d.indicadoresMap.get(it.indicador) || { indicador:it.indicador, perdaPontos:0, totalPendentes:0 };
       acc.perdaPontos += it.perdaPontos;
-      if(!it.temEvidencia) acc.semEvidencia++;
+      acc.totalPendentes += (it.pendencias||[]).length;
       d.indicadoresMap.set(it.indicador, acc);
     });
   });
@@ -3913,13 +3914,13 @@ function agregarPorDiretoria(dadosNA){
     indicadoresNaoAtingidos: [...d.indicadoresMap.values()]
       .sort((a,b)=>b.perdaPontos-a.perdaPontos)
       .slice(0,6)
-      .map(it=>({indicador:it.indicador, perdaPontos:parseFloat(it.perdaPontos.toFixed(2)), temEvidencia: it.semEvidencia===0})),
+      .map(it=>({indicador:it.indicador, perdaPontos:parseFloat(it.perdaPontos.toFixed(2)), totalPendentes: it.totalPendentes})),
   })).sort((a,b)=>b.perdaTotal-a.perdaTotal);
 }
 
 // ── EXPORTAR DADOS PARA GERAR APRESENTAÇÃO NO CHAT COM CLAUDE ──
 // ── SLIDES COM EVIDÊNCIA (sem IA — montado direto dos dados) ───
-function gerarSlidesComEvidencia(){
+function gerarSlidesComPendencias(){
   if(!_naDadosAtuais || !_naDadosAtuais.gerencias.length){
     alert('Nenhuma gerência com indicador não atingido nos filtros atuais. Ajuste os filtros e tente novamente.');
     return;
@@ -3932,7 +3933,7 @@ function gerarSlidesComEvidencia(){
   const partesFiltro = [f.diretoria, f.gerencia, f.mes].filter(v => v && !/^(Todas|Todos)\s/.test(v));
   slides.push({
     tipo: 'capa',
-    titulo: 'Indicadores Não Atingidos — Evidências',
+    titulo: 'Indicadores Não Atingidos — Pendências',
     subtitulo: partesFiltro.join(' · ') || 'Todos os períodos e unidades'
   });
 
@@ -3977,19 +3978,15 @@ function gerarSlidesComEvidencia(){
       ]
     });
     g.indicadoresNaoAtingidos.forEach(it=>{
-      const url = it.evidenciaUrl || '';
-      const isPdf = url.toLowerCase().endsWith('.pdf');
       slides.push({
-        tipo: 'evidencia',
+        tipo: 'pendencia',
         gerenciaLabel: g.nome + (g.unidade&&g.unidade!=='—'?' · '+g.unidade:'') + ' · ' + g.diretoria + ' · ' + g.mes,
         indicador: it.indicador,
         pctLabel: it.pontuacaoAtingida.toFixed(0) + '%',
         corPct: it.pontuacaoAtingida>=80 ? '#c47d0e' : '#d93025',
         perdaLabel: it.perdaPontos.toFixed(2),
         comentario: it.comentario,
-        imagemUrl: (!isPdf && url) ? url : null,
-        pdfUrl: isPdf ? url : null,
-        pdfNome: it.evidenciaNome,
+        pendencias: it.pendencias || [],
       });
     });
   });
@@ -4072,7 +4069,7 @@ async function gerarApresentacaoIA(modo){
       + '  {"tipo":"fechamento","titulo":"Próximos Passos","bullets":["...","..."]}\n'
       + ']}\n\n'
       + 'Regras: capa com título e subtítulo curtos; 1 slide de resumo com os números principais (quantidade com perda, total de pontos perdidos, média); '
-      + '1 slide por '+(modo==='diretoria'?'diretoria':'gerência')+' (as com maior perda primeiro, no máximo 5), cada bullet citando o indicador, os pontos perdidos e, quando temEvidencia=false, mencionar "sem evidência anexada"; '
+      + '1 slide por '+(modo==='diretoria'?'diretoria':'gerência')+' (as com maior perda primeiro, no máximo 5), cada bullet citando o indicador, os pontos perdidos e, quando totalPendentes>0, mencionar quantas pendências/ações ainda estão em aberto; '
       + 'termine com 1 slide de recomendações objetivas. Bullets curtos (máx. 18 palavras cada, no máx. 4 por slide). Português do Brasil, tom executivo e direto.';
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -4244,23 +4241,27 @@ function renderConteudoSlide(s){
       +'<div style="flex:1;overflow-y:auto;">'+(s.tabelaHTML||'')+'</div>'
       +'</div>';
   }
-  if(s.tipo==='evidencia'){
-    const ladoImagem = s.imagemUrl
-      ? '<img src="'+s.imagemUrl+'" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);" />'
-      : s.pdfUrl
-        ? '<a href="'+s.pdfUrl+'" target="_blank" style="display:flex;flex-direction:column;align-items:center;gap:10px;color:#1a73e8;text-decoration:none;"><div style="font-size:60px;">📄</div><div style="font-size:14px;font-weight:600;max-width:220px;text-align:center;word-break:break-word;">'+(s.pdfNome||'Ver PDF anexado')+'</div></a>'
-        : '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;color:#d93025;"><div style="font-size:50px;">⚠️</div><div style="font-size:15px;font-weight:700;">Sem evidência anexada</div></div>';
-    return '<div style="display:grid;grid-template-columns:1.3fr 1fr;height:100%;">'
-      +'<div style="background:#f4f6f4;display:flex;align-items:center;justify-content:center;padding:24px;overflow:hidden;">'+ladoImagem+'</div>'
-      +'<div style="padding:36px 32px;display:flex;flex-direction:column;overflow-y:auto;">'
-        +'<div style="font-size:11px;color:#5a7a5a;font-family:\'DM Mono\',monospace;text-transform:uppercase;letter-spacing:1px;">'+(s.gerenciaLabel||'')+'</div>'
-        +'<div style="font-size:22px;font-weight:800;color:#07583C;margin-top:6px;margin-bottom:18px;">'+(s.indicador||'')+'</div>'
-        +'<div style="display:flex;flex-direction:column;gap:16px;">'
-          +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">% ATINGIDO</div><div style="font-size:28px;font-weight:800;color:'+(s.corPct||'#d93025')+';">'+(s.pctLabel||'')+'</div></div>'
-          +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">PONTOS PERDIDOS</div><div style="font-size:22px;font-weight:800;color:#d93025;">-'+(s.perdaLabel||'')+'</div></div>'
-          +(s.comentario?'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">COMENTÁRIO</div><div style="font-size:13px;color:#1a2e1a;margin-top:4px;line-height:1.4;">'+s.comentario+'</div></div>':'')
-        +'</div>'
+  if(s.tipo==='pendencia'){
+    const pends = s.pendencias || [];
+    const listaHTML = pends.length
+      ? '<table style="width:100%;border-collapse:collapse;margin-top:8px;">'
+        + '<thead><tr style="border-bottom:2px solid #e0f0e8;"><th style="text-align:left;padding:6px 8px;font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;text-transform:uppercase;">Nome</th><th style="text-align:left;padding:6px 8px;font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;text-transform:uppercase;">Cargo</th><th style="text-align:left;padding:6px 8px;font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;text-transform:uppercase;">Status</th></tr></thead>'
+        + '<tbody>' + pends.map(p =>
+            '<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:6px 8px;font-size:12.5px;">'+(p.nome||'—')+'</td>'
+            + '<td style="padding:6px 8px;font-size:12px;color:#5a7a5a;">'+(p.cargo||'—')+'</td>'
+            + '<td style="padding:6px 8px;"><span style="font-size:10.5px;font-weight:700;color:#c47d0e;background:#fef3e0;padding:2px 8px;border-radius:12px;">'+(p.status||'—')+'</span></td></tr>'
+          ).join('') + '</tbody></table>'
+      : '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;color:#5a7a5a;padding:30px 0;"><div style="font-size:15px;font-weight:700;">Sem detalhe por pessoa/ação pra esse indicador</div></div>';
+    return '<div style="padding:36px 44px;height:100%;display:flex;flex-direction:column;overflow-y:auto;">'
+      +'<div style="font-size:11px;color:#5a7a5a;font-family:\'DM Mono\',monospace;text-transform:uppercase;letter-spacing:1px;">'+(s.gerenciaLabel||'')+'</div>'
+      +'<div style="font-size:22px;font-weight:800;color:#07583C;margin-top:6px;margin-bottom:14px;">'+(s.indicador||'')+'</div>'
+      +'<div style="display:flex;gap:28px;margin-bottom:8px;">'
+        +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">% ATINGIDO</div><div style="font-size:24px;font-weight:800;color:'+(s.corPct||'#d93025')+';">'+(s.pctLabel||'')+'</div></div>'
+        +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">PONTOS PERDIDOS</div><div style="font-size:20px;font-weight:800;color:#d93025;">-'+(s.perdaLabel||'')+'</div></div>'
+        +'<div><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">PENDENTES</div><div style="font-size:20px;font-weight:800;color:#c47d0e;">'+pends.length+'</div></div>'
       +'</div>'
+      +(s.comentario?'<div style="margin-bottom:8px;"><div style="font-size:10px;color:#5a7a5a;font-family:\'DM Mono\',monospace;">COMENTÁRIO</div><div style="font-size:13px;color:#1a2e1a;margin-top:2px;line-height:1.4;">'+s.comentario+'</div></div>':'')
+      +listaHTML
       +'</div>';
   }
   const bullets=(s.bullets||[]).map(b=>'<li style="margin-bottom:14px;font-size:17px;line-height:1.5;color:#1a2e1a;">'+b+'</li>').join('');
@@ -4356,6 +4357,32 @@ async function carregarDadosNA() {
           _naItens[it.lancamento_id].push(it);
         });
         if (!items || items.length < pageSize) break;
+        from += pageSize;
+      }
+    }
+  }
+
+  // Busca o detalhe de pendências (mesmas linhas da aba "Pendências em Aberto") — usado
+  // pra mostrar, no lugar da evidência (removida do sistema), o que ainda falta de fato
+  // pra cada indicador não atingido: quem/qual ação ainda está pendente.
+  _naPendencias = {};
+  if (lancIds.length) {
+    for (let i = 0; i < lancIds.length; i += 100) {
+      const lote = lancIds.slice(i, i + 100);
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: pend, error } = await sb.from('lancamento_pendencias')
+          .select('lancamento_id,indicador_id,nome,cargo,status')
+          .in('lancamento_id', lote)
+          .range(from, from + pageSize - 1);
+        if (error) { console.error('Erro ao buscar lancamento_pendencias:', error.message); break; }
+        (pend || []).forEach(p => {
+          const chave = p.lancamento_id + '_' + p.indicador_id;
+          if (!_naPendencias[chave]) _naPendencias[chave] = [];
+          _naPendencias[chave].push(p);
+        });
+        if (!pend || pend.length < pageSize) break;
         from += pageSize;
       }
     }
@@ -4470,6 +4497,13 @@ function renderModalNA() {
 
       if (pontCalc < 100) {
         totalPerdaGlobal += perdaPont;
+        const pendChave = lanc.id + '_' + item.indicador_id;
+        // Só entram como "pendência" mesmo as que ainda estão pendente/atrasada/em
+        // andamento (mesmo filtro de status usado na aba Pendências) — item já concluído
+        // não deveria estar aparecendo aqui, mas por segurança não mostra como pendente.
+        const pendentesReais = (_naPendencias[pendChave] || []).filter(p =>
+          /pendente|atrasad|andamento/i.test(p.status || '')
+        );
         itensComPerda.push({
           indicador: item.indicadores?.nome || '—',
           tipo,
@@ -4481,8 +4515,7 @@ function renderModalNA() {
           nota: item.nota,
           sim_nao: item.sim_nao,
           comentario: item.comentario,
-          evidenciaUrl: item.evidencia_url || null,
-          evidenciaNome: item.evidencia_nome || null,
+          pendencias: pendentesReais,
         });
       }
     }
@@ -4594,10 +4627,8 @@ function renderModalNA() {
         indicador: it.indicador,
         pontuacaoAtingida: parseFloat(it.pont.toFixed(1)),
         perdaPontos: it.perdaPont,
-        temEvidencia: !!it.evidenciaUrl,
-        evidenciaUrl: it.evidenciaUrl || null,
-        evidenciaNome: it.evidenciaNome || null,
         comentario: it.comentario || null,
+        pendencias: (it.pendencias || []).map(p => ({ nome: p.nome, cargo: p.cargo, status: p.status })),
       })),
     })),
   };
@@ -4614,14 +4645,18 @@ function renderModalNA() {
       const pontPct = item.pont.toFixed(1);
       const perdaDisplay = item.perdaPont > 0 ? `-${item.perdaPont.toFixed(2)} pts` : '0 pts';
       const comentHTML = item.comentario ? `<div style="font-size:11px;color:#c47d0e;margin-top:3px;">💬 ${item.comentario}</div>` : '';
-      const evidHTML = item.evidenciaUrl
-        ? `<a href="${item.evidenciaUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#1a73e8;text-decoration:none;background:#e8f0fe;padding:4px 9px;border-radius:14px;font-weight:600;">📎 Ver evidência</a>`
-        : `<span style="font-size:11px;color:#c47d0e;background:#fef3e0;padding:4px 9px;border-radius:14px;font-weight:600;">⚠️ Sem evidência</span>`;
+      const pends = item.pendencias || [];
+      const pendHTML = pends.length
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+             <span style="font-size:11px;color:#c47d0e;background:#fef3e0;padding:4px 9px;border-radius:14px;font-weight:600;white-space:nowrap;">⚠️ ${pends.length} pendente(s)</span>
+             <div style="font-size:10.5px;color:#5a7a5a;max-width:220px;text-align:left;">${pends.slice(0,3).map(p=>p.nome).join(', ')}${pends.length>3?' +'+(pends.length-3):''}</div>
+           </div>`
+        : `<span style="font-size:11px;color:#5a7a5a;background:#f0f5f0;padding:4px 9px;border-radius:14px;font-weight:600;">— sem pendência de nome</span>`;
       return `
         <tr style="border-bottom:1px solid #f0f0f0;">
           <td style="padding:10px 14px;font-size:14px;color:#1a2e1a;max-width:280px;">${item.indicador}${comentHTML}</td>
           <td style="padding:10px 14px;font-size:14px;">${fmtValor(item)}</td>
-          <td style="padding:10px 14px;text-align:center;">${evidHTML}</td>
+          <td style="padding:10px 14px;text-align:center;">${pendHTML}</td>
           <td style="padding:10px 14px;text-align:right;">
             <span style="font-size:15px;font-weight:800;color:${corItemPerda};font-family:'DM Mono',monospace;">${perdaDisplay}</span>
             <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px;">${pontPct}% atingido</div>
@@ -4662,7 +4697,7 @@ function renderModalNA() {
             <tr style="background:#f8fdf8;border-bottom:2px solid #e0f0e8;">
               <th style="padding:10px 14px;text-align:left;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Indicador</th>
               <th style="padding:10px 14px;text-align:left;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Previsto / Realizado</th>
-              <th style="padding:10px 14px;text-align:center;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Evidência</th>
+              <th style="padding:10px 14px;text-align:center;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Pendências</th>
               <th style="padding:10px 14px;text-align:right;font-size:11px;font-family:'DM Mono',monospace;color:#07583C;text-transform:uppercase;letter-spacing:1px;">Pontos Perdidos</th>
             </tr>
           </thead>
@@ -4807,7 +4842,7 @@ ativarWakeLock();
         <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px;">Pontuação da gerência perdida por indicador</div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <button class="btn btn-primary" id="btn-slides-evidencia" onclick="gerarSlidesComEvidencia()" style="font-size:13px;background:#1a73e8;">🖼️ Slides com Evidências</button>
+        <button class="btn btn-primary" id="btn-slides-pendencias" onclick="gerarSlidesComPendencias()" style="font-size:13px;background:#1a73e8;">🖼️ Slides com Pendências</button>
         <button class="btn btn-secondary" onclick="fecharModal('modal-nao-atingidos')" style="font-size:13px;">✕ Fechar</button>
       </div>
     </div>

@@ -279,10 +279,10 @@ input[type=number]{font-family:'DM Mono',monospace;}
           <select id="acum-safra" onchange="carregarAcumulado()" style="width:auto;padding:6px 10px;font-size:13px">
             <option value="">— Selecione a safra —</option>
           </select>
-          <select id="acum-dir" onchange="filtrarGerenciasAcum();renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
+          <select id="acum-dir" onchange="filtrarGerenciasAcum();renderAcumTable();renderEvolucaoAcumuladaLimpa();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
             <option value="">Todas as Diretorias</option>
           </select>
-          <select id="acum-ger" onchange="renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
+          <select id="acum-ger" onchange="renderAcumTable();renderEvolucaoAcumuladaLimpa();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
             <option value="">Todas as Gerências</option>
           </select>
           <select id="acum-mes" onchange="renderAcumTable();renderAcumChart();renderAcumChartMensal();" style="width:auto;padding:6px 10px;font-size:12px">
@@ -310,6 +310,25 @@ input[type=number]{font-family:'DM Mono',monospace;}
           </div>
         </div>
         <div id="acum-ger-tbl"><div class="loading">Selecione uma safra.</div></div>
+      </div>
+      <!-- Evolução do IP Acumulado — versão limpa: só o acumulado de cada mês, sem a
+           coluna de valor "cru" do mês, com seleção de quais meses aparecem. -->
+      <div class="table-wrap" style="margin-bottom:20px">
+        <div class="table-header">
+          <span class="table-title">📈 Evolução do IP Acumulado</span>
+          <div style="position:relative" id="acum-evol-meses-wrap">
+            <button class="btn btn-sm btn-secondary" onclick="toggleAcumEvolMesesDropdown(event)">📅 Meses <span id="acum-evol-meses-contagem" style="font-family:'DM Mono',monospace"></span> <span style="font-size:10px">▾</span></button>
+            <div id="acum-evol-meses-dropdown" class="dropdown-menu" style="display:none;right:0;left:auto;max-height:280px;overflow-y:auto">
+              <div style="display:flex;gap:6px;padding:4px 8px 8px;border-bottom:1px solid var(--border);margin-bottom:4px">
+                <button class="dropdown-item" style="flex:1;justify-content:center;font-weight:700;color:#07583C" onclick="selecionarTodosMesesEvol(true)">Todos</button>
+                <button class="dropdown-item" style="flex:1;justify-content:center;font-weight:700;color:var(--muted)" onclick="selecionarTodosMesesEvol(false)">Nenhum</button>
+              </div>
+              <div id="acum-evol-meses-lista"></div>
+            </div>
+          </div>
+        </div>
+        <p class="card-note-inline" style="padding-bottom:10px">Todos os meses da safra, lado a lado — independe do filtro de mês acima</p>
+        <div id="acum-evol-limpa-tbl"><div class="loading">Selecione uma safra.</div></div>
       </div>
       <!-- Gráfico IP Acumulado -->
       <div class="table-wrap" style="margin-bottom:20px">
@@ -931,6 +950,8 @@ async function carregarAcumulado() {
     amEl.innerHTML = '<option value="">Todos os Meses</option>' + mesesDisp.map(m => `<option value="${m.val}">${m.nome}</option>`).join('');
   }
   renderAcumTable();
+  _acumEvolMesesSelecionados = null; // nova safra: reseta a seleção de meses pro padrão (todos)
+  renderEvolucaoAcumuladaLimpa();
   setTimeout(()=>{renderAcumChart();renderAcumChartMensal();},300);
 }
 
@@ -1155,6 +1176,121 @@ function renderAcumTable() {
     + '<th>Gerência</th><th>Unidade</th><th>Diretoria</th>'
     + mesThsG
     + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';
+}
+
+// ── Evolução do IP Acumulado (versão limpa) ─────────────────────────────────
+// Só a coluna de acumulado de cada mês (sem o valor "cru" do mês ao lado), com os
+// meses escolhidos por um dropdown de seleção múltipla — inspirado no relatório de
+// referência. Independe do filtro de "Mês" dos outros quadros (mostra vários lado a lado).
+let _acumEvolMesesSelecionados = null; // null = ainda não inicializado (usa todos por padrão)
+
+function toggleAcumEvolMesesDropdown(e) {
+  e.stopPropagation();
+  const dd = document.getElementById('acum-evol-meses-dropdown');
+  if (!dd) return;
+  dd.style.display = dd.style.display !== 'none' ? 'none' : 'block';
+}
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('acum-evol-meses-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    const dd = document.getElementById('acum-evol-meses-dropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
+
+function toggleMesEvol(mesVal) {
+  if (!_acumEvolMesesSelecionados) return;
+  if (_acumEvolMesesSelecionados.has(mesVal)) _acumEvolMesesSelecionados.delete(mesVal);
+  else _acumEvolMesesSelecionados.add(mesVal);
+  renderEvolucaoAcumuladaLimpa();
+}
+
+function selecionarTodosMesesEvol(todos) {
+  const safraId = document.getElementById('acum-safra')?.value;
+  const safra = safrasData.find(s => s.id == safraId);
+  if (!safra) return;
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val) && !mesEhFuturo(m.val));
+  _acumEvolMesesSelecionados = todos ? new Set(meses.map(m => m.val)) : new Set();
+  renderEvolucaoAcumuladaLimpa();
+}
+
+function renderEvolucaoAcumuladaLimpa() {
+  const safraId = document.getElementById('acum-safra')?.value;
+  const safra   = safrasData.find(s => s.id == safraId);
+  const filtDir = parseInt(document.getElementById('acum-dir')?.value) || 0;
+  const filtGer = parseInt(document.getElementById('acum-ger')?.value) || 0;
+  const tbEl = document.getElementById('acum-evol-limpa-tbl');
+  if (!tbEl) return;
+  if (!acumAllData.length || !safra) { tbEl.innerHTML = '<div class="loading">Nenhum dado.</div>'; return; }
+
+  const meses = getMesesSafra(safra).filter(m => acumAllData.some(l => l.mes === m.val) && !mesEhFuturo(m.val));
+  if (_acumEvolMesesSelecionados === null) _acumEvolMesesSelecionados = new Set(meses.map(m => m.val));
+
+  // Popula o dropdown de meses (checkboxes)
+  const listaEl = document.getElementById('acum-evol-meses-lista');
+  if (listaEl) {
+    listaEl.innerHTML = meses.map(m => {
+      const marcado = _acumEvolMesesSelecionados.has(m.val);
+      return `<label class="dropdown-item" style="cursor:pointer">
+        <input type="checkbox" ${marcado ? 'checked' : ''} onchange="toggleMesEvol('${m.val}')" style="width:auto;margin-right:2px">
+        ${m.nome}
+      </label>`;
+    }).join('');
+  }
+  const contagemEl = document.getElementById('acum-evol-meses-contagem');
+  if (contagemEl) contagemEl.textContent = `(${_acumEvolMesesSelecionados.size}/${meses.length})`;
+
+  const mesesSelecionados = meses.filter(m => _acumEvolMesesSelecionados.has(m.val));
+  if (!mesesSelecionados.length) { tbEl.innerHTML = '<div class="loading">Nenhum mês selecionado.</div>'; return; }
+
+  // Base sem filtro de mês (precisa do histórico completo pra calcular o acumulado
+  // progressivo de cada mês selecionado), só respeita diretoria/gerência.
+  let base = acumAllData;
+  if (filtDir) base = base.filter(l => l.gerencias?.diretoria_id === filtDir);
+  if (filtGer) base = base.filter(l => l.gerencia_id === filtGer);
+
+  const gersMap = new Map();
+  base.forEach(l => {
+    if (!l.gerencia_id || gersMap.has(l.gerencia_id)) return;
+    gersMap.set(l.gerencia_id, {
+      id: l.gerencia_id,
+      nome: l.gerencias?.nome || '—',
+      uni: l.gerencias?.unidades?.nome || '',
+      dir: l.gerencias?.diretorias?.nome || '—'
+    });
+  });
+  const gers = [...gersMap.values()].sort((a, b) => a.nome.localeCompare(b.nome));
+
+  const acumAteM = (gerId, mesVal) => {
+    const mesesAte = meses.filter(mm => mm.val <= mesVal);
+    let soma = 0, count = 0, acum = null;
+    mesesAte.forEach(mm => {
+      const l = acumAllData.find(x => x.gerencia_id === gerId && x.mes === mm.val);
+      const ip = calcIPLanc(l);
+      if (ip != null) { soma += ip; count++; acum = soma / count; }
+    });
+    return acum;
+  };
+
+  const linhas = gers.map(g => {
+    const cells = mesesSelecionados.map(m => {
+      const acum = acumAteM(g.id, m.val);
+      return `<td class="ip-val" style="color:${acum != null ? getColor(acum) : 'var(--muted)'}">${acum != null ? acum.toFixed(1) : '—'}</td>`;
+    }).join('');
+    return `<tr>
+      <td><b>${g.nome}</b></td>
+      <td style="white-space:nowrap">${uniTag(g.uni)}</td>
+      <td style="font-size:11px;color:var(--muted)">${g.dir}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  const cabecalho = mesesSelecionados.map(m => `<th>${m.nome.toUpperCase()}</th>`).join('');
+  tbEl.innerHTML = !linhas
+    ? '<div class="empty-msg" style="padding:20px;text-align:center;color:var(--muted)">Sem dados.</div>'
+    : `<div style="overflow-x:auto"><table><thead><tr>
+        <th>Gerência</th><th>Unid.</th><th>Diretoria</th>${cabecalho}
+      </tr></thead><tbody>${linhas}</tbody></table></div>`;
 }
 
 const VERDES = ['#065539','#096948','#0C7D56','#109164','#14A472','#18B780','#1DC98E','#23DB9C','#39DCA4','#4FDEAC','#64E0B5','#79E2BE','#8DE5C7','#A2E8D0','#B5ECD9'];

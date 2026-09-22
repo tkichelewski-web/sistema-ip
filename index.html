@@ -209,6 +209,7 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <input type="file" id="input-importar-fechamento" accept=".xlsx,.xls" style="display:none" onchange="importarFechamentoMensal(event)">
       <input type="file" id="input-importar-periodico" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaExamesPeriodicos(event)">
       <input type="file" id="input-importar-treinamento" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="importarPlanilhaTreinamento(event)">
+      <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="exportarConfigIndicadores()">📤 Exportar Config. Indicadores</button>
       <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -7452,6 +7453,60 @@ async function importarPlanilhaTreinamento(evento) {
       '\nConfira se a planilha tem as colunas UNIDADE, GERÊNCIA, MÊS, SAFRA/, PREVISTO, REALIZADO.');
   } finally {
     evento.target.value = '';
+  }
+}
+
+// ===== Exportar Configuração de Indicadores (ind_gerencia_safra) =====
+// Gera 1 linha por gerência+indicador ATIVO, com Bloco — pra análises fora do sistema
+// (ex: "quais indicadores de Meio Ambiente cada gerência tem ativo") sem precisar
+// copiar nada manualmente da tela. Roda no navegador porque só aqui já está
+// autenticado no Supabase.
+async function exportarConfigIndicadores() {
+  try {
+    const [{ data: cfg, error: eCfg }, { data: gers, error: eGer }, { data: inds, error: eInd }, { data: safras, error: eSaf }] = await Promise.all([
+      sb.from('ind_gerencia_safra').select('gerencia_id,indicador_id,safra_id,peso,ativo'),
+      sb.from('gerencias').select('id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome)'),
+      sb.from('indicadores').select('id,nome,bloco,tipo,ativo'),
+      sb.from('safras').select('id,nome')
+    ]);
+    if (eCfg || eGer || eInd || eSaf) {
+      alert('Erro ao buscar dados: ' + (eCfg || eGer || eInd || eSaf).message);
+      return;
+    }
+    const gerMap = new Map((gers || []).map(g => [g.id, g]));
+    const indMap = new Map((inds || []).map(i => [i.id, i]));
+    const safraMap = new Map((safras || []).map(s => [s.id, s.nome]));
+
+    const linhas = (cfg || [])
+      .filter(c => c.ativo)
+      .map(c => {
+        const g = gerMap.get(c.gerencia_id) || {};
+        const ind = indMap.get(c.indicador_id) || {};
+        return {
+          Safra: safraMap.get(c.safra_id) || c.safra_id,
+          Diretoria: g.diretorias?.nome || '—',
+          Unidade: g.unidades?.nome || '—',
+          Gerencia: g.nome || '—',
+          Bloco: ind.bloco || 'Outros',
+          Indicador: ind.nome || '—',
+          Tipo: ind.tipo || '—',
+          Peso: c.peso,
+          IndicadorAtivo: ind.ativo !== false
+        };
+      })
+      .sort((a, b) => (a.Bloco + a.Gerencia + a.Indicador).localeCompare(b.Bloco + b.Gerencia + b.Indicador));
+
+    if (!linhas.length) { alert('Nenhuma configuração ativa encontrada.'); return; }
+
+    const ws = XLSX.utils.json_to_sheet(linhas);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Config Indicadores');
+    const hoje = new Date();
+    const carimbo = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0') + '-' + String(hoje.getDate()).padStart(2, '0');
+    XLSX.writeFile(wb, 'config_indicadores_' + carimbo + '.xlsx');
+  } catch (err) {
+    console.error(err);
+    alert('Erro ao exportar: ' + err.message);
   }
 }
 

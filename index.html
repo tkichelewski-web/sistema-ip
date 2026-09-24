@@ -5143,6 +5143,42 @@ function anoDaSafraParaMes(safraTxt, mesNum) {
   return mesNum >= 4 ? anoIni : anoFim;
 }
 
+// Parser de CSV simples (;  ou , como separador, detecta sozinho) — cobre os exports que
+// vêm direto do relatório sem precisar abrir e salvar como .xlsx antes. Não lida com campo
+// contendo o próprio separador dentro de aspas complexas, mas os exports usados aqui não têm isso.
+function parseCSVTexto(texto) {
+  texto = texto.replace(/^\uFEFF/, ''); // BOM
+  const linhas = texto.split(/\r\n|\r|\n/).filter(l => l.length > 0);
+  if (!linhas.length) return [];
+  const contarFora = (linha, ch) => linha.split(ch).length - 1;
+  const delim = contarFora(linhas[0], ';') >= contarFora(linhas[0], ',') ? ';' : ',';
+  const parseLinha = linha => linha.split(delim).map(c => c.trim().replace(/^"(.*)"$/, '$1').trim());
+  const header = parseLinha(linhas[0]);
+  return linhas.slice(1).map(linha => {
+    const valores = parseLinha(linha);
+    const obj = {};
+    header.forEach((h, i) => { obj[h] = valores[i] !== undefined && valores[i] !== '' ? valores[i] : null; });
+    return obj;
+  });
+}
+
+// Lê um arquivo (.xlsx/.xls OU .csv) e devolve as linhas como array de objetos — mesmo
+// formato que XLSX.utils.sheet_to_json produz, então o resto do importador não muda nada.
+async function lerLinhasDeArquivo(arquivo) {
+  const nomeArq = (arquivo.name || '').toLowerCase();
+  if (nomeArq.endsWith('.csv')) {
+    const texto = await arquivo.text();
+    return parseCSVTexto(texto);
+  }
+  const buffer = await arquivo.arrayBuffer();
+  const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+  const linhas = [];
+  wb.SheetNames.forEach(nomeAba => {
+    linhas.push(...XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null }));
+  });
+  return linhas;
+}
+
 function montarMes(l) {
   const direto = campo(l, ['MES', 'Mes', 'Mês/Ano', 'AnoMes']);
   if (direto && /^\d{4}-\d{2}$/.test(direto.trim())) return direto.trim();
@@ -5590,40 +5626,41 @@ async function importarPlanilhaWecheckObservacoes(evento) {
   try {
     const todasLinhas = [];
     for (const arquivo of arquivos) {
-      const buffer = await arquivo.arrayBuffer();
-      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
-      wb.SheetNames.forEach(nomeAba => {
-        const linhasAba = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], { defval: null });
-        todasLinhas.push(...linhasAba);
-      });
+      todasLinhas.push(...await lerLinhasDeArquivo(arquivo));
     }
 
     const grupos = {};
     const linhasIgnoradas = [];
 
-    todasLinhas.forEach(l => {
-      const gerNome = (campo(l, ['GERENCIA']) || '').trim();
-      const unidadeNome = (campo(l, ['UNIDADE']) || '').trim();
-      const mes = montarMes(l);
-      const safraTxt = (campo(l, ['ANO/SAFRA', 'Ano Safra', 'ANO_SAFRA', 'SAFRA']) || '').toString().trim();
-      const freq = campo(l, ['FREQUENCIA', 'Frequência']);
-      if (!gerNome || !unidadeNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq }); return; }
+    todasLinhas.forEach(lBruta => {
+      const l = linhaComChavesTrimadas(lBruta);
+      const gerNome = (campo(l, ['GERENCIA', 'Gerência', 'GERÊNCIA']) || '').toString().trim();
+      const unidadeNome = (campo(l, ['UNIDADE', 'Unidade']) || '').toString().trim();
+      const mesTexto = (campo(l, ['Mês', 'MES', 'Mes']) || '').toString().trim().toLowerCase();
+      const num = MESES_PT[mesTexto];
+      const safraTxt = normalizarSafraCurta(campo(l, ['Ano Safra', 'ANO/SAFRA', 'ANO_SAFRA', 'SAFRA']));
+      const ano = num ? anoDaSafraParaMes(safraTxt, parseInt(num, 10)) : null;
+      const mes = (ano && num) ? (ano + '-' + num) : null;
+      const freq = campo(l, ['Frequência Observação', 'FREQUENCIA', 'Frequência']);
+      if (!gerNome || !unidadeNome || !mes || !freq) { linhasIgnoradas.push({ gerNome, unidadeNome, mesTexto, safraTxt, freq }); return; }
 
-      const semanaLinha = campo(l, ['SEMANA', 'Semana']);
+      // "Periodo Descricao" (ex: "Semana 4 de setembro/2026 (21/09 a 30/09)") substitui a
+      // antiga coluna SEMANA — o regex de extrair o número já funciona igual nos dois casos.
+      const semanaLinha = campo(l, ['SEMANA', 'Semana', 'Periodo Descricao']);
       const nomeIndicador = acharIndicadorObsDaLinha(freq, semanaLinha);
-      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, unidadeNome, mes, freq, semanaLinha }); return; }
+      if (!nomeIndicador) { linhasIgnoradas.push({ gerNome, unidadeNome, mesTexto, freq, semanaLinha }); return; }
 
-      const meta = parseFloat(campo(l, ['META', 'Meta'])) || 0;
-      const real = parseFloat(campo(l, ['REALIZADO', 'Realizado'])) || 0;
+      const meta = parseFloat(campo(l, ['META', 'Meta', 'Previsto Exigível', 'Previsto Exigivel'])) || 0;
+      const real = parseFloat(campo(l, ['REALIZADO', 'Realizado', 'Soma de QtdRealizada'])) || 0;
       const chave = gerNome + '|' + unidadeNome + '|' + mes + '|' + nomeIndicador;
       if (!grupos[chave]) grupos[chave] = { gerNome, unidadeNome, mes, safraTxt, nomeIndicador, previsto: 0, realizado: 0, pessoas: [] };
       grupos[chave].previsto += meta;
       grupos[chave].realizado += real;
       grupos[chave].pessoas.push({
         nome: (campo(l, ['NOME']) || '').toString().trim(),
-        cargo: (campo(l, ['CARGO']) || '').toString().trim(),
+        cargo: (campo(l, ['CARGO', 'CARGO_REST']) || '').toString().trim(),
         matricula: (campo(l, ['MATRICULA', 'Matrícula']) || '').toString().trim(),
-        status: (campo(l, ['STATUS']) || '').toString().replace(/^●\s*/, '').trim()
+        status: (campo(l, ['STATUS', 'Status Periodo']) || '').toString().replace(/^●\s*/, '').trim()
       });
     });
 
@@ -5631,7 +5668,7 @@ async function importarPlanilhaWecheckObservacoes(evento) {
 
     const listaGrupos = Object.values(grupos);
     if (!listaGrupos.length) {
-      alert('Não encontrei nenhuma linha válida. Confira GERENCIA, UNIDADE, MES/ANO-SAFRA, FREQUENCIA, META, REALIZADO — e, pra Semanal, a coluna SEMANA.');
+      alert('Não encontrei nenhuma linha válida. Confira GERENCIA, UNIDADE, "Mês", "Ano Safra", "Frequência Observação", "Previsto Exigível", "Soma de QtdRealizada" — e, pra Semanal, a coluna "Periodo Descricao" (ou SEMANA).');
       return;
     }
 

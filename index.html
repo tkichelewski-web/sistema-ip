@@ -3621,7 +3621,7 @@ function gerarDetalheHTML(lanc, itens, pendencias){
       // Vocabulário: Inspeção/Observação usam Pendente/Realizado; Plano de Ação usa
       // Atrasada/Concluída/Pendente (aqui "Pendente" é ok, só "Atrasada" é problema).
       var pessoasInd = pendencias.filter(function(p){ return p.indicador_id === item.indicador_id; });
-      var pendentesInd = pessoasInd.filter(function(p){ return /pendente|atrasad|andamento/i.test(p.status||''); });
+      var pendentesInd = pessoasInd.filter(function(p){ return /pendente|atrasad|andamento|a realizar/i.test(p.status||''); });
       var togglePessoas = '';
       if(pessoasInd.length){
         var toggleId = 'pend-'+lanc.id+'-'+item.indicador_id;
@@ -3961,7 +3961,11 @@ async function carregarPendencias() {
 
   let qp = sb.from('lancamento_pendencias').select('*,indicadores(nome)')
     .in('lancamento_id', lancs.map(l => l.id))
-    .or('status.ilike.%pendente%,status.ilike.%atrasada%,status.ilike.%andamento%');
+    // "atrasad" (sem o "a"/"o" final) cobre tanto "Atrasada" (relatórios antigos) quanto
+    // "Atrasado" (relatório novo de Observação); "a realizar" cobre o novo status
+    // "A realizar até DD/MM" desse mesmo relatório — nenhum dos dois batia antes, então
+    // pendência de Observação sumia da lista mesmo com status real "em aberto".
+    .or('status.ilike.%pendente%,status.ilike.%atrasad%,status.ilike.%andamento%,status.ilike.%a realizar%');
   if (indId) qp = qp.eq('indicador_id', indId);
   const { data: pend, error: eP } = await qp.order('nome');
 
@@ -4639,7 +4643,7 @@ function renderModalNA() {
         // andamento (mesmo filtro de status usado na aba Pendências) — item já concluído
         // não deveria estar aparecendo aqui, mas por segurança não mostra como pendente.
         const pendentesReais = (_naPendencias[pendChave] || []).filter(p =>
-          /pendente|atrasad|andamento/i.test(p.status || '')
+          /pendente|atrasad|andamento|a realizar/i.test(p.status || '')
         );
         itensComPerda.push({
           indicador: item.indicadores?.nome || '—',

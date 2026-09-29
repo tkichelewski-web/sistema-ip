@@ -170,13 +170,29 @@ input[type=number]{font-family:'DM Mono',monospace;}
     <div class="login-info" id="login-info"></div>
     <div class="form-group">
       <label>E-mail corporativo</label>
-      <input type="email" id="login-email" placeholder="seu@usinasantaadelia.com.br" onkeydown="if(event.key==='Enter')fazerLogin()">
+      <input type="email" id="login-email" placeholder="seu@usinasantaadelia.com.br" autocomplete="email" onkeydown="if(event.key==='Enter'){_loginModoSenha?fazerLogin():pedirCodigo()}">
     </div>
-    <div class="form-group">
+    <div class="form-group" id="login-grupo-senha" style="display:none">
       <label>Senha</label>
       <input type="password" id="login-senha" placeholder="••••••••" onkeydown="if(event.key==='Enter')fazerLogin()">
     </div>
-    <button class="btn btn-primary btn-full" id="btn-login" onclick="fazerLogin()">Entrar</button>
+    <button class="btn btn-primary btn-full" id="btn-login-codigo" onclick="pedirCodigo()">Receber código por e-mail</button>
+    <button class="btn btn-primary btn-full" id="btn-login" onclick="fazerLogin()" style="display:none">Entrar</button>
+    <div id="login-passo-codigo" style="display:none">
+      <p style="font-size:13px;color:#5D6F64;margin:0 0 12px;line-height:1.5">Enviamos um código para <b id="login-email-mostra"></b>. Confira também o lixo eletrônico. O código vale por 1 hora.</p>
+      <div class="form-group">
+        <label>Código</label>
+        <input type="text" id="login-codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Digite o código" style="letter-spacing:4px;font-size:18px;text-align:center" onkeydown="if(event.key==='Enter')confirmarCodigo()">
+      </div>
+      <button class="btn btn-primary btn-full" id="btn-confirmar-codigo" onclick="confirmarCodigo()">Entrar</button>
+      <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px">
+        <a href="#" onclick="event.preventDefault();pedirCodigo(true)" style="color:#07583C">Reenviar código</a>
+        <a href="#" onclick="event.preventDefault();voltarLoginEmail()" style="color:#07583C">Usar outro e-mail</a>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:14px;font-size:12px">
+      <a href="#" id="link-login-senha" onclick="event.preventDefault();alternarLoginSenha()" style="color:#5D6F64">Entrar com senha</a>
+    </div>
     <div class="err-box" id="login-err"></div>
   </div>
 </div>
@@ -772,6 +788,7 @@ async function carregarUsuario(authUser) {
 
 function mostrarLogin() {
   document.getElementById('login-screen').style.display='flex';
+  if (typeof _mostraPasso === 'function' && !_loginModoSenha) _mostraPasso('email');
   document.getElementById('app').style.display='none';
 }
 
@@ -840,6 +857,55 @@ window.fazerLogin = async function fazerLogin() {
 }
 
 window.sair = async function sair(){await sb.auth.signOut();location.reload();}
+
+// ── LOGIN POR CÓDIGO (e-mail) ─────────────────────────────────
+let _loginModoSenha = false, _emailCodigo = '';
+function _loginErro(msg){const e=document.getElementById('login-err');e.textContent=msg;e.style.display=msg?'block':'none';}
+function _mostraPasso(passo){
+  // passo: 'email' | 'codigo' | 'senha'
+  const $=id=>document.getElementById(id);
+  $('login-email').closest('.form-group').style.display = passo==='codigo' ? 'none' : 'block';
+  $('login-grupo-senha').style.display = passo==='senha' ? 'block' : 'none';
+  $('btn-login').style.display = passo==='senha' ? 'block' : 'none';
+  $('btn-login-codigo').style.display = passo==='email' ? 'block' : 'none';
+  $('login-passo-codigo').style.display = passo==='codigo' ? 'block' : 'none';
+  $('link-login-senha').textContent = passo==='senha' ? 'Entrar com código por e-mail' : 'Entrar com senha';
+  _loginModoSenha = passo==='senha';
+}
+window.alternarLoginSenha = function(){ _loginErro(''); _mostraPasso(_loginModoSenha ? 'email' : 'senha'); document.getElementById(_loginModoSenha?'login-senha':'login-email').focus(); };
+window.voltarLoginEmail = function(){ _loginErro(''); document.getElementById('login-codigo').value=''; _mostraPasso('email'); document.getElementById('login-email').focus(); };
+window.pedirCodigo = async function(reenvio){
+  const email = reenvio ? _emailCodigo : document.getElementById('login-email').value.trim().toLowerCase();
+  _loginErro('');
+  if(!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ _loginErro('Digite um e-mail válido.'); return; }
+  const btn = document.getElementById('btn-login-codigo');
+  btn.disabled = true; btn.textContent = 'Enviando...';
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+  btn.disabled = false; btn.textContent = 'Receber código por e-mail';
+  if(error){
+    const m = (error.message||'').toLowerCase();
+    if(m.includes('signup') || m.includes('not found') || m.includes('not allowed')) _loginErro('Este e-mail não está cadastrado no sistema. Fale com o administrador.');
+    else if(m.includes('rate') || m.includes('seconds') || error.status===429) _loginErro('Muitos pedidos seguidos. Aguarde um minuto e tente de novo.');
+    else _loginErro('Não foi possível enviar o código: ' + error.message);
+    return;
+  }
+  _emailCodigo = email;
+  document.getElementById('login-email-mostra').textContent = email;
+  _mostraPasso('codigo');
+  const c = document.getElementById('login-codigo'); c.value=''; c.focus();
+  if(reenvio) _loginErro('');
+};
+window.confirmarCodigo = async function(){
+  const token = document.getElementById('login-codigo').value.replace(/\D/g,'');
+  _loginErro('');
+  if(token.length < 6){ _loginErro('Digite o código completo que chegou no e-mail.'); return; }
+  const btn = document.getElementById('btn-confirmar-codigo');
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  const { error } = await sb.auth.verifyOtp({ email: _emailCodigo, token, type: 'email' });
+  btn.disabled = false; btn.textContent = 'Entrar';
+  if(error){ _loginErro('Código inválido ou vencido. Confira os números ou clique em "Reenviar código".'); return; }
+  // A sessão dispara SIGNED_IN em onAuthStateChange, que carrega o usuário.
+};
 
 // ── TABS ──────────────────────────────────────────────────────
 // SAFRAS STATE
@@ -3226,7 +3292,7 @@ async function criarUsuario(){
   const{error:invErr}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true,emailRedirectTo:window.location.href.split('#')[0]}});
   if(invErr){alert('Erro ao enviar convite: '+invErr.message);return;}
 
-  alert('✅ Convite enviado para '+email+'!\n\nO usuário receberá um e-mail com link de acesso.\nQuando fizer o primeiro login, o perfil será aplicado automaticamente.');
+  alert('✅ Convite enviado para '+email+'!\n\nO usuário receberá um e-mail com um código de acesso. Para entrar, ele abre o sistema, digita o e-mail e usa o código (se tiver vencido, é só pedir outro na tela de login).\nNo primeiro login, o perfil é aplicado automaticamente.');
   ['usr-nome','usr-email'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   renderUsuarios();
 }

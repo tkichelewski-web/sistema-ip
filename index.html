@@ -3356,7 +3356,101 @@ async function salvarFaixas(){const crit=parseFloat(document.getElementById('cfg
 async function salvarSafra(){const nome=document.getElementById('sf-nome')?.value.trim(),ini=parseInt(document.getElementById('sf-ini')?.value)||0,fim=parseInt(document.getElementById('sf-fim')?.value)||0;if(!nome||!ini||!fim){alert('Preencha todos os campos.');return;}const{error}=await sb.from('safras').insert({nome,ano_ini:ini,ano_fim:fim});if(error){alert('Erro: '+error.message);return;}['sf-nome','sf-ini','sf-fim'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});await carregarSafras();carregarConfigForm();alert('✅ Safra '+nome+' criada!');}
 async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
 async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'DM Mono',monospace"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}
-async function salvarAuditorias(){const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;if(!safraId){alert('Selecione uma safra.');return;}for(const u of estrutura.unidades){const nota=parseFloat(document.getElementById('aud-nota-'+u.id)?.value);if(isNaN(nota))continue;await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});}alert('✅ Notas de auditoria salvas!');carregarAuditorias();}
+async function salvarAuditorias(){
+  const safraId=parseInt(document.getElementById('aud-safra')?.value)||0;
+  if(!safraId){alert('Selecione uma safra.');return;}
+  const btn=document.querySelector('button[onclick="salvarAuditorias()"]');
+  const txtOrig=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Salvando...';}
+  try{
+    for(const u of estrutura.unidades){
+      const nota=parseFloat(String(document.getElementById('aud-nota-'+u.id)?.value||'').replace(',','.'));
+      if(isNaN(nota))continue;
+      const{error}=await sb.from('auditoria_unidade').upsert({unidade_id:u.id,safra_id:safraId,nota},{onConflict:'unidade_id,safra_id'});
+      if(error)throw error;
+    }
+    if(btn)btn.textContent='Recalculando lançamentos...';
+    const r=await recalcularIPsPorAuditoria(safraId);
+    alert('✅ Notas de auditoria salvas!\n\n'+r.atualizados+' lançamento(s) da safra recalculado(s) com a nova nota.'+(r.falhas?'\n⚠️ '+r.falhas+' falharam (veja o console).':''));
+  }catch(e){
+    console.error('salvarAuditorias:',e);
+    alert('❌ Erro ao salvar notas de auditoria: '+(e.message||e));
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=txtOrig||'✓ Salvar Notas de Auditoria';}
+  }
+  carregarAuditorias();
+  // Atualiza as telas que dependem do IP, se estiverem carregadas
+  try{ if(typeof carregarAcumulado==='function' && document.getElementById('acum-safra')?.value) carregarAcumulado(); }catch(e){}
+  try{ if(typeof carregarDashboard==='function' && typeof dashData!=='undefined' && dashData?.length) carregarDashboard(); }catch(e){}
+}
+
+// Reaplica a nota de auditoria da unidade em TODOS os lançamentos da safra:
+// atualiza nota_auditoria, recalcula indice_base / indice_prevencao (mantendo
+// pontuação, média da diretoria e ajuste já gravados) e refaz o acumulado_gerencia
+// mês a mês de cada gerência.
+async function recalcularIPsPorAuditoria(safraId){
+  const res={atualizados:0,falhas:0};
+  const{data:notas,error:eN}=await sb.from('auditoria_unidade').select('unidade_id,nota').eq('safra_id',safraId);
+  if(eN)throw eN;
+  const notaPorUni={};
+  (notas||[]).forEach(n=>{ if(n.nota!=null) notaPorUni[n.unidade_id]=Number(n.nota); });
+
+  const{data:lancs,error:eL}=await sb.from('lancamentos')
+    .select('id,gerencia_id,mes,pontuacao_gerencia,media_diretoria,ajuste_pontos,nota_auditoria,indice_prevencao,lancamento_itens(id)')
+    .eq('safra_id',safraId).order('mes');
+  if(eL)throw eL;
+  if(!lancs?.length)return res;
+
+  const uniDaGer={};
+  estrutura.gerencias.forEach(g=>{uniDaGer[g.id]=g.unidade_id;});
+
+  // 1. Novo IP de cada lançamento
+  const novos=lancs.map(l=>{
+    const nu=notaPorUni[uniDaGer[l.gerencia_id]];
+    const aud=nu!=null?nu:(l.nota_auditoria||0);
+    const pg=l.pontuacao_gerencia||0;
+    const aj=l.ajuste_pontos||0;
+    const temItens=!!(l.lancamento_itens&&l.lancamento_itens.length);
+    return{
+      l, aud, temItens,
+      indBase:calcIndice(pg,l.media_diretoria,aud,0),
+      indFinal:calcIndice(pg,l.media_diretoria,aud,aj)
+    };
+  });
+
+  // 2. Acumulado progressivo por gerência (só meses com indicadores lançados)
+  const porGer={};
+  novos.forEach(n=>{(porGer[n.l.gerencia_id]=porGer[n.l.gerencia_id]||[]).push(n);});
+  Object.values(porGer).forEach(arr=>{
+    arr.sort((a,b)=>String(a.l.mes).localeCompare(String(b.l.mes)));
+    let soma=0,count=0;
+    arr.forEach(n=>{
+      if(n.temItens){soma+=n.indFinal;count++;}
+      n.acum=count?soma/count:null;
+    });
+  });
+
+  // 3. Grava em lotes
+  const lote=10;
+  for(let i=0;i<novos.length;i+=lote){
+    await Promise.all(novos.slice(i,i+lote).map(async n=>{
+      try{
+        const{error}=await sb.from('lancamentos').update({
+          nota_auditoria:n.aud,
+          indice_base:n.indBase,
+          indice_prevencao:n.indFinal,
+          acumulado_gerencia:n.acum
+        }).eq('id',n.l.id);
+        if(error)throw error;
+        res.atualizados++;
+      }catch(e){
+        res.falhas++;
+        console.warn('recalcularIPsPorAuditoria: falhou lançamento '+n.l.id+':',e.message||e);
+      }
+    }));
+  }
+  return res;
+}
 // Usada pelos importadores (Inspeção/Observação/Plano de Ação/Simulados) — replica
 // a mesma lógica do lançamento manual: busca a nota de auditoria real, calcula a
 // média da diretoria com base em TODAS as gerências dela, e propaga a nova média
@@ -3409,12 +3503,18 @@ async function recalcularAuditoriaEMediaDiretoria(gerId, mes, safraId, pg) {
   mediaDir = gersDir.length ? Object.values(pgPorGerencia).reduce((s, v) => s + v, 0) / gersDir.length : pg;
 
   // Propaga a pontuação recalculada + a nova média pras outras gerências da diretoria.
+  // A nota de auditoria é a da UNIDADE de cada gerência (a diretoria pode ter JB, PB e
+  // JB/PB) — sempre a vigente em Configurações, não a que ficou gravada no lançamento.
+  const notaUniCache = {};
   for (const l of lancsDir) {
     if (l.gerencia_id === gerId) continue;
     try {
       const pgO = pgPorGerencia[l.gerencia_id];
-      const nIP = calcIndice(pgO, mediaDir, l.nota_auditoria || aud, l.ajuste_pontos || 0);
-      const { error } = await sb.from('lancamentos').update({ pontuacao_gerencia: pgO, media_diretoria: mediaDir, indice_prevencao: nIP }).eq('id', l.id);
+      const uniO = estrutura.gerencias.find(g => g.id === l.gerencia_id)?.unidade_id;
+      if (uniO != null && !(uniO in notaUniCache)) notaUniCache[uniO] = await getNotaAuditoria(uniO, safraId);
+      const audO = (uniO != null && notaUniCache[uniO] != null) ? notaUniCache[uniO] : (l.nota_auditoria || 0);
+      const nIP = calcIndice(pgO, mediaDir, audO, l.ajuste_pontos || 0);
+      const { error } = await sb.from('lancamentos').update({ pontuacao_gerencia: pgO, media_diretoria: mediaDir, nota_auditoria: audO, indice_prevencao: nIP }).eq('id', l.id);
       if (error) throw error;
     } catch (e) {
       console.warn('recalcularAuditoriaEMediaDiretoria: falhou atualizar lançamento ' + l.id + ' (gerência ' + l.gerencia_id + '):', e.message);

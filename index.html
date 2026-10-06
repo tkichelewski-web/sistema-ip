@@ -1093,6 +1093,10 @@ function renderAcumTable() {
     // nenhum indicador, pontuacao_gerencia vem 0 "de verdade" (não null) e contava como
     // nota real, derrubando o acumulado.
     if(!l.lancamento_itens || l.lancamento_itens.length === 0) return null;
+    // Fonte da verdade = IP gravado no lançamento (o mesmo do Histórico/Apuração).
+    // Antes o acumulado recalculava a partir dos componentes, e quando algum campo
+    // mudava depois (ex.: auditoria zerada) o acumulado de abril não batia com o mensal.
+    if(l.indice_prevencao != null) return Number(l.indice_prevencao);
     const pg  = l.pontuacao_gerencia || 0;
     const md  = l.media_diretoria != null ? l.media_diretoria : pg;
     const aud = l.nota_auditoria   || 0;
@@ -1483,6 +1487,8 @@ function calcIPLanc(l) {
   if(!l) return null;
   // Mesma correção do calcIP: sem nenhum indicador lançado, não conta.
   if(!l.lancamento_itens || l.lancamento_itens.length === 0) return null;
+  // Usa o IP gravado no lançamento (mesmo valor do Histórico); só recalcula se não houver.
+  if(l.indice_prevencao != null) return Number(l.indice_prevencao);
   const wPG  = Number(config?.peso_gerencia)  || 0.5;
   const wMD  = Number(config?.peso_diretoria) || 0.2;
   const wAUD = Number(config?.peso_auditoria) || 0.3;
@@ -1757,9 +1763,10 @@ function exportarAcumCSV() {
     let row = '"'+g.nome+'","'+(g.dir||'')+'"';
     for(const m of meses) {
       const l = acumAllData.find(x => x.gerencia_id === g.id && x.mes === m.val);
-      if(l) { soma += l.indice_prevencao||0; count++; }
+      const ip = calcIPLanc(l);
+      if(ip != null) { soma += ip; count++; }
       const acum = count > 0 ? soma/count : null;
-      row += `,${l?(l.indice_prevencao||0).toFixed(2):''},${acum!=null?acum.toFixed(2):''}`;
+      row += `,${ip!=null?ip.toFixed(2):''},${acum!=null?acum.toFixed(2):''}`;
     }
     csv += row + '\n';
   }

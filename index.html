@@ -168,31 +168,8 @@ input[type=number]{font-family:'DM Mono',monospace;}
       <p>VALORES INTERNOS DESENVOLVENDO ATITUDES SUSTENTÁVEIS</p>
     </div>
     <div class="login-info" id="login-info"></div>
-    <div class="form-group">
-      <label>E-mail corporativo</label>
-      <input type="email" id="login-email" placeholder="seu@usinasantaadelia.com.br" autocomplete="email" onkeydown="if(event.key==='Enter'){_loginModoSenha?fazerLogin():pedirCodigo()}">
-    </div>
-    <div class="form-group" id="login-grupo-senha" style="display:none">
-      <label>Senha</label>
-      <input type="password" id="login-senha" placeholder="••••••••" onkeydown="if(event.key==='Enter')fazerLogin()">
-    </div>
-    <button class="btn btn-primary btn-full" id="btn-login-codigo" onclick="pedirCodigo()">Receber código por e-mail</button>
-    <button class="btn btn-primary btn-full" id="btn-login" onclick="fazerLogin()" style="display:none">Entrar</button>
-    <div id="login-passo-codigo" style="display:none">
-      <p style="font-size:13px;color:#5D6F64;margin:0 0 12px;line-height:1.5">Enviamos um código para <b id="login-email-mostra"></b>. Confira também o lixo eletrônico. O código vale por 1 hora.</p>
-      <div class="form-group">
-        <label>Código</label>
-        <input type="text" id="login-codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Digite o código" style="letter-spacing:4px;font-size:18px;text-align:center" onkeydown="if(event.key==='Enter')confirmarCodigo()">
-      </div>
-      <button class="btn btn-primary btn-full" id="btn-confirmar-codigo" onclick="confirmarCodigo()">Entrar</button>
-      <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:13px">
-        <a href="#" onclick="event.preventDefault();pedirCodigo(true)" style="color:#07583C">Reenviar código</a>
-        <a href="#" onclick="event.preventDefault();voltarLoginEmail()" style="color:#07583C">Usar outro e-mail</a>
-      </div>
-    </div>
-    <div style="text-align:center;margin-top:14px;font-size:12px">
-      <a href="#" id="link-login-senha" onclick="event.preventDefault();alternarLoginSenha()" style="color:#5D6F64">Entrar com senha</a>
-    </div>
+    <p id="login-redirecionando" style="text-align:center;color:#5D6F64;font-size:14px;margin:0 0 16px">Abrindo o Portal Índice de Prevenção SSMA para você entrar...</p>
+    <a class="btn btn-primary btn-full" id="btn-ir-portal" href="#" style="display:flex;justify-content:center;text-decoration:none">Entrar pelo Portal Índice de Prevenção SSMA</a>
     <div class="err-box" id="login-err"></div>
   </div>
 </div>
@@ -682,6 +659,22 @@ input[type=number]{font-family:'DM Mono',monospace;}
   </div>
 </div>
 
+<!-- MODAL EDITAR USUÁRIO -->
+<div class="modal-overlay" id="modal-usr">
+  <div class="modal">
+    <div class="modal-title">✏️ Editar Usuário</div>
+    <input type="hidden" id="edit-usr-id"><input type="hidden" id="edit-usr-tipo">
+    <div class="form-group"><label>Nome</label><input type="text" id="edit-usr-nome"></div>
+    <div class="form-group"><label>E-mail</label><input type="email" id="edit-usr-email" disabled style="background:#f3f5f2"></div>
+    <div class="form-group"><label>Perfil</label><select id="edit-usr-perfil" onchange="document.getElementById('edit-usr-ger-wrap').style.display=this.value==='gerencia'?'':'none'"><option value="gerencia">Gerência</option><option value="gestor">Gestor</option><option value="admin">Admin</option></select></div>
+    <div class="form-group" id="edit-usr-ger-wrap"><label>Gerência</label><select id="edit-usr-ger"></select></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-usr')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEdicaoUsuario()">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL EDITAR GERÊNCIA -->
 <div class="modal-overlay" id="modal-ger">
   <div class="modal">
@@ -717,6 +710,13 @@ function _recrearClienteSb() {
   }
 }
 
+// Login centralizado no Portal Índice de Prevenção SSMA (mesma sessão do navegador)
+const PORTAL_URL = 'https://tkichelewski-web.github.io/portal-ip/';
+let _semCadastro = false;
+// Único(s) e-mail(s) com acesso ao Sistema IP. Os demais usam só o portal.
+const EMAILS_IP = ['tkichelewski@usinasantaadelia.com.br'];
+function urlPortal(){ return PORTAL_URL + '?voltar=' + encodeURIComponent(location.href.split('#')[0]); }
+
 let usuario=null, dashData=null;
 let estrutura={diretorias:[],gerencias:[],unidades:[]};
 let indicadores=[];
@@ -751,6 +751,17 @@ async function init() {
 }
 
 async function carregarUsuario(authUser) {
+  if (!EMAILS_IP.includes((authUser.email || '').toLowerCase())) {
+    // Acesso restrito: não desloga (a sessão continua valendo no portal)
+    _semCadastro = true;
+    mostrarLogin();
+    const err = document.getElementById('login-err');
+    err.textContent = 'O Sistema IP tem acesso restrito. Use o Portal Índice de Prevenção SSMA.';
+    err.style.display = 'block';
+    const btn = document.getElementById('btn-ir-portal');
+    if (btn) { btn.href = PORTAL_URL; btn.textContent = 'Ir para o Portal Índice de Prevenção SSMA'; }
+    return;
+  }
   let { data, error } = await sb.from('usuarios')
     .select('*, gerencias(id,nome,diretoria_id,unidade_id,diretorias(nome),unidades(nome))')
     .eq('auth_id', authUser.id).single();
@@ -775,8 +786,10 @@ async function carregarUsuario(authUser) {
   }
 
   if (error || !data) {
+    _semCadastro = true;
     mostrarLogin();
     document.getElementById('login-err').textContent = 'Usuário não cadastrado no sistema. Contacte o administrador.';
+    document.getElementById('login-err').style.display = 'block';
     document.getElementById('login-err').style.display = 'block';
     await sb.auth.signOut(); return;
   }
@@ -788,8 +801,13 @@ async function carregarUsuario(authUser) {
 
 function mostrarLogin() {
   document.getElementById('login-screen').style.display='flex';
-  if (typeof _mostraPasso === 'function' && !_loginModoSenha) _mostraPasso('email');
   document.getElementById('app').style.display='none';
+  const btn = document.getElementById('btn-ir-portal');
+  if (btn) btn.href = urlPortal();
+  const aviso = document.getElementById('login-redirecionando');
+  if (_semCadastro) { if (aviso) aviso.style.display = 'none'; return; }
+  // Sem sessão: vai direto para o portal, que devolve para cá depois do login
+  location.replace(urlPortal());
 }
 
 async function mostrarApp() {
@@ -856,56 +874,7 @@ window.fazerLogin = async function fazerLogin() {
   if(error){err.textContent='E-mail ou senha incorretos.';err.style.display='block';}
 }
 
-window.sair = async function sair(){await sb.auth.signOut();location.reload();}
-
-// ── LOGIN POR CÓDIGO (e-mail) ─────────────────────────────────
-let _loginModoSenha = false, _emailCodigo = '';
-function _loginErro(msg){const e=document.getElementById('login-err');e.textContent=msg;e.style.display=msg?'block':'none';}
-function _mostraPasso(passo){
-  // passo: 'email' | 'codigo' | 'senha'
-  const $=id=>document.getElementById(id);
-  $('login-email').closest('.form-group').style.display = passo==='codigo' ? 'none' : 'block';
-  $('login-grupo-senha').style.display = passo==='senha' ? 'block' : 'none';
-  $('btn-login').style.display = passo==='senha' ? 'block' : 'none';
-  $('btn-login-codigo').style.display = passo==='email' ? 'block' : 'none';
-  $('login-passo-codigo').style.display = passo==='codigo' ? 'block' : 'none';
-  $('link-login-senha').textContent = passo==='senha' ? 'Entrar com código por e-mail' : 'Entrar com senha';
-  _loginModoSenha = passo==='senha';
-}
-window.alternarLoginSenha = function(){ _loginErro(''); _mostraPasso(_loginModoSenha ? 'email' : 'senha'); document.getElementById(_loginModoSenha?'login-senha':'login-email').focus(); };
-window.voltarLoginEmail = function(){ _loginErro(''); document.getElementById('login-codigo').value=''; _mostraPasso('email'); document.getElementById('login-email').focus(); };
-window.pedirCodigo = async function(reenvio){
-  const email = reenvio ? _emailCodigo : document.getElementById('login-email').value.trim().toLowerCase();
-  _loginErro('');
-  if(!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ _loginErro('Digite um e-mail válido.'); return; }
-  const btn = document.getElementById('btn-login-codigo');
-  btn.disabled = true; btn.textContent = 'Enviando...';
-  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-  btn.disabled = false; btn.textContent = 'Receber código por e-mail';
-  if(error){
-    const m = (error.message||'').toLowerCase();
-    if(m.includes('signup') || m.includes('not found') || m.includes('not allowed')) _loginErro('Este e-mail não está cadastrado no sistema. Fale com o administrador.');
-    else if(m.includes('rate') || m.includes('seconds') || error.status===429) _loginErro('Muitos pedidos seguidos. Aguarde um minuto e tente de novo.');
-    else _loginErro('Não foi possível enviar o código: ' + error.message);
-    return;
-  }
-  _emailCodigo = email;
-  document.getElementById('login-email-mostra').textContent = email;
-  _mostraPasso('codigo');
-  const c = document.getElementById('login-codigo'); c.value=''; c.focus();
-  if(reenvio) _loginErro('');
-};
-window.confirmarCodigo = async function(){
-  const token = document.getElementById('login-codigo').value.replace(/\D/g,'');
-  _loginErro('');
-  if(token.length < 6){ _loginErro('Digite o código completo que chegou no e-mail.'); return; }
-  const btn = document.getElementById('btn-confirmar-codigo');
-  btn.disabled = true; btn.textContent = 'Entrando...';
-  const { error } = await sb.auth.verifyOtp({ email: _emailCodigo, token, type: 'email' });
-  btn.disabled = false; btn.textContent = 'Entrar';
-  if(error){ _loginErro('Código inválido ou vencido. Confira os números ou clique em "Reenviar código".'); return; }
-  // A sessão dispara SIGNED_IN em onAuthStateChange, que carrega o usuário.
-};
+window.sair = async function sair(){await sb.auth.signOut();location.href = PORTAL_URL;}
 
 // ── TABS ──────────────────────────────────────────────────────
 // SAFRAS STATE
@@ -3299,7 +3268,7 @@ async function criarUsuario(){
   const{error:invErr}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:true,emailRedirectTo:window.location.href.split('#')[0]}});
   if(invErr){alert('Erro ao enviar convite: '+invErr.message);return;}
 
-  alert('✅ Convite enviado para '+email+'!\n\nO usuário receberá um e-mail com um código de acesso. Para entrar, ele abre o sistema, digita o e-mail e usa o código (se tiver vencido, é só pedir outro na tela de login).\nNo primeiro login, o perfil é aplicado automaticamente.');
+  alert('✅ Convite enviado para '+email+'!\n\nO usuário entra por '+location.href.split('#')[0]+' (o login é feito no Portal Índice de Prevenção SSMA): digita o e-mail e usa o código que chega por e-mail.\nNo primeiro login, o perfil é aplicado automaticamente.');
   ['usr-nome','usr-email'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   renderUsuarios();
 }
@@ -3309,20 +3278,75 @@ async function renderUsuarios(){
   const{data:pendentes}=await sb.from('usuarios_pendentes').select('*,gerencias(nome)').order('nome');
   const el=document.getElementById('usr-lista');if(!el)return;
   const cores={admin:'badge-purple',gestor:'badge-blue',gerencia:'badge-green'};
-  const listaAtivos=(data||[]).map(u=>`<tr>
-    <td><b>${u.nome}</b></td><td class="mono" style="font-size:12px">${u.email}</td>
-    <td><span class="badge ${cores[u.perfil]||'badge-green'}">${u.perfil}</span></td>
-    <td style="font-size:12px;color:var(--muted)">${u.gerencias?.nome||'—'}</td>
-    <td><span class="badge badge-green" style="font-size:10px">Ativo</span></td>
-  </tr>`).join('');
+  _usrCache={usuarios:data||[],pendentes:pendentes||[]};
+  const esc=t=>String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const ordenados=[...(data||[])].sort((a,b)=>(a.ativo===false)-(b.ativo===false)||String(a.nome).localeCompare(String(b.nome)));
+  const listaAtivos=ordenados.map(u=>{
+    const inativo=u.ativo===false, eu=usuario&&u.id===usuario.id;
+    return `<tr style="${inativo?'opacity:.55':''}">
+    <td><b>${esc(u.nome)}</b></td><td class="mono" style="font-size:12px">${esc(u.email)}</td>
+    <td><span class="badge ${cores[u.perfil]||'badge-green'}">${esc(u.perfil)}</span></td>
+    <td style="font-size:12px;color:var(--muted)">${esc(u.gerencias?.nome||'—')}</td>
+    <td>${inativo?'<span class="badge" style="font-size:10px;background:#E5E9E5;color:#5D6F64">Inativo</span>':'<span class="badge badge-green" style="font-size:10px">Ativo</span>'}</td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="abrirEdicaoUsuario('u',${u.id})">✏️ Editar</button>
+      ${eu?'':`<button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:4px" onclick="alternarAtivoUsuario(${u.id})">${inativo?'↩️ Reativar':'🚫 Desativar'}</button>`}
+    </td></tr>`;}).join('');
   const listaPend=(pendentes||[]).filter(p=>!(data||[]).find(u=>u.email===p.email)).map(p=>`<tr>
-    <td><b>${p.nome}</b></td><td class="mono" style="font-size:12px">${p.email}</td>
-    <td><span class="badge ${cores[p.perfil]||'badge-green'}">${p.perfil}</span></td>
-    <td style="font-size:12px;color:var(--muted)">${p.gerencias?.nome||'—'}</td>
+    <td><b>${esc(p.nome)}</b></td><td class="mono" style="font-size:12px">${esc(p.email)}</td>
+    <td><span class="badge ${cores[p.perfil]||'badge-green'}">${esc(p.perfil)}</span></td>
+    <td style="font-size:12px;color:var(--muted)">${esc(p.gerencias?.nome||'—')}</td>
     <td><span class="badge badge-blue" style="font-size:10px;background:#e8a020">Aguardando login</span>
-    <button class="btn btn-secondary btn-sm" style="margin-left:6px;font-size:10px" onclick="reenviarConvite('${p.email}')">↺ Reenviar</button></td>
-  </tr>`).join('');
-  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Gerência</th><th>Status</th></tr></thead><tbody>${listaAtivos}${listaPend}</tbody></table></div>`;
+    <button class="btn btn-secondary btn-sm" style="margin-left:6px;font-size:10px" onclick="reenviarConvite('${esc(p.email)}')">↺ Reenviar</button></td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="abrirEdicaoUsuario('p','${esc(p.email)}')">✏️ Editar</button>
+      <button class="btn btn-secondary btn-sm" style="font-size:11px;margin-left:4px" onclick="cancelarConvite('${esc(p.email)}')">✕ Cancelar convite</button>
+    </td></tr>`).join('');
+  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Gerência</th><th>Status</th><th>Ações</th></tr></thead><tbody>${listaAtivos}${listaPend}</tbody></table></div>`;
+}
+
+// ── Editar / desativar usuários ───────────────────────────────
+let _usrCache={usuarios:[],pendentes:[]};
+function abrirEdicaoUsuario(tipo,chave){
+  const u=tipo==='u'?_usrCache.usuarios.find(x=>x.id===chave):_usrCache.pendentes.find(x=>x.email===chave);
+  if(!u)return;
+  const $=id=>document.getElementById(id);
+  $('edit-usr-tipo').value=tipo; $('edit-usr-id').value=tipo==='u'?u.id:u.email;
+  $('edit-usr-nome').value=u.nome||''; $('edit-usr-email').value=u.email||'';
+  $('edit-usr-perfil').value=u.perfil||'gerencia';
+  $('edit-usr-ger').innerHTML='<option value="">— Selecione —</option>'+estrutura.gerencias.map(g=>`<option value="${g.id}">${g.nome}${g.unidades?.nome?' ('+g.unidades.nome+')':''}</option>`).join('');
+  $('edit-usr-ger').value=u.gerencia_id||'';
+  $('edit-usr-ger-wrap').style.display=$('edit-usr-perfil').value==='gerencia'?'':'none';
+  $('modal-usr').classList.add('show');
+}
+async function salvarEdicaoUsuario(){
+  const $=id=>document.getElementById(id);
+  const tipo=$('edit-usr-tipo').value, chave=$('edit-usr-id').value;
+  const nome=$('edit-usr-nome').value.trim(), perfil=$('edit-usr-perfil').value;
+  const gerencia_id=perfil==='gerencia'?(parseInt($('edit-usr-ger').value,10)||null):null;
+  if(!nome){alert('Informe o nome.');return;}
+  if(perfil==='gerencia'&&!gerencia_id){alert('Escolha a gerência.');return;}
+  if(tipo==='u'&&usuario&&Number(chave)===usuario.id&&perfil!=='admin'&&!confirm('Você está tirando o seu próprio perfil de admin. Continuar?'))return;
+  const dados={nome,perfil,gerencia_id};
+  const{error}=tipo==='u'
+    ?await sb.from('usuarios').update(dados).eq('id',Number(chave))
+    :await sb.from('usuarios_pendentes').update(dados).eq('email',chave);
+  if(error){alert('Erro ao salvar: '+error.message);return;}
+  fecharModal('modal-usr'); renderUsuarios();
+}
+async function alternarAtivoUsuario(id){
+  const u=_usrCache.usuarios.find(x=>x.id===id); if(!u)return;
+  const desativar=u.ativo!==false;
+  if(desativar&&!confirm('Desativar '+u.nome+'?\n\nA pessoa não consegue mais entrar no portal. O histórico (baixas, registros) continua com o nome dela.'))return;
+  const{error}=await sb.from('usuarios').update({ativo:!desativar}).eq('id',id);
+  if(error){alert('Erro: '+error.message+(String(error.message).includes('ativo')?'\n\nRode antes o SQL que cria a coluna "ativo" na tabela usuarios.':''));return;}
+  renderUsuarios();
+}
+async function cancelarConvite(email){
+  if(!confirm('Cancelar o convite de '+email+'?'))return;
+  const{error}=await sb.from('usuarios_pendentes').delete().eq('email',email);
+  if(error){alert('Erro: '+error.message);return;}
+  renderUsuarios();
 }
 
 async function reenviarConvite(email){

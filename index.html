@@ -305,6 +305,14 @@ input[type=number]{font-family:'DM Mono',monospace;}
         </div>
         <div id="acum-ger-tbl"><div class="loading">Selecione uma safra.</div></div>
       </div>
+      <!-- Acumulado por Diretoria (mesmo visual do de gerências) -->
+      <div class="table-wrap" style="margin-bottom:20px">
+        <div class="table-header">
+          <span class="table-title">🏛️ Acumulado por Diretoria — Média Progressiva</span>
+          <span style="font-size:12px;color:var(--muted)">Mês = média do IP das gerências da diretoria · Acum. = média dos meses até ali</span>
+        </div>
+        <div id="acum-dir-prog-tbl"><div class="loading">Selecione uma safra.</div></div>
+      </div>
       <!-- Evolução do IP Acumulado — versão limpa: só o acumulado de cada mês, sem a
            coluna de valor "cru" do mês, com seleção de quais meses aparecem. -->
       <div class="table-wrap" style="margin-bottom:20px">
@@ -1216,6 +1224,38 @@ function renderAcumTable() {
     + '<th>Gerência</th><th>Unidade</th><th>Diretoria</th>'
     + mesThsG
     + '</tr></thead><tbody>'+gersRows+'</tbody></table></div>';
+
+  // ── Acumulado por Diretoria — Média Progressiva (mesma regra do resumo por diretoria:
+  //    mês = média simples do IP das gerências; acumulado = média dos meses até o mês) ──
+  const dpEl = document.getElementById('acum-dir-prog-tbl');
+  if(dpEl) {
+    const dirsProg = [...dirsMap.entries()].map(([id, nome]) => {
+      const ls = baseSemFiltroMes.filter(l => l.gerencias?.diretoria_id === id);
+      const nGer = new Set(ls.map(l => l.gerencia_id)).size;
+      return { id, nome, ls, nGer };
+    }).sort((a, b) => (acumuladoAte(b.ls, mesRef) ?? -1) - (acumuladoAte(a.ls, mesRef) ?? -1));
+    const linhaDir = d => {
+      const cells = modoUltimo
+        ? (() => {
+            const ult = mesesVisiveis.length ? acumuladoAte(d.ls, mesesVisiveis[mesesVisiveis.length-1].val) : null;
+            return '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;font-size:15px;color:'+(ult!=null?getColor(ult):'var(--muted)')+'">'+(ult!=null?ult.toFixed(1):'—')+'</td>';
+          })()
+        : mesesVisiveis.map(m => {
+            const mensal = mediaMes(d.ls, m.val), acum = acumuladoAte(d.ls, m.val);
+            return '<td class="mono" style="color:'+(mensal!=null?getColor(mensal):'var(--muted)')+'">'+(mensal!=null?mensal.toFixed(1):'—')+'</td>'
+                 + '<td class="acum-cell mono" style="background:#f0f9f0;font-weight:700;color:'+(acum!=null?getColor(acum):'var(--muted)')+'">'+(acum!=null?acum.toFixed(1):'—')+'</td>';
+          }).join('');
+      return '<tr><td><b>'+d.nome+'</b></td><td class="mono" style="color:var(--muted);text-align:center">'+d.nGer+'</td>'+cells+'</tr>';
+    };
+    // Linha final: USA (todas as diretorias juntas = média das gerências)
+    const usa = { nome: 'USA — média de todas as gerências', ls: baseSemFiltroMes, nGer: new Set(baseSemFiltroMes.map(l => l.gerencia_id)).size };
+    dpEl.innerHTML = !dirsProg.length
+      ? '<div class="empty-msg" style="padding:20px;text-align:center;color:var(--muted)">Sem dados.</div>'
+      : '<div style="overflow-x:auto"><table><thead><tr><th>Diretoria</th><th style="text-align:center">Gerências</th>' + mesThsG + '</tr></thead><tbody>'
+        + dirsProg.map(linhaDir).join('')
+        + (dirsProg.length > 1 ? linhaDir(usa).replace('<tr>', '<tr style="border-top:2px solid #07583C;background:#F7FAF4">') : '')
+        + '</tbody></table></div>';
+  }
 }
 
 // ── Evolução do IP Acumulado (versão limpa) ─────────────────────────────────

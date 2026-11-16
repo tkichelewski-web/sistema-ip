@@ -734,6 +734,17 @@ tr:hover td{background:#F7FAF8;}
           </div>
           <div id="fech-lista"></div>
         </div>
+        <div class="form-section" id="restauro-card" style="grid-column:1 / -1">
+          <div class="form-section-title">↩️ Restaurar IP oficial da Safra 26/27 (uso único)</div>
+          <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Volta o IP de <b>abril a setembro</b> para os valores do slide de setembro (o acumulado usado no PPR/PRV) e o de <b>outubro</b> para o valor do slide de Ranking de outubro. Depois fecha esses meses para não mudarem mais. Só altera o <b>IP final</b> de cada mês — os componentes (pontuação, média da diretoria, auditoria) ficam como estão.</p>
+          <div class="toolbar" style="margin-bottom:10px">
+            <label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:600;color:var(--text)"><input type="checkbox" id="rest-out" checked style="width:auto;accent-color:#07583C" onchange="previaRestauro()"> Incluir outubro (ranking apresentado)</label>
+            <label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:600;color:var(--text)"><input type="checkbox" id="rest-fechar" checked style="width:auto;accent-color:#07583C"> Fechar os meses depois de restaurar</label>
+            <button class="btn btn-secondary btn-sm" onclick="previaRestauro()">👁️ Ver prévia</button>
+            <button class="btn btn-primary btn-sm" id="btn-restaurar" onclick="executarRestauro()" disabled>↩️ Restaurar</button>
+          </div>
+          <div id="rest-previa"></div>
+        </div>
         <div class="form-section">
           <div class="form-section-title">📅 Safras</div>
           <div class="form-row">
@@ -3665,6 +3676,90 @@ async function reabrirMes(mes){
   const{error}=await sb.from('meses_fechados').delete().eq('mes',mes);
   if(error){alert('Erro ao reabrir: '+error.message);return;}
   await carregarMesesFechados(); renderFechamentoMeses();
+}
+const RESTAURO_2627 = [{"n":"RFPA","u":"JB/PB","ip":[100.0,100.0,100.0,99.6,99.9,99.9],"out":99.7},{"n":"Planejamento, Controle e Tecnologia","u":"JB/PB","ip":[100.0,100.0,89.8,99.4,99.8,100.0],"out":97.4},{"n":"Engenharia Agronômica","u":"JB","ip":[100.0,100.0,86.2,99.8,100.0,100.0],"out":98.2},{"n":"Agrícola CTT e PPT","u":"JB","ip":[90.0,86.0,91.0,99.8,100.0,100.0],"out":83.6},{"n":"Automotiva","u":"JB","ip":[85.8,100.0,100.0,74.9,99.7,84.9],"out":98.1},{"n":"Engenharia Agronômica","u":"PB","ip":[84.0,99.2,99.4,61.0,99.4,98.2],"out":83.8},{"n":"Automotiva","u":"PB","ip":[79.5,84.5,99.4,89.4,89.2,83.0],"out":82.4},{"n":"Agrícola CTT e PPT","u":"PB","ip":[94.4,69.0,100.0,96.6,74.5,83.3],"out":97.4},{"n":"Engenharia e Qualidade","u":"PB","ip":[99.1,99.5,98.1,98.5,98.3,96.9],"out":97.7},{"n":"Engenharia e Qualidade","u":"JB","ip":[100.0,100.0,100.0,85.6,99.9,98.9],"out":100.0},{"n":"Industrial","u":"JB","ip":[99.7,99.9,100.0,99.9,99.9,84.3],"out":100.0},{"n":"Industrial","u":"PB","ip":[69.4,100.0,84.404,100.0,84.5,82.9],"out":82.8},{"n":"Suprimentos","u":"JB/PB","ip":[100.0,100.0,97.706,99.6,100.0,100.0],"out":100.0},{"n":"TI","u":"JB/PB","ip":[100.0,100.0,98.2,99.8,100.0,97.8],"out":100.0},{"n":"Controladoria","u":"JB/PB","ip":[100.0,100.0,92.5,99.9,100.0,99.7],"out":100.0},{"n":"RH/Jurídico/Restaurante/Saúde/Facilities","u":"JB/PB","ip":[100.0,100.0,100.0,85.306,100.0,100.0],"out":83.3},{"n":"SSMA","u":"JB","ip":[100.0,100.0,99.755,100.0,100.0,100.0],"out":100.0},{"n":"SSMA","u":"PB","ip":[99.2,99.6,98.204,100.0,99.3,99.9],"out":99.4},{"n":"Supervisão Excelência e Projetos","u":"JB/PB","ip":[100.0,100.0,89.047,100.0,99.859,100.0],"out":98.6}];
+
+// Valores oficiais: abr–set reconstruídos do slide de setembro (cada mês calculado para
+// reproduzir exatamente o acumulado impresso); outubro = IP do slide de Ranking de outubro.
+const RESTAURO_MESES=['2026-04','2026-05','2026-06','2026-07','2026-08','2026-09'];
+let _restauroPlano=null;
+function _normGer(n){
+  return String(n||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()
+    .replace(/^ger[eê]ncia\s+/,'').replace(/\s*-\s*(jb|pb)\s*$/,'').replace(/\s+/g,' ').trim();
+}
+async function previaRestauro(){
+  const el=document.getElementById('rest-previa'); const btn=document.getElementById('btn-restaurar');
+  btn.disabled=true; el.innerHTML='<div class="loading"><span class="spinner"></span>Montando prévia...</div>';
+  const safra=safrasData.find(s=>s.ano_ini===2026&&s.ano_fim===2027);
+  if(!safra){el.innerHTML='<div class="alert alert-warn">Safra 26/27 não encontrada.</div>';return;}
+  const incluiOut=document.getElementById('rest-out').checked;
+  const meses=incluiOut?[...RESTAURO_MESES,'2026-10']:RESTAURO_MESES;
+  const{data:lancs,error}=await sb.from('lancamentos').select('id,gerencia_id,mes,indice_prevencao').eq('safra_id',safra.id);
+  if(error){el.innerHTML='<div class="alert alert-warn">Erro: '+error.message+'</div>';return;}
+  const plano=[],semGer=[],semLanc=[];
+  for(const r of RESTAURO_2627){
+    const g=estrutura.gerencias.find(g=>_normGer(g.nome)===_normGer(r.n)&&(g.unidades?.nome||'').toUpperCase()===r.u);
+    if(!g){semGer.push(r.n+' ('+r.u+')');continue;}
+    const valores=[...r.ip]; if(incluiOut) valores.push(r.out);
+    meses.forEach((m,i)=>{
+      const l=(lancs||[]).find(l=>l.gerencia_id===g.id&&l.mes===m);
+      if(!l){semLanc.push(r.n+' '+r.u+' · '+nomeMesCurto(m));return;}
+      plano.push({lancId:l.id,gerId:g.id,nome:g.nome,uni:r.u,mes:m,atual:l.indice_prevencao,novo:valores[i]});
+    });
+  }
+  const fechados=meses.filter(m=>mesFechado(m));
+  _restauroPlano={safraId:safra.id,meses,plano};
+  // tabela: gerência × mês (atual → restaurado)
+  const gers=[...new Map(plano.map(p=>[p.gerId,p])).values()];
+  const cel=(p)=>{ if(!p) return '<td style="color:var(--muted)">—</td>';
+    const a=p.atual!=null?Number(p.atual):null, mud=a==null||Math.abs(a-p.novo)>=0.05;
+    return '<td class="mono" style="white-space:nowrap">'+(mud?'<span style="color:var(--muted);text-decoration:line-through;font-size:11px">'+(a!=null?a.toFixed(1):'—')+'</span> <b style="color:'+getColor(p.novo)+'">'+p.novo.toFixed(1)+'</b>':'<span style="color:var(--muted)">'+p.novo.toFixed(1)+'</span>')+'</td>'; };
+  const mudam=plano.filter(p=>p.atual==null||Math.abs(Number(p.atual)-p.novo)>=0.05).length;
+  el.innerHTML=(fechados.length?'<div class="alert alert-warn">🔒 '+fechados.map(nomeMesCurto).join(', ')+' já está(ão) fechado(s). Reabra no card de Fechamento antes de restaurar.</div>':'')
+    +(semGer.length?'<div class="alert alert-warn">Não achei estas gerências no cadastro: '+semGer.join('; ')+'</div>':'')
+    +(semLanc.length?'<div class="alert alert-warn">Sem lançamento no banco (não dá para restaurar): '+semLanc.join('; ')+'</div>':'')
+    +'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+mudam+' de '+plano.length+' valores mensais mudam. Riscado = valor atual no banco · negrito = valor restaurado.</div>'
+    +'<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px"><table><thead><tr><th>Gerência</th><th>Unid.</th>'+meses.map(m=>'<th>'+nomeMesCurto(m).split('/')[0].slice(0,3)+'</th>').join('')+'<th style="background:#E8F3EC">Acum. set</th>'+(incluiOut?'<th style="background:#E8F3EC">Acum. out</th>':'')+'</tr></thead><tbody>'
+    +gers.map(g0=>{const ps=meses.map(m=>plano.find(p=>p.gerId===g0.gerId&&p.mes===m));
+      const vals=ps.map(p=>p?p.novo:null).filter(v=>v!=null);
+      const ac=n=>{const v=vals.slice(0,n);return v.length?(v.reduce((s,x)=>s+x,0)/v.length):null;};
+      const a6=ac(6),a7=incluiOut?ac(7):null;
+      return '<tr><td><b>'+g0.nome+'</b></td><td>'+uniTag(g0.uni)+'</td>'+ps.map(cel).join('')
+        +'<td class="mono" style="font-weight:800;color:'+getColor(a6)+'">'+(a6!=null?a6.toFixed(1):'—')+'</td>'
+        +(incluiOut?'<td class="mono" style="font-weight:800;color:'+getColor(a7)+'">'+(a7!=null?a7.toFixed(1):'—')+'</td>':'')+'</tr>';}).join('')
+    +'</tbody></table></div>';
+  btn.disabled=!plano.length||fechados.length>0;
+}
+async function executarRestauro(){
+  const P=_restauroPlano; if(!P||!P.plano.length) return;
+  const fechar=document.getElementById('rest-fechar').checked;
+  if(!confirm('Restaurar '+P.plano.length+' valores mensais de IP ('+P.meses.map(m=>nomeMesCurto(m).split('/')[0]).join(', ')+')'+(fechar?' e fechar esses meses':'')+'?\n\nOs valores atuais desses meses serão substituídos.'))return;
+  const btn=document.getElementById('btn-restaurar'); btn.disabled=true; btn.textContent='Restaurando...';
+  let ok=0,falhas=0;
+  for(let i=0;i<P.plano.length;i+=10){
+    await Promise.all(P.plano.slice(i,i+10).map(async p=>{
+      const{error}=await sb.from('lancamentos').update({indice_prevencao:p.novo,atualizado_em:new Date().toISOString()}).eq('id',p.lancId);
+      if(error){falhas++;console.warn('restauro',p,error.message);}else ok++;
+    }));
+  }
+  // refaz o acumulado_gerencia de cada gerência (mês a mês, só meses com indicador)
+  btn.textContent='Recalculando acumulado...';
+  const{data:lancs}=await sb.from('lancamentos').select('id,gerencia_id,mes,indice_prevencao,lancamento_itens(id)').eq('safra_id',P.safraId).order('mes');
+  const porGer={}; (lancs||[]).forEach(l=>{(porGer[l.gerencia_id]=porGer[l.gerencia_id]||[]).push(l);});
+  for(const arr of Object.values(porGer)){
+    arr.sort((a,b)=>String(a.mes).localeCompare(String(b.mes)));
+    let soma=0,n=0;
+    for(const l of arr){
+      if(l.lancamento_itens&&l.lancamento_itens.length&&l.indice_prevencao!=null){soma+=Number(l.indice_prevencao);n++;}
+      if(mesFechado(l.mes)) continue;
+      await sb.from('lancamentos').update({acumulado_gerencia:n?soma/n:null}).eq('id',l.id);
+    }
+  }
+  if(fechar){ btn.textContent='Fechando meses...'; for(const m of P.meses){ await fecharMes(m,P.safraId,true); } await carregarMesesFechados(); renderFechamentoMeses(); }
+  btn.textContent='↩️ Restaurar';
+  alert('✅ '+ok+' valores restaurados'+(falhas?' · ⚠️ '+falhas+' falharam (veja o console)':'')+(fechar?'\n🔒 '+P.meses.map(nomeMesCurto).join(', ')+' fechados.':''));
+  previaRestauro();
+  try{ if(document.getElementById('acum-safra')?.value) carregarAcumulado(); }catch(e){}
 }
 async function desativarSafra(id){if(!confirm('Desativar esta safra?'))return;await sb.from('safras').update({ativa:false}).eq('id',id);await carregarSafras();carregarConfigForm();}
 async function carregarAuditorias(){const safraId=document.getElementById('aud-safra')?.value;const wrap=document.getElementById('aud-unidades-wrap');if(!wrap)return;if(!safraId){wrap.innerHTML='<p style="color:var(--muted);font-size:13px">Selecione uma safra.</p>';return;}const{data:notas}=await sb.from('auditoria_unidade').select('*').eq('safra_id',safraId);const notaMap={};(notas||[]).forEach(n=>{notaMap[n.unidade_id]=n.nota;});wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:8px">${estrutura.unidades.map(u=>`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px"><label style="font-size:12px;font-weight:700;color:#07583C;display:block;margin-bottom:8px">${u.nome}</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="aud-nota-${u.id}" min="0" max="100" step="0.1" value="${notaMap[u.id]??''}" placeholder="0–100" style="width:90px;padding:7px 10px;font-size:14px;font-family:'Open Sans',sans-serif"><span style="font-size:12px;color:var(--muted)">/ 100</span></div>${notaMap[u.id]!=null?'<div style="font-size:11px;color:#07583C;margin-top:6px">✅ Nota salva: <b>'+notaMap[u.id]+'</b></div>':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Sem nota cadastrada</div>'}</div>`).join('')}</div>`;}

@@ -8160,5 +8160,24 @@ async function exportarConfigIndicadores() {
 }
 
 </script>
+<script>
+// LGPD: o bucket "evidencias" e privado. Links antigos (/object/public/evidencias/...)
+// viram um link temporario (10 min) gerado na hora do clique, so para quem esta logado.
+document.addEventListener('click', async function (ev) {
+  const a = ev.target.closest && ev.target.closest('a[href*="/storage/v1/object/public/evidencias/"]');
+  if (!a) return;
+  ev.preventDefault();
+  const caminho = decodeURIComponent(a.href.split('/storage/v1/object/public/evidencias/')[1].split('?')[0]);
+  const janela = window.open('', '_blank');
+  try {
+    const { data, error } = await sb.storage.from('evidencias').createSignedUrl(caminho, 600);
+    if (error) throw error;
+    if (janela) janela.location = data.signedUrl; else location.href = data.signedUrl;
+  } catch (e) {
+    if (janela) janela.close();
+    alert('Não foi possível abrir a evidência: ' + (e && e.message || e));
+  }
+}, true);
+</script>
 </body>
 </html>
